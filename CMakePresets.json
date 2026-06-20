@@ -1,0 +1,52 @@
+{
+    "version": 3,
+    "cmakeMinimumRequired": {
+        "major": 3,
+        "minor": 10,
+        "patch": 0
+    },
+    "configurePresets": [
+        {
+            "name": "default",
+            "hidden": true,
+            "binaryDir": "${sourceDir}/out/build/${presetName}",
+            "cacheVariables": {
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "CMAKE_POSITION_INDEPENDENT_CODE": "ON",
+                "CMAKE_CXX_STANDARD": "17",
+                "CMAKE_CXX_STANDARD_REQUIRED": "ON"
+            }
+        },
+        {
+            "name": "linux-gcc",
+            "inherits": "default",
+            "description": "Configure the project for Linux using GCC.",
+            "generator": "Ninja Multi-Config",
+            "cacheVariables": {
+                "CMAKE_CXX_COMPILER": "g++"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "dev-linux-gcc",
+            "configurePreset": "linux-gcc",
+            "description": "Development build",
+            "targets": ["all"],
+            "configuration": "Debug"
+        },
+        {
+            "name": "rel-linux-gcc",
+            "inherits": ["dev-linux-gcc"],
+            "description": "Release build with debug information",
+            "configuration": "RelWithDebInfo"
+        }
+    ],
+    "testPresets": [
+        {
+            "name": "units-linux-gcc",
+            "configurePreset": "linux-gcc",
+            "description": "Run tests on Linux using GCC."
+        }
+    ]
+}
