@@ -14,7 +14,8 @@
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
                 "CMAKE_POSITION_INDEPENDENT_CODE": "ON",
                 "CMAKE_CXX_STANDARD": "17",
-                "CMAKE_CXX_STANDARD_REQUIRED": "ON"
+                "CMAKE_CXX_STANDARD_REQUIRED": "ON",
+                "CMAKE_PROJECT_TOP_LEVEL_INCLUDES": "${sourceDir}/cmake/setup.cmake"
             }
         },
         {
