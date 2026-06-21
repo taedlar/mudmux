@@ -13,7 +13,7 @@ FetchContent_Declare(
 FetchContent_Declare(
     OpenSSL
     GIT_REPOSITORY https://github.com/openssl/openssl.git
-    GIT_TAG OpenSSL_1_1_1-stable
+    GIT_TAG openssl-3.6.3
     FIND_PACKAGE_ARGS
         NAMES OpenSSL
 )

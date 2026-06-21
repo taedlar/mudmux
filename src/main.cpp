@@ -21,13 +21,13 @@ int main() {
         debug_error ("Failed to create console queue");
         return EXIT_FAILURE;
     }
-    auto console_ctx =console_worker_init (runtime, console_queue, CONSOLE_COMPLETION_KEY);
+    auto console_ctx = console_worker_init (runtime, console_queue, CONSOLE_COMPLETION_KEY);
 
     // main event loop
     debug_info ("mudmux starting event loop");
     io_event_t events[64];
     bool will_shutdown = false;
-    while (true) {
+    while (!will_shutdown) {
         // [BLOCKING] wait for I/O events
         int num_events = async_runtime_wait(runtime, events, 64, nullptr);
         if (num_events < 0) {
@@ -43,10 +43,6 @@ int main() {
             if (console_worker_take_eof (console_ctx))
                 will_shutdown = true;
         }
-
-        // event loop exit condition (e.g. EOF on console input)
-        if (will_shutdown)
-            break;
     }
 
     // shutdown console worker (gracefully)
