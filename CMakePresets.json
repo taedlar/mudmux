@@ -27,6 +27,16 @@
                 "CMAKE_C_COMPILER": "gcc",
                 "CMAKE_CXX_COMPILER": "g++"
             }
+        },
+        {
+            "name": "linux-clang",
+            "inherits": "default",
+            "description": "Configure the project for Linux using Clang.",
+            "generator": "Ninja Multi-Config",
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "clang",
+                "CMAKE_CXX_COMPILER": "clang++"
+            }
         }
     ],
     "buildPresets": [
@@ -42,6 +52,19 @@
             "inherits": ["dev-linux-gcc"],
             "description": "Release build with debug information",
             "configuration": "RelWithDebInfo"
+        },
+        {
+            "name": "dev-linux-clang",
+            "configurePreset": "linux-clang",
+            "description": "Development build",
+            "targets": ["all"],
+            "configuration": "Debug"
+        },
+        {
+            "name": "rel-linux-clang",
+            "inherits": ["dev-linux-clang"],
+            "description": "Release build with debug information",
+            "configuration": "RelWithDebInfo"
         }
     ],
     "testPresets": [
@@ -49,6 +72,11 @@
             "name": "units-linux-gcc",
             "configurePreset": "linux-gcc",
             "description": "Run tests on Linux using GCC."
+        },
+        {
+            "name": "units-linux-clang",
+            "configurePreset": "linux-clang",
+            "description": "Run tests on Linux using Clang."
         }
     ]
 }
