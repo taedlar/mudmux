@@ -6,6 +6,7 @@ A generic transport-layer server for MUD development.
 
 Transport types:
 - Raw socket connections
+- Websockets
 - Support for TLS
 - Local console (STDIO)
 - Unix domain sockets / Pipes

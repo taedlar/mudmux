@@ -2,4 +2,4 @@
 
 add_executable(mudmux main.cpp)
 
-target_link_libraries(mudmux PRIVATE spdlog::spdlog)
+target_link_libraries(mudmux PRIVATE spdlog::spdlog async)

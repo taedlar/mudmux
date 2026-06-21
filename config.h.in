@@ -1,1 +1,7 @@
 /* config.h */
+
+#include <spdlog/spdlog.h>
+#define debug_error spdlog::error
+#define debug_warn spdlog::warn
+#define debug_info spdlog::info
+#define debug_trace spdlog::trace

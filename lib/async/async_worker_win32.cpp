@@ -1,0 +1,119 @@
+/**
+ * @file async_worker_win32.c
+ * @brief Windows implementation of worker threads
+ */
+#ifdef HAVE_CONFIG_H
+#include <config.h>
+#endif /* HAVE_CONFIG_H */
+
+#ifdef _WIN32
+#include "async_worker.h"
+
+struct async_worker_s {
+    HANDLE thread;
+    DWORD thread_id;
+    async_worker_proc_t proc;
+    void* context;
+    async_worker_state_t state;
+    platform_event_t stop_event;
+};
+
+/* Thread-local storage for current worker */
+static __declspec(thread) async_worker_t* tls_current_worker = NULL;
+
+/* Internal thread wrapper */
+static DWORD WINAPI worker_thread_proc(LPVOID param) {
+    async_worker_t* worker = (async_worker_t*)param;
+    tls_current_worker = worker;
+    
+    worker->state = ASYNC_WORKER_RUNNING;
+    
+    void* result = worker->proc(worker->context);
+    
+    worker->state = ASYNC_WORKER_STOPPED;
+    tls_current_worker = NULL;
+    
+    return (DWORD)(uintptr_t)result;
+}
+
+extern "C" async_worker_t* async_worker_create(async_worker_proc_t proc, void* context, size_t stack_size) {
+    if (!proc) return NULL;
+    
+    async_worker_t* worker = (async_worker_t*)calloc(1, sizeof(async_worker_t));
+    if (!worker) return NULL;
+    
+    worker->proc = proc;
+    worker->context = context;
+    worker->state = ASYNC_WORKER_STOPPED;
+    
+    if (!platform_event_init(&worker->stop_event, true, false)) {
+        free(worker);
+        return NULL;
+    }
+    
+    worker->thread = CreateThread(
+        NULL,                           /* default security */
+        stack_size,                     /* stack size (0 = default) */
+        worker_thread_proc,
+        worker,
+        0,                              /* run immediately */
+        &worker->thread_id
+    );
+    
+    if (!worker->thread) {
+        free(worker);
+        return NULL;
+    }
+    
+    return worker;
+}
+
+extern "C" void async_worker_destroy(async_worker_t* worker) {
+    if (!worker) return;
+    
+    if (worker->thread) {
+        CloseHandle(worker->thread);
+    }
+    platform_event_destroy(&worker->stop_event);
+    free(worker);
+}
+
+#ifdef _WIN32
+extern "C" HANDLE async_worker_get_native_handle(async_worker_t* worker) {
+    return worker ? worker->thread : NULL;
+}
+#endif
+
+extern "C" void async_worker_signal_stop(async_worker_t* worker) {
+    if (worker) {
+        platform_event_set(&worker->stop_event);
+    }
+}
+
+extern "C" bool async_worker_join(async_worker_t* worker, int timeout_ms) {
+    if (!worker || !worker->thread) return false;
+    
+    DWORD timeout = (timeout_ms < 0) ? INFINITE : (DWORD)timeout_ms;
+    DWORD result = WaitForSingleObject(worker->thread, timeout);
+    
+    return result == WAIT_OBJECT_0;
+}
+
+extern "C" async_worker_t* async_worker_current(void) {
+    return tls_current_worker;
+}
+
+extern "C" bool async_worker_should_stop(async_worker_t* worker) {
+    if (!worker) return false;
+    return platform_event_wait(&worker->stop_event, 0);
+}
+
+extern "C" async_worker_state_t async_worker_get_state(const async_worker_t* worker) {
+    return worker ? worker->state : ASYNC_WORKER_STOPPED;
+}
+
+extern "C" platform_event_t* async_worker_get_stop_event(async_worker_t* worker) {
+    return worker ? &worker->stop_event : NULL;
+}
+
+#endif /* _WIN32 */
