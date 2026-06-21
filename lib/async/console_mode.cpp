@@ -49,7 +49,7 @@ static int set_console_input_mode(console_worker_context_t *ctx,
 
   if (!SetConsoleMode (handle, new_mode))
     {
-      LOG_WARN("SetConsoleMode failed for console stdin: %lu\n", GetLastError());
+      debug_warn ("SetConsoleMode() failed for console stdin: {}", GetLastError());
       return 0;
     }
 
@@ -118,7 +118,7 @@ int enable_console_output_ansi(void) {
   mode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING | ENABLE_PROCESSED_OUTPUT | ENABLE_WRAP_AT_EOL_OUTPUT;
   if (!SetConsoleMode(handle, mode))
     {
-      LOG_WARN("SetConsoleMode failed for console stdout: %lu\n", GetLastError());
+      debug_warn ("SetConsoleMode() failed for console stdout: {}", GetLastError());
       return 0;
     }
 

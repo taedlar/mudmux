@@ -27,6 +27,8 @@ elseif(APPLE)
     )
 endif()
 
+target_link_libraries(async PRIVATE spdlog::spdlog)
+
 # Platform-specific libraries
 if (UNIX)
     target_link_libraries(async PRIVATE pthread)

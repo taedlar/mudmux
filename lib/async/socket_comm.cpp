@@ -10,7 +10,6 @@
 #include <string.h>
 
 #ifdef _WIN32
-/* Windows specific headers already in socket_comm.h */
 #else
 #include <unistd.h>
 #include <fcntl.h>

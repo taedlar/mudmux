@@ -90,7 +90,7 @@ static iocp_context_t* alloc_iocp_context(async_runtime_t* runtime, socket_fd_t 
     if (runtime->pool_size > 0) {
         ctx = runtime->context_pool[--runtime->pool_size];
     } else {
-        ctx = calloc(1, sizeof(iocp_context_t));
+        ctx = (iocp_context_t*) calloc(1, sizeof(iocp_context_t));
         if (!ctx) return NULL;
     }
     
@@ -180,7 +180,7 @@ static DWORD WINAPI accept_worker_thread(LPVOID param) {
 /* Lifecycle management */
 
 extern "C" async_runtime_t* async_runtime_init(void) {
-    async_runtime_t* runtime = calloc(1, sizeof(async_runtime_t));
+    async_runtime_t* runtime = (async_runtime_t*) calloc(1, sizeof(async_runtime_t));
     if (!runtime) return NULL;
     
     /* Create IOCP with 1 concurrent thread (single-threaded model) */
@@ -192,7 +192,7 @@ extern "C" async_runtime_t* async_runtime_init(void) {
     
     /* Initialize context pool */
     runtime->pool_capacity = INITIAL_POOL_SIZE;
-    runtime->context_pool = calloc(runtime->pool_capacity, sizeof(iocp_context_t*));
+    runtime->context_pool = (iocp_context_t**) calloc(runtime->pool_capacity, sizeof(iocp_context_t*));
     if (!runtime->context_pool) {
         CloseHandle(runtime->iocp_handle);
         free(runtime);
@@ -201,7 +201,7 @@ extern "C" async_runtime_t* async_runtime_init(void) {
     
     /* Initialize listening socket array and accept worker */
     runtime->listen_capacity = 8;
-    runtime->listen_sockets = calloc(runtime->listen_capacity, sizeof(listening_socket_t));
+    runtime->listen_sockets = (listening_socket_t*) calloc(runtime->listen_capacity, sizeof(listening_socket_t));
     if (!runtime->listen_sockets) {
         free(runtime->context_pool);
         CloseHandle(runtime->iocp_handle);
@@ -261,24 +261,25 @@ extern "C" void async_runtime_deinit(async_runtime_t* runtime) {
 
 /* I/O source management */
 
-extern "C" int async_runtime_add(async_runtime_t* runtime, socket_fd_t fd, uint32_t events, void* context) {
+extern "C" int async_runtime_add (async_runtime_t* runtime, socket_fd_t fd, uint32_t events, void* context) {
     (void)events;  /* IOCP doesn't need explicit event flags */
-    if (!runtime || fd == INVALID_SOCKET) return -1;
+    if (!runtime || fd == INVALID_SOCKET)
+        return -1;
     
     /* Check if this is a listening socket */
     BOOL is_listening = FALSE;
     int optlen = sizeof(is_listening);
-    if (getsockopt(fd, SOL_SOCKET, SO_ACCEPTCONN, (char*)&is_listening, &optlen) == 0 && is_listening) {
+    if (getsockopt (fd, SOL_SOCKET, SO_ACCEPTCONN, (char*)&is_listening, &optlen) == 0 && is_listening) {
         /* Listening socket - add to accept worker's monitoring list */
-        EnterCriticalSection(&runtime->listen_lock);
+        EnterCriticalSection (&runtime->listen_lock);
         
         /* Grow array if needed */
         if (runtime->listen_count >= runtime->listen_capacity) {
             int new_capacity = runtime->listen_capacity * 2;
-            listening_socket_t* new_array = realloc(runtime->listen_sockets,
+            listening_socket_t* new_array = (listening_socket_t*) realloc (runtime->listen_sockets,
                                                    new_capacity * sizeof(listening_socket_t));
             if (!new_array) {
-                LeaveCriticalSection(&runtime->listen_lock);
+                LeaveCriticalSection (&runtime->listen_lock);
                 return -1;
             }
             runtime->listen_sockets = new_array;

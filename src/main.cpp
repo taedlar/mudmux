@@ -18,7 +18,7 @@ int main() {
     // initialize console worker
     auto console_queue = async_queue_create (100, 4096, ASYNC_QUEUE_DROP_OLDEST);
     if (!console_queue) {
-        debug_error ("Failed to create console queue");
+        debug_error ("failed to create console queue");
         return EXIT_FAILURE;
     }
     auto console_ctx = console_worker_init (runtime, console_queue, CONSOLE_COMPLETION_KEY);

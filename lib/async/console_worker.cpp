@@ -118,13 +118,13 @@ static void* console_worker_proc_win32(void* ctx) {
     platform_event_t* stop_event = async_worker_get_stop_event(async_worker_current());
     
     if (!stop_event) {
-        debug_error("Failed to get stop event");
+        debug_error("failed to get stop event");
         return NULL;
     }
     
     HANDLE hStopEvent = (HANDLE)platform_event_get_native_handle(stop_event);
     if (!hStopEvent) {
-        debug_error("Failed to get native event handle");
+        debug_error("failed to get native event handle");
         return NULL;
     }
     
@@ -173,7 +173,7 @@ static void* console_worker_proc_win32(void* ctx) {
                     /* ReadConsoleW returned TRUE with 0 chars: spurious wakeup from an
                      * injected input event (e.g. VK_ESCAPE key-up during mode switch).
                      * This is not EOF; loop back and wait for real input. */
-                    LOG_INFO ("Console woken with no chars (spurious wakeup), continuing\n");
+                    debug_info ("console woken with no chars (spurious wakeup), continuing\n");
                     continue;
                 }
                 else {
@@ -183,12 +183,12 @@ static void* console_worker_proc_win32(void* ctx) {
                 /* Pipe or file: Use ReadFile (synchronous) */
                 result = ReadFile (hStdin, line_buffer, CONSOLE_MAX_LINE - 1, &chars_read, NULL);
             }
-            LOG_INFO ("Read %lu chars from console (result: %s)\n", chars_read, result ? "success" : "failure");
+            debug_info ("read {} chars from console (result: {})", chars_read, result ? "success" : "failure");
 
             if (!result) {
                 DWORD err = GetLastError();
                 if (err == ERROR_OPERATION_ABORTED) {
-                    LOG_INFO ("Console read interrupted by shutdown or input mode switch\n");
+                    debug_info ("console read interrupted by shutdown or input mode switch");
                     restore_desired_console_input_mode (cctx);
                     continue;
                 }
@@ -196,11 +196,11 @@ static void* console_worker_proc_win32(void* ctx) {
                     /* SetConsoleMode changing ENABLE_LINE_INPUT while ReadConsoleW is blocking
                      * can return errors such as ERROR_INVALID_FUNCTION; treat these as
                      * non-fatal mode-switch interruptions rather than killing the thread. */
-                    LOG_WARN ("ReadConsoleW interrupted (err=%lu), restoring mode and continuing\n", err);
+                    debug_warn  ("ReadConsoleW() interrupted (err={}), restoring mode and continuing", err);
                     restore_desired_console_input_mode (cctx);
                     continue;
                 }
-                LOG_ERROR ("Read failed: %lu\n", err);
+                debug_error ("console read failed: {}", err);
                 break;
             }
             
@@ -210,7 +210,7 @@ static void* console_worker_proc_win32(void* ctx) {
 
                 /* Enqueue line */
                 if (!async_queue_enqueue(cctx->line_queue, line_buffer, chars_read + 1)) {
-                    LOG_WARN ("Console line queue full, dropping line\n");
+                    debug_warn  ("console line queue full, dropping line");
                 }
 
                 /* Post completion to wake main thread */
@@ -225,12 +225,12 @@ static void* console_worker_proc_win32(void* ctx) {
             break;
         } else {
             /* Error or unexpected result */
-            LOG_ERROR ("WaitForMultipleObjects failed: %lu (error: %lu)\n", wait_result, GetLastError());
+            debug_error ("WaitForMultipleObjects() failed: {} (error: {})", wait_result, GetLastError());
             break;
         }
     }
 
-    LOG_INFO ("console worker stopped\n");
+    debug_info ("console worker stopped");
     return NULL;
 }
 #else
@@ -360,7 +360,7 @@ extern "C" console_worker_context_t* console_worker_init(async_runtime_t* runtim
 #endif
 
     if (ctx->console_type == CONSOLE_TYPE_NONE) {
-        debug_warn ("No console detected, worker will not start");
+        debug_warn ("no console detected, worker will not start");
         /* Don't treat as fatal - allow mudlib to run without console */
         return ctx;
     }
@@ -372,7 +372,7 @@ extern "C" console_worker_context_t* console_worker_init(async_runtime_t* runtim
 #endif
 
     if (!ctx->worker) {
-        debug_error ("Failed to create console worker thread");
+        debug_error ("failed to create console worker thread");
 #ifndef _WIN32
         if (ctx->stop_pipe_fds[0] >= 0) close(ctx->stop_pipe_fds[0]);
         if (ctx->stop_pipe_fds[1] >= 0) close(ctx->stop_pipe_fds[1]);
