@@ -24,6 +24,7 @@
             "description": "Configure the project for Linux using GCC.",
             "generator": "Ninja Multi-Config",
             "cacheVariables": {
+                "CMAKE_C_COMPILER": "gcc",
                 "CMAKE_CXX_COMPILER": "g++"
             }
         }
