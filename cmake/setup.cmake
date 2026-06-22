@@ -15,7 +15,7 @@ FetchContent_Declare(
     GIT_REPOSITORY https://github.com/openssl/openssl.git
     GIT_TAG openssl-3.6.3
     FIND_PACKAGE_ARGS
-        NAMES OpenSSL
+        NAMES OpenSSL openssl
 )
 
 FetchContent_Declare(
@@ -24,4 +24,18 @@ FetchContent_Declare(
     GIT_TAG v1.9.2
     FIND_PACKAGE_ARGS
         NAMES spdlog
+)
+
+# =========================
+# CMake Dependency Provider
+# =========================
+
+macro(setup_provide_dependency method package)
+    message(STATUS "Providing dependency '${package}'")
+endmacro()
+
+cmake_language(
+    SET_DEPENDENCY_PROVIDER setup_provide_dependency
+    SUPPORTED_METHODS
+        FETCHCONTENT_MAKEAVAILABLE_SERIAL
 )

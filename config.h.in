@@ -5,3 +5,5 @@
 #define debug_warn spdlog::warn
 #define debug_info spdlog::info
 #define debug_trace spdlog::trace
+
+#cmakedefine HAVE_BOOST
