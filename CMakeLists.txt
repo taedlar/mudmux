@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.10)
 # Project settings
 project(mudmux
     VERSION 0.1
-    DESCRIPTION "A transport-layer multiplexer for MUDs"
+    DESCRIPTION "A transport-layer host for MUDs"
     HOMEPAGE_URL "https://github.com/taedlar/mudmux"
     LANGUAGES C CXX
 )
