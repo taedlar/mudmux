@@ -26,6 +26,18 @@ FetchContent_Declare(
         NAMES spdlog
 )
 
+# Optional Boost dependency
+cmake_policy (SET CMP0167 OLD) # Allow FindBoost to use BOOST_ROOT
+if (BOOST_ROOT)
+    # If BOOST_ROOT is set, we assume the user has Boost installed and wants to use it.
+    find_package(Boost REQUIRED)
+else()
+    find_package(Boost QUIET) # FindBoost.cmake or library lookup fallback
+endif()
+if (Boost_FOUND)
+    set(HAVE_BOOST TRUE)
+endif()
+
 # =========================
 # CMake Dependency Provider
 # =========================
