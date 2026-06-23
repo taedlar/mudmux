@@ -27,14 +27,14 @@ FetchContent_Declare(
 )
 
 # Optional Boost dependency
-set(Boost_DEBUG ON)
+# set(Boost_DEBUG ON)
 if (BOOST_ROOT)
     # If BOOST_ROOT is set, we assume the user has Boost installed and wants to use it.
-    # In some cases, when the FindBoost module fails to find the Boost libraries, it
-    # may be necessary to set BOOST_ROOT to the root directory of the Boost installation.
+    message(STATUS "Using user-specified BOOST_ROOT: ${BOOST_ROOT}")
     if (POLICY CMP0167)
-        cmake_policy(SET CMP0167 OLD) # Use old behavior for FindBoost
+        cmake_policy(SET CMP0167 OLD) # Allow module mode for old FindBoost.cmake
     endif()
+    set(Boost_NO_SYSTEM_PATHS ON) # Prevent FindBoost from searching system paths
     find_package(Boost REQUIRED)
 else()
     # Modern CMake removes the FindBoost.cmake module and rely on Boost's config files.
@@ -47,7 +47,7 @@ else()
     )
 endif()
 if (Boost_FOUND)
-    set(HAVE_BOOST TRUE)
+    set(HAVE_BOOST TRUE) # for config header
 endif()
 
 # =========================

@@ -2,6 +2,19 @@
 
 add_library(async STATIC)
 
+target_sources(async INTERFACE
+    FILE_SET HEADERS
+    BASE_DIRS ..
+    FILES
+        sync.h
+        async_queue.h
+        async_worker.h
+        async_runtime.h
+        console_mode.h
+        console_worker.h
+        socket_comm.h
+)
+
 target_sources(async PRIVATE
     socket_comm.cpp
     sync.cpp
@@ -33,5 +46,3 @@ target_link_libraries(async PRIVATE spdlog::spdlog)
 if (UNIX)
     target_link_libraries(async PRIVATE pthread)
 endif()
-
-target_include_directories(async PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

@@ -3,9 +3,9 @@
 #include "config.h"
 #endif
 
-#include "async_queue.h"
-#include "async_runtime.h"
-#include "console_worker.h"
+#include "async/async_queue.h"
+#include "async/async_runtime.h"
+#include "async/console_worker.h"
 
 #include <iostream>
 #include <spdlog/spdlog.h>

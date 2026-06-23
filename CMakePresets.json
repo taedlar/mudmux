@@ -46,6 +46,9 @@
             "architecture": {
               "value": "x64",
               "strategy": "set"
+            },
+            "cacheVariables": {
+                "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL"
             }
         }
     ],

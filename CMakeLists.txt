@@ -10,6 +10,13 @@ project(mudmux
 )
 enable_testing()
 
+# Compiler settings
+if(MSVC)
+    add_compile_options(/W4 /WX /Zc:__cplusplus /EHs /utf-8)
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+	add_compile_options(-Wall -Werror -Wpedantic)
+endif()
+
 # Configure dependencies
 include(FetchContent)
 FetchContent_MakeAvailable(GTest OpenSSL spdlog)
