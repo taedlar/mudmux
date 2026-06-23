@@ -1,5 +1,5 @@
 # CMakeLists.txt
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.24)
 
 # Project settings
 project(mudmux
@@ -12,7 +12,7 @@ enable_testing()
 
 # Compiler settings
 if(MSVC)
-    add_compile_options(/W4 /WX /Zc:__cplusplus /EHs /utf-8)
+    add_compile_options(/W4 /WX /Zc:__cplusplus /EHs /permissive- /utf-8)
 elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
 	add_compile_options(-Wall -Werror -Wpedantic)
 endif()
