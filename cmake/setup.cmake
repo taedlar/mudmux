@@ -21,16 +21,19 @@ FetchContent_Declare(
 FetchContent_Declare(
     spdlog
     GIT_REPOSITORY https://github.com/gabime/spdlog.git
-    GIT_TAG v1.9.2
+    GIT_TAG v1.17.0
     FIND_PACKAGE_ARGS
         NAMES spdlog
 )
 
-# Optional Boost dependency
+# Optional Boost dependency (never fetches Boost, only finds it if installed)
 # set(Boost_DEBUG ON)
 if (BOOST_ROOT)
     # If BOOST_ROOT is set, we assume the user has Boost installed and wants to use it.
     message(STATUS "Using user-specified BOOST_ROOT: ${BOOST_ROOT}")
+    if (POLICY CMP0144)
+        cmake_policy(SET CMP0144 NEW) # Allow uppercase <package>_ROOT for find_package
+    endif()
     if (POLICY CMP0167)
         cmake_policy(SET CMP0167 OLD) # Allow module mode for old FindBoost.cmake
     endif()
@@ -54,9 +57,9 @@ endif()
 # CMake Dependency Provider
 # =========================
 
-macro(setup_provide_dependency method package)
+function(setup_provide_dependency method package)
     message(STATUS "Providing dependency '${package}'")
-endmacro()
+endfunction()
 
 cmake_language(
     SET_DEPENDENCY_PROVIDER setup_provide_dependency

@@ -2,7 +2,7 @@
     "version": 3,
     "cmakeMinimumRequired": {
         "major": 3,
-        "minor": 10,
+        "minor": 24,
         "patch": 0
     },
     "configurePresets": [
@@ -19,8 +19,17 @@
             }
         },
         {
+            "name": "linux-default",
+            "hidden": true,
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Linux"
+            }
+        },
+        {
             "name": "linux-gcc",
-            "inherits": "default",
+            "inherits": ["default", "linux-default"],
             "description": "Configure the project for Linux using GCC.",
             "generator": "Ninja Multi-Config",
             "cacheVariables": {
@@ -30,7 +39,7 @@
         },
         {
             "name": "linux-clang",
-            "inherits": "default",
+            "inherits": ["default", "linux-default"],
             "description": "Configure the project for Linux using Clang.",
             "generator": "Ninja Multi-Config",
             "cacheVariables": {
@@ -39,16 +48,35 @@
             }
         },
         {
+            "name": "msvc-default",
+            "hidden": true,
+            "cacheVariables": {
+                "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL"
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            }
+        },
+        {
             "name": "vs16-x64",
-            "inherits": "default",
+            "inherits": ["default", "msvc-default"],
             "description": "Configure the project for Visual Studio 2019 x64.",
             "generator": "Visual Studio 16 2019",
             "architecture": {
               "value": "x64",
               "strategy": "set"
-            },
-            "cacheVariables": {
-                "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL"
+            }
+        },
+        {
+            "name": "vs18-x64",
+            "inherits": ["default", "msvc-default"],
+            "description": "Configure the project for Visual Studio 2026 x64.",
+            "generator": "Visual Studio 18 2026",
+            "architecture": {
+              "value": "x64",
+              "strategy": "set"
             }
         }
     ],
@@ -83,12 +111,25 @@
             "name": "dev-vs16-x64",
             "configurePreset": "vs16-x64",
             "description": "Development build",
-            "targets": ["all"],
+            "targets": ["ALL_BUILD"],
             "configuration": "Debug"
         },
         {
             "name": "rel-vs16-x64",
             "inherits": ["dev-vs16-x64"],
+            "description": "Release build with debug information",
+            "configuration": "RelWithDebInfo"
+        },
+        {
+            "name": "dev-vs18-x64",
+            "configurePreset": "vs18-x64",
+            "description": "Development build",
+            "targets": ["ALL_BUILD"],
+            "configuration": "Debug"
+        },
+        {
+            "name": "rel-vs18-x64",
+            "inherits": ["dev-vs18-x64"],
             "description": "Release build with debug information",
             "configuration": "RelWithDebInfo"
         }
@@ -108,6 +149,11 @@
             "name": "units-vs16-x64",
             "configurePreset": "vs16-x64",
             "description": "Run tests on Windows using Visual Studio 2019 x64."
+        },
+        {
+            "name": "units-vs18-x64",
+            "configurePreset": "vs18-x64",
+            "description": "Run tests on Windows using Visual Studio 2026 x64."
         }
     ]
 }
