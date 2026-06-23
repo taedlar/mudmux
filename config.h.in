@@ -6,4 +6,6 @@
 #define debug_info spdlog::info
 #define debug_trace spdlog::trace
 
+#cmakedefine HAVE_GETTIMEOFDAY
+
 #cmakedefine HAVE_BOOST

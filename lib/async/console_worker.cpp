@@ -295,7 +295,7 @@ static void* console_worker_proc_posix(void* ctx) {
         } else if (bytes_read == 0) {
             /* EOF */
             debug_info ("console EOF detected");
-            console_worker_set_eof(cctx);
+            console_worker_set_eof (cctx);
             break;
         }
 
@@ -308,7 +308,7 @@ static void* console_worker_proc_posix(void* ctx) {
         }
 
         /* Post completion to wake main thread */
-        async_runtime_post_completion(cctx->runtime, cctx->completion_key, bytes_read);
+        async_runtime_post_completion (cctx->runtime, cctx->completion_key, bytes_read);
     }
 
     debug_info ("console worker stopped");
