@@ -1,5 +1,5 @@
-#ifndef ASYNC_SOCKET_COMM_H
-#define ASYNC_SOCKET_COMM_H
+#ifndef ASYNC_SOCKET_INTF_H
+#define ASYNC_SOCKET_INTF_H
 
 #ifdef _WIN32
     /* Windows Sockets */
@@ -76,4 +76,4 @@ int set_socket_owner(socket_fd_t fd, int which);
  */
 int set_socket_async(socket_fd_t fd, int which);
 
-#endif /* !ASYNC_SOCKET_COMM_H */
+#endif /* !ASYNC_SOCKET_INTF_H */

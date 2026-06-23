@@ -17,6 +17,10 @@ elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
 	add_compile_options(-Wall -Werror -Wpedantic)
 endif()
 
+# check for standard functions
+include(CheckSymbolExists)
+check_symbol_exists(gettimeofday sys/time.h HAVE_GETTIMEOFDAY)
+
 # Configure dependencies
 include(FetchContent)
 FetchContent_MakeAvailable(GTest OpenSSL spdlog)

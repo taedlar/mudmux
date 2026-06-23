@@ -40,8 +40,18 @@ int main() {
         for (int i = 0; i < num_events; ++i) {
             auto& event = events[i];
             debug_info ("event: fd={}, event_type={}, bytes_transferred={}", event.fd, event.event_type, event.bytes_transferred);
-            if (console_worker_take_eof (console_ctx))
-                will_shutdown = true;
+            if (console_worker_take_eof (console_ctx)) {
+                if (console_ctx->console_type == CONSOLE_TYPE_REAL) {
+                    // re-arm console worker for next console input (e.g., after Ctrl+D EOF)
+                    debug_info ("console EOF detected, re-initializing console worker");
+                    console_worker_destroy(console_ctx);
+                    console_ctx = console_worker_init (runtime, console_queue, CONSOLE_COMPLETION_KEY);
+                }
+                else {
+                    debug_info ("console EOF detected, shutting down");
+                    will_shutdown = true;
+                }
+            }
         }
     }
 

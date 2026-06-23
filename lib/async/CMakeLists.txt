@@ -12,11 +12,11 @@ target_sources(async INTERFACE
         async_runtime.h
         console_mode.h
         console_worker.h
-        socket_comm.h
+        socket_intf.h
 )
 
 target_sources(async PRIVATE
-    socket_comm.cpp
+    socket_intf.cpp
     sync.cpp
     async_queue.cpp
     console_mode.cpp

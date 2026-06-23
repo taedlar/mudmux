@@ -18,7 +18,7 @@
 #ifndef ASYNC_RUNTIME_H
 #define ASYNC_RUNTIME_H
 
-#include "socket_comm.h"
+#include "socket_intf.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -41,7 +41,7 @@ extern "C" {
  * - context points to the listening port_def_t structure
  * - Accept worker has already called accept() before posting completion
  */
-typedef struct {
+typedef struct io_event_s {
     socket_fd_t fd;              /**< File descriptor; on Windows may be accepted socket from accept worker */
 #ifdef _WIN32
     HANDLE handle;               /**< Native handle (Windows) or NULL */
@@ -58,7 +58,7 @@ typedef struct {
  * - Windows: REAL uses ReadConsoleInputW, PIPE/FILE use ReadFile
  * - POSIX: REAL uses termios, PIPE/FILE use regular read()
  */
-typedef enum {
+typedef enum console_type_e {
     CONSOLE_TYPE_NONE = 0,
     CONSOLE_TYPE_REAL,    /**< Real console (Windows) or TTY (POSIX with termios) */
     CONSOLE_TYPE_PIPE,    /**< Pipe (e.g., testbot piping input) */

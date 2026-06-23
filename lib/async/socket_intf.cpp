@@ -1,19 +1,18 @@
 /**
- * @file socket_comm.c
- * @brief Portable socket communication utilities.
+ * @file socket_intf.cpp
+ * @brief Portable socket interface helper functions.
  */
 #ifdef HAVE_CONFIG_H
 #include <config.h>
 #endif
 
-#include "socket_comm.h"
+#include "socket_intf.h"
 #include <string.h>
 
 #ifdef _WIN32
 #else
 #include <unistd.h>
 #include <fcntl.h>
-
 #include <sys/ioctl.h>
 #endif
 
@@ -123,9 +122,7 @@ error:
  * @brief Set process receiving SIGIO/SIGURG signals to us.
  */
 int set_socket_owner(socket_fd_t fd, int which) {
-#ifdef OLD_ULTRIX
-    return fcntl(fd, F_SETOWN, which);
-#elif defined(WINSOCK)
+#ifdef WINSOCK
     (void)fd;
     (void)which;
     return 1; /* No equivalent */
@@ -138,9 +135,7 @@ int set_socket_owner(socket_fd_t fd, int which) {
  * @brief Allow receipt of asynchronous I/O signals.
  */
 int set_socket_async(socket_fd_t fd, int which) {
-#ifdef OLD_ULTRIX
-    return fcntl(fd, F_SETFL, FASYNC);
-#elif defined(WINSOCK)
+#ifdef WINSOCK
     (void)fd;
     (void)which;
     return 1; /* No equivalent */
@@ -153,27 +148,10 @@ int set_socket_async(socket_fd_t fd, int which) {
  * @brief Set socket non-blocking
  */
 int set_socket_nonblocking(socket_fd_t fd, int which) {
-#ifdef OLD_ULTRIX
-    if (which)
-        return fcntl(fd, F_SETFL, FNDELAY);
-    else
-        return fcntl(fd, F_SETFL, FNBLOCK);
-#elif defined(WINSOCK)
+#ifdef WINSOCK
     u_long mode = which ? 1 : 0;
     return ioctlsocket(fd, FIONBIO, &mode);
 #else
-#ifdef _SEQUENT_
-    int flags = fcntl(fd, F_GETFL, 0);
-
-    if (flags == -1)
-        return (-1);
-    if (which)
-        flags |= O_NONBLOCK;
-    else
-        flags &= ~O_NONBLOCK;
-    return fcntl(fd, F_SETFL, flags);
-#else
     return ioctl(fd, FIONBIO, &which);
-#endif
 #endif
 }
