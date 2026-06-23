@@ -78,6 +78,27 @@
               "value": "x64",
               "strategy": "set"
             }
+        },
+        {
+            "name": "macos-default",
+            "hidden": true,
+            "cacheVariables": {
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Darwin"
+            }
+        },
+        {
+            "name": "macos-clang",
+            "inherits": ["default", "macos-default"],
+            "description": "Configure the project for macOS using Clang.",
+            "generator": "Ninja Multi-Config",
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "clang",
+                "CMAKE_CXX_COMPILER": "clang++"
+            }
         }
     ],
     "buildPresets": [
@@ -130,6 +151,19 @@
         {
             "name": "rel-vs18-x64",
             "inherits": ["dev-vs18-x64"],
+            "description": "Release build with debug information",
+            "configuration": "RelWithDebInfo"
+        },
+        {
+            "name": "dev-macos-clang",
+            "configurePreset": "macos-clang",
+            "description": "Development build",
+            "targets": ["all"],
+            "configuration": "Debug"
+        },
+        {
+            "name": "rel-macos-clang",
+            "inherits": ["dev-macos-clang"],
             "description": "Release build with debug information",
             "configuration": "RelWithDebInfo"
         }

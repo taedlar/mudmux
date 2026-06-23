@@ -16,6 +16,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <unistd.h>
 
 #define INITIAL_CAPACITY 64
 #define MAX_FD_COUNT 4096
@@ -72,12 +73,12 @@ static int expand_capacity(async_runtime_t* runtime) {
     int new_capacity = runtime->capacity * 2;
     if (new_capacity > MAX_FD_COUNT) new_capacity = MAX_FD_COUNT;
     
-    struct pollfd* new_pollfds = realloc(runtime->pollfds,
+    struct pollfd* new_pollfds = (struct pollfd*)realloc(runtime->pollfds,
                                          new_capacity * sizeof(struct pollfd));
     if (!new_pollfds) return -1;
     runtime->pollfds = new_pollfds;
     
-    fd_mapping_t* new_mappings = realloc(runtime->mappings,
+    fd_mapping_t* new_mappings = (fd_mapping_t*)realloc(runtime->mappings,
                                          new_capacity * sizeof(fd_mapping_t));
     if (!new_mappings) return -1;
     runtime->mappings = new_mappings;
@@ -98,11 +99,11 @@ static int expand_capacity(async_runtime_t* runtime) {
 /* Public API */
 
 extern "C" async_runtime_t* async_runtime_init(void) {
-    async_runtime_t* runtime = calloc(1, sizeof(async_runtime_t));
+    async_runtime_t* runtime = (async_runtime_t*)calloc(1, sizeof(async_runtime_t));
     if (!runtime) return NULL;
     
-    runtime->pollfds = malloc(INITIAL_CAPACITY * sizeof(struct pollfd));
-    runtime->mappings = malloc(INITIAL_CAPACITY * sizeof(fd_mapping_t));
+    runtime->pollfds = (struct pollfd*)malloc(INITIAL_CAPACITY * sizeof(struct pollfd));
+    runtime->mappings = (fd_mapping_t*)malloc(INITIAL_CAPACITY * sizeof(fd_mapping_t));
     
     if (!runtime->pollfds || !runtime->mappings) {
         free(runtime->pollfds);
