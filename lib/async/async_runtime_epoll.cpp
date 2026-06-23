@@ -10,10 +10,12 @@
 #include <config.h>
 #endif /* HAVE_CONFIG_H */
 
+#include <fcntl.h>
 #include <sys/epoll.h>
 #include <sys/eventfd.h>
 #include <sys/stat.h>
 #include <errno.h>
+#include <unistd.h>
 
 #include "async_runtime.h"
 
