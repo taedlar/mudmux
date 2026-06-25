@@ -74,7 +74,7 @@ function(find_boost required_version)
     endif()
 
     if (Boost_DIR)
-        find_package(Boost ${required_version} CONFIG REQUIRED GLOBAL
+        find_package(Boost ${required_version} CONFIG GLOBAL
             PATHS
                 ${Boost_DIR}
             NO_DEFAULT_PATH
@@ -98,7 +98,6 @@ function(find_boost required_version)
         find_package(Boost ${required_version} CONFIG GLOBAL COMPONENTS ${arg_COMPONENTS})
     endif()
     if (Boost_FOUND)
-        message(STATUS "Found Boost: ${Boost_DIR} (found version ${Boost_VERSION})")
         set(HAVE_BOOST TRUE PARENT_SCOPE)
     endif()
     foreach(component IN LISTS arg_COMPONENTS)

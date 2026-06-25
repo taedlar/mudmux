@@ -9,14 +9,21 @@ project(mudmux
     LANGUAGES C CXX
 )
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake")
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 include(CTest) # optionally enable testing with -DBUILD_TESTING=ON
 include(utils)
 
 # compiler settings
 if(MSVC)
-    add_compile_options(/W4 /WX /Zc:__cplusplus /EHs /permissive- /utf-8)
+    add_compile_options(/W4 /WX /Zc:__cplusplus /EHs /permissive- /utf-8 /nologo)
 elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-	add_compile_options(-Wall -Werror -Wpedantic)
+	add_compile_options(-Wall -Wextra -Wpedantic)
+endif()
+
+if(WIN32)
+    add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
 endif()
 
 # check for standard functions
@@ -24,8 +31,8 @@ include(CheckSymbolExists)
 check_symbol_exists(gettimeofday sys/time.h HAVE_GETTIMEOFDAY)
 
 # find or fetch dependencies
-find_boost(1.70)
-find_boost_headers("boost/filesystem.hpp")
+find_boost(1.70 COMPONENTS filesystem)
+find_boost_headers(boost/filesystem.hpp)
 find_package(OpenSSL)
 include(fetch-settings) # pulls in FetchContent and declares dependencies
 FetchContent_MakeAvailable(spdlog)

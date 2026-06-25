@@ -12,9 +12,6 @@
             "binaryDir": "${sourceDir}/out/build/${presetName}",
             "cacheVariables": {
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
-                "CMAKE_POSITION_INDEPENDENT_CODE": "ON",
-                "CMAKE_CXX_STANDARD": "17",
-                "CMAKE_CXX_STANDARD_REQUIRED": "ON",
                 "CMAKE_PROJECT_TOP_LEVEL_INCLUDES": "${sourceDir}/cmake/setup.cmake"
             }
         },
@@ -57,27 +54,33 @@
                 "type": "equals",
                 "lhs": "${hostSystemName}",
                 "rhs": "Windows"
+            },
+            "architecture": {
+              "value": "x64",
+              "strategy": "set"
+            }
+        },
+        {
+            "name": "clangcl-x64",
+            "inherits": ["default", "msvc-default"],
+            "description": "Configure the project for Visual Studio 2019 x64 using ClangCL.",
+            "generator": "Visual Studio 16 2019",
+            "toolset": {
+              "value": "ClangCL",
+              "strategy": "set"
             }
         },
         {
             "name": "vs16-x64",
             "inherits": ["default", "msvc-default"],
             "description": "Configure the project for Visual Studio 2019 x64.",
-            "generator": "Visual Studio 16 2019",
-            "architecture": {
-              "value": "x64",
-              "strategy": "set"
-            }
+            "generator": "Visual Studio 16 2019"
         },
         {
             "name": "vs18-x64",
             "inherits": ["default", "msvc-default"],
             "description": "Configure the project for Visual Studio 2026 x64.",
-            "generator": "Visual Studio 18 2026",
-            "architecture": {
-              "value": "x64",
-              "strategy": "set"
-            }
+            "generator": "Visual Studio 18 2026"
         },
         {
             "name": "macos-default",
@@ -125,6 +128,19 @@
         {
             "name": "rel-linux-clang",
             "inherits": ["dev-linux-clang"],
+            "description": "Release build with debug information",
+            "configuration": "RelWithDebInfo"
+        },
+        {
+            "name": "dev-clangcl-x64",
+            "configurePreset": "clangcl-x64",
+            "description": "Development build",
+            "targets": ["all"],
+            "configuration": "Debug"
+        },
+        {
+            "name": "rel-clangcl-x64",
+            "inherits": ["dev-clangcl-x64"],
             "description": "Release build with debug information",
             "configuration": "RelWithDebInfo"
         },
@@ -178,6 +194,11 @@
             "name": "units-linux-clang",
             "configurePreset": "linux-clang",
             "description": "Run tests on Linux using Clang."
+        },
+        {
+            "name": "units-clangcl-x64",
+            "configurePreset": "clangcl-x64",
+            "description": "Run tests on Windows using Visual Studio 2019 x64 with ClangCL."
         },
         {
             "name": "units-vs16-x64",
