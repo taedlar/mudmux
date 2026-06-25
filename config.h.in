@@ -9,3 +9,5 @@
 #cmakedefine HAVE_GETTIMEOFDAY
 
 #cmakedefine HAVE_BOOST
+#cmakedefine HAVE_BOOST_HEADERS
+#cmakedefine HAVE_BOOST_FILESYSTEM_HPP
