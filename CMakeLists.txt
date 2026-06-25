@@ -9,8 +9,8 @@ project(mudmux
     LANGUAGES C CXX
 )
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake")
+include(CTest) # optionally enable testing with -DBUILD_TESTING=ON
 include(utils)
-enable_testing()
 
 # compiler settings
 if(MSVC)
@@ -26,7 +26,6 @@ check_symbol_exists(gettimeofday sys/time.h HAVE_GETTIMEOFDAY)
 # find or fetch dependencies
 find_boost(1.70)
 find_boost_headers("boost/filesystem.hpp")
-find_package(GTest)
 find_package(OpenSSL)
 include(fetch-settings) # pulls in FetchContent and declares dependencies
 FetchContent_MakeAvailable(spdlog)
@@ -42,12 +41,10 @@ add_subdirectory(src)
 
 # add tests
 if (BUILD_TESTING)
-    if (NOT GTest_FOUND)
-        message(STATUS "Fetching GTest ...")
-        FetchContent_MakeAvailable(GTest)
-        if (NOT TARGET GTest::gtest OR NOT TARGET GTest::gtest_main)
-            message(FATAL_ERROR "GTest not found and could not be fetched."
-                " Please install GTest or disable testing with -DBUILD_TESTING=OFF.")
-        endif()
+    FetchContent_MakeAvailable(GTest) # always fetch GoogleTest (as recommended by Google)
+    if (NOT TARGET GTest::gtest OR NOT TARGET GTest::gtest_main)
+        message(FATAL_ERROR "GTest not found and could not be fetched."
+            " Please check your internet connection or disable testing with -DBUILD_TESTING=OFF.")
     endif()
+    include(GoogleTest)
 endif()
