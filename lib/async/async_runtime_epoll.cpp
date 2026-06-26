@@ -66,7 +66,8 @@ extern "C" async_runtime_t* async_runtime_init(void) {
     }
     
     /* Add eventfd to epoll */
-    struct epoll_event ev = {0};
+    struct epoll_event ev;
+    memset(&ev, 0, sizeof(ev));
     ev.events = EPOLLIN;
     ev.data.fd = runtime->event_fd;
     if (epoll_ctl(runtime->epoll_fd, EPOLL_CTL_ADD, runtime->event_fd, &ev) < 0) {
@@ -96,7 +97,8 @@ extern "C" void async_runtime_deinit(async_runtime_t* runtime) {
 extern "C" int async_runtime_add(async_runtime_t* runtime, socket_fd_t fd, uint32_t events, void* context) {
     if (!runtime || fd < 0) return -1;
     
-    struct epoll_event ev = {0};
+    struct epoll_event ev;
+    memset(&ev, 0, sizeof(ev));
     ev.events = events_to_epoll(events);
     ev.data.ptr = context;
     
@@ -106,7 +108,8 @@ extern "C" int async_runtime_add(async_runtime_t* runtime, socket_fd_t fd, uint3
 extern "C" int async_runtime_modify(async_runtime_t* runtime, socket_fd_t fd, uint32_t events, void* context) {
     if (!runtime || fd < 0) return -1;
     
-    struct epoll_event ev = {0};
+    struct epoll_event ev;
+    memset(&ev, 0, sizeof(ev));
     ev.events = events_to_epoll(events);
     ev.data.ptr = context;  /* Preserve context pointer when modifying events */
     

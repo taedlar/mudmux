@@ -59,6 +59,7 @@ static int set_console_input_mode(console_worker_context_t *ctx,
        * ReadConsoleW and unblocks it.  Key-up events do not produce characters and
        * therefore never trigger the wakeup mask. */
       INPUT_RECORD esc_input;
+      memset(&esc_input, 0, sizeof(esc_input));
       esc_input.EventType = KEY_EVENT;
       esc_input.Event.KeyEvent.bKeyDown = TRUE;
       esc_input.Event.KeyEvent.wRepeatCount = 1;
