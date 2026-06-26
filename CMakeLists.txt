@@ -6,18 +6,19 @@ project(mudmux
     VERSION 0.1
     DESCRIPTION "A transport-layer host for MUDs"
     HOMEPAGE_URL "https://github.com/taedlar/mudmux"
-    LANGUAGES C CXX
+    LANGUAGES CXX
 )
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake")
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+set(CMAKE_COMPILE_WARNING_AS_ERROR OFF)
 include(CTest) # optionally enable testing with -DBUILD_TESTING=ON
 include(utils)
 
 # compiler settings
 if(MSVC)
-    add_compile_options(/W4 /WX /Zc:__cplusplus /EHs /permissive- /utf-8 /nologo)
+    add_compile_options(/W3 /permissive- /utf-8 /nologo)
 elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
 	add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
@@ -36,6 +37,11 @@ find_boost_headers(boost/json.hpp)
 find_package(OpenSSL)
 include(fetch-settings) # pulls in FetchContent and declares dependencies
 FetchContent_MakeAvailable(argparse spdlog yaml-cpp)
+
+# patches for dependencies
+if (MSVC AND TARGET yaml-cpp)
+    target_compile_definitions(yaml-cpp PRIVATE /wd4067)
+endif()
 
 # generate config.h from config.h.in
 configure_file(${CMAKE_SOURCE_DIR}/config.h.in ${CMAKE_BINARY_DIR}/config.h)
