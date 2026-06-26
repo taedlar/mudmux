@@ -1,16 +1,27 @@
 /* config.h */
+#ifndef CONFIG_H
+#define CONFIG_H
 
 #define PACKAGE "@CMAKE_PROJECT_NAME@"
 #define VERSION "@CMAKE_PROJECT_VERSION@"
 
+/* compile-time log level activated (SPDLOG_*) */
+#define SPDLOG_ACTIVE_LEVEL SPDLOG_LEVEL_INFO
+
 #include <spdlog/spdlog.h>
-#define debug_error spdlog::error
-#define debug_warn spdlog::warn
-#define debug_info spdlog::info
-#define debug_trace spdlog::trace
+
+/* runtime log macros */
+#define log_critical    spdlog::critical
+#define log_error       spdlog::error
+#define log_warn        spdlog::warn
+#define log_info        spdlog::info
+#define log_debug       spdlog::debug
+#define log_trace       spdlog::trace
 
 #cmakedefine HAVE_GETTIMEOFDAY
 
 #cmakedefine HAVE_BOOST
 #cmakedefine HAVE_BOOST_HEADERS
 #cmakedefine HAVE_BOOST_JSON_HPP
+
+#endif /* CONFIG_H */
