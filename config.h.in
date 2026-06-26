@@ -1,5 +1,8 @@
 /* config.h */
 
+#define PACKAGE "@CMAKE_PROJECT_NAME@"
+#define VERSION "@CMAKE_PROJECT_VERSION@"
+
 #include <spdlog/spdlog.h>
 #define debug_error spdlog::error
 #define debug_warn spdlog::warn
