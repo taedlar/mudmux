@@ -31,3 +31,9 @@ FetchContent_Declare(
     GIT_REPOSITORY https://github.com/p-ranav/argparse.git
     GIT_TAG v3.2
 )
+
+FetchContent_Declare(
+    yaml-cpp
+    GIT_REPOSITORY https://github.com/jbeder/yaml-cpp.git
+    GIT_TAG yaml-cpp-0.9.0
+)

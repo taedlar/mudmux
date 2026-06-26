@@ -31,11 +31,11 @@ include(CheckSymbolExists)
 check_symbol_exists(gettimeofday sys/time.h HAVE_GETTIMEOFDAY)
 
 # find or fetch dependencies
-find_boost(1.70 COMPONENTS filesystem)
-find_boost_headers(boost/filesystem.hpp)
+find_boost(1.70 COMPONENTS json)
+find_boost_headers(boost/json.hpp)
 find_package(OpenSSL)
 include(fetch-settings) # pulls in FetchContent and declares dependencies
-FetchContent_MakeAvailable(argparse spdlog)
+FetchContent_MakeAvailable(argparse spdlog yaml-cpp)
 
 # generate config.h from config.h.in
 configure_file(${CMAKE_SOURCE_DIR}/config.h.in ${CMAKE_BINARY_DIR}/config.h)

@@ -13,4 +13,4 @@
 
 #cmakedefine HAVE_BOOST
 #cmakedefine HAVE_BOOST_HEADERS
-#cmakedefine HAVE_BOOST_FILESYSTEM_HPP
+#cmakedefine HAVE_BOOST_JSON_HPP
