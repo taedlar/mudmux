@@ -25,3 +25,9 @@ FetchContent_Declare(
     FIND_PACKAGE_ARGS
         NAMES spdlog
 )
+
+FetchContent_Declare(
+    argparse
+    GIT_REPOSITORY https://github.com/p-ranav/argparse.git
+    GIT_TAG v3.2
+)

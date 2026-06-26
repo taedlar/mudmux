@@ -8,9 +8,13 @@
 #include "async/console_worker.h"
 
 #include <iostream>
-#include <spdlog/spdlog.h>
+#include <argparse/argparse.hpp>
 
-int main() {
+static void process_command_line(int argc, char* argv[]);
+
+int main (int argc, char* argv[]) {
+    // process command line arguments
+    process_command_line(argc, argv);
 
     // initialize async runtime
     auto runtime = async_runtime_init();
@@ -66,4 +70,27 @@ int main() {
     debug_info ("shutting down mudmux");
     async_runtime_deinit (runtime);
     return EXIT_SUCCESS;
+}
+
+static void process_command_line(int argc, char* argv[]) {
+    argparse::ArgumentParser program("mudmux", VERSION);
+
+    program.add_argument("-f", "--config")
+        .help("specify configuration file")
+        .metavar("FILE")
+        .default_value(std::string("mudmux.conf"));
+
+    try {
+        program.parse_args(argc, argv);
+    }
+    catch (const std::runtime_error& err) {
+        std::cerr << err.what() << std::endl;
+        std::cerr << program;
+        std::exit(EXIT_FAILURE);
+    }
+
+    if (program.get<bool>("--version")) {
+        std::cout << PACKAGE << " version " << VERSION << std::endl;
+        std::exit(EXIT_SUCCESS);
+    }
 }
