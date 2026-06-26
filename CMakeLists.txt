@@ -40,7 +40,7 @@ FetchContent_MakeAvailable(argparse spdlog yaml-cpp)
 
 # patches for dependencies
 if (MSVC AND TARGET yaml-cpp)
-    target_compile_definitions(yaml-cpp PRIVATE /wd4067)
+    target_compile_options(yaml-cpp PRIVATE /wd4067)
 endif()
 
 # generate config.h from config.h.in
