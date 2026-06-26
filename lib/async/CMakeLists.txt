@@ -1,6 +1,7 @@
 # lib/async/CMakeLists.txt
 
 add_library(async STATIC)
+add_library(mudmux::async ALIAS async)
 
 target_sources(async INTERFACE
     FILE_SET HEADERS

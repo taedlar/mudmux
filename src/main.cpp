@@ -7,10 +7,16 @@
 #include "async/async_runtime.h"
 #include "async/console_worker.h"
 
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <string>
 #include <argparse/argparse.hpp>
+#include <yaml-cpp/yaml.h>
 
 static void process_command_line(int argc, char* argv[]);
+
+namespace fs = std::filesystem;
 
 int main (int argc, char* argv[]) {
     // process command line arguments
@@ -73,12 +79,10 @@ int main (int argc, char* argv[]) {
 }
 
 static void process_command_line(int argc, char* argv[]) {
-    argparse::ArgumentParser program("mudmux", VERSION);
+    argparse::ArgumentParser program (PACKAGE, VERSION);
 
-    program.add_argument("-f", "--config")
-        .help("specify configuration file")
-        .metavar("FILE")
-        .default_value(std::string("mudmux.conf"));
+    program.add_argument("-f", "--config").metavar("FILE").default_value(std::string("mud.conf"))
+        .help("specify configuration file");
 
     try {
         program.parse_args(argc, argv);
@@ -92,5 +96,21 @@ static void process_command_line(int argc, char* argv[]) {
     if (program.get<bool>("--version")) {
         std::cout << PACKAGE << " version " << VERSION << std::endl;
         std::exit(EXIT_SUCCESS);
+    }
+
+    if (program.is_used("--config")) {
+        std::string config_file = program.get<std::string>("--config");
+        try {
+            YAML::Node config = YAML::LoadFile(config_file);
+            debug_info ("loaded configuration file: {}", config_file);
+        }
+        catch (const YAML::BadFile& e) {
+            debug_error("failed to load configuration file {}: {}", config_file, e.what());
+            std::exit(EXIT_FAILURE);
+        }
+        catch (const YAML::ParserException& e) {
+            debug_error("failed to parse configuration file {}: {}", config_file, e.what());
+            std::exit(EXIT_FAILURE);
+        }
     }
 }
