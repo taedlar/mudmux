@@ -27,6 +27,10 @@ if(WIN32)
     add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
 endif()
 
+# check for standard headers
+include(CheckIncludeFiles)
+check_include_files(stdbool.h HAVE_STDBOOL_H)
+
 # check for standard functions
 include(CheckSymbolExists)
 check_symbol_exists(gettimeofday sys/time.h HAVE_GETTIMEOFDAY)
@@ -50,6 +54,7 @@ add_compile_definitions(HAVE_CONFIG_H)
 
 # add subdirectories
 add_subdirectory(lib/async)
+add_subdirectory(lib/comm)
 add_subdirectory(src)
 
 # add tests

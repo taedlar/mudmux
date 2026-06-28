@@ -5,8 +5,8 @@
 #define PACKAGE "@CMAKE_PROJECT_NAME@"
 #define VERSION "@CMAKE_PROJECT_VERSION@"
 
-/* compile-time log level activated (SPDLOG_*) */
-#define SPDLOG_ACTIVE_LEVEL SPDLOG_LEVEL_INFO
+/* compile-time log level activated (SPDLOG_*), must be set before including spdlog headers */
+#define SPDLOG_ACTIVE_LEVEL SPDLOG_LEVEL_TRACE
 
 #include <spdlog/spdlog.h>
 
@@ -18,10 +18,22 @@
 #define log_debug       spdlog::debug
 #define log_trace       spdlog::trace
 
+#cmakedefine HAVE_STDBOOL_H
+
 #cmakedefine HAVE_GETTIMEOFDAY
 
 #cmakedefine HAVE_BOOST
 #cmakedefine HAVE_BOOST_HEADERS
 #cmakedefine HAVE_BOOST_JSON_HPP
+
+#ifndef __cplusplus
+#ifdef HAVE_STDBOOL_H
+    #include <stdbool.h>
+#else
+    typedef int bool;
+    #define true 1
+    #define false 0
+#endif
+#endif
 
 #endif /* CONFIG_H */

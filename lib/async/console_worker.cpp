@@ -118,13 +118,13 @@ static void* console_worker_proc_win32(void* ctx) {
     platform_event_t* stop_event = async_worker_get_stop_event(async_worker_current());
     
     if (!stop_event) {
-        SPDLOG_ERROR("failed to get stop event");
+        log_error("failed to get stop event");
         return NULL;
     }
     
     HANDLE hStopEvent = (HANDLE)platform_event_get_native_handle(stop_event);
     if (!hStopEvent) {
-        SPDLOG_ERROR("failed to get native event handle");
+        log_error("failed to get native event handle");
         return NULL;
     }
     
@@ -138,7 +138,7 @@ static void* console_worker_proc_win32(void* ctx) {
     WCHAR wide_buffer[CONSOLE_MAX_LINE];
     DWORD chars_read = 0;
 
-    SPDLOG_INFO ("console worker started (type: {})", console_type_str(cctx->console_type));
+    log_info ("console worker started (type: {})", console_type_str(cctx->console_type));
 
     while (!async_worker_should_stop(async_worker_current())) {
         /* Wait for stdin to be signaled OR stop event */
@@ -173,7 +173,7 @@ static void* console_worker_proc_win32(void* ctx) {
                     /* ReadConsoleW returned TRUE with 0 chars: spurious wakeup from an
                      * injected input event (e.g. VK_ESCAPE key-up during mode switch).
                      * This is not EOF; loop back and wait for real input. */
-                    SPDLOG_INFO ("console woken with no chars (spurious wakeup), continuing\n");
+                    log_info ("console woken with no chars (spurious wakeup), continuing\n");
                     continue;
                 }
                 else {
@@ -183,12 +183,12 @@ static void* console_worker_proc_win32(void* ctx) {
                 /* Pipe or file: Use ReadFile (synchronous) */
                 result = ReadFile (hStdin, line_buffer, CONSOLE_MAX_LINE - 1, &chars_read, NULL);
             }
-            SPDLOG_INFO ("read {} chars from console (result: {})", chars_read, result ? "success" : "failure");
+            log_info ("read {} chars from console (result: {})", chars_read, result ? "success" : "failure");
 
             if (!result) {
                 DWORD err = GetLastError();
                 if (err == ERROR_OPERATION_ABORTED) {
-                    SPDLOG_INFO ("console read interrupted by shutdown or input mode switch");
+                    log_info ("console read interrupted by shutdown or input mode switch");
                     restore_desired_console_input_mode (cctx);
                     continue;
                 }
@@ -196,11 +196,11 @@ static void* console_worker_proc_win32(void* ctx) {
                     /* SetConsoleMode changing ENABLE_LINE_INPUT while ReadConsoleW is blocking
                      * can return errors such as ERROR_INVALID_FUNCTION; treat these as
                      * non-fatal mode-switch interruptions rather than killing the thread. */
-                    SPDLOG_WARN ("ReadConsoleW() interrupted (err={}), restoring mode and continuing", err);
+                    log_warn ("ReadConsoleW() interrupted (err={}), restoring mode and continuing", err);
                     restore_desired_console_input_mode (cctx);
                     continue;
                 }
-                SPDLOG_ERROR ("console read failed: {}", err);
+                log_error ("console read failed: {}", err);
                 break;
             }
             
@@ -210,7 +210,7 @@ static void* console_worker_proc_win32(void* ctx) {
 
                 /* Enqueue line */
                 if (!async_queue_enqueue(cctx->line_queue, line_buffer, chars_read + 1)) {
-                    SPDLOG_WARN  ("console line queue full, dropping line");
+                    log_warn  ("console line queue full, dropping line");
                 }
 
                 /* Post completion to wake main thread */
@@ -225,12 +225,12 @@ static void* console_worker_proc_win32(void* ctx) {
             break;
         } else {
             /* Error or unexpected result */
-            SPDLOG_ERROR ("WaitForMultipleObjects() failed: {} (error: {})", wait_result, GetLastError());
+            log_error ("WaitForMultipleObjects() failed: {} (error: {})", wait_result, GetLastError());
             break;
         }
     }
 
-    SPDLOG_INFO ("console worker stopped");
+    log_info ("console worker stopped");
     return NULL;
 }
 #else
@@ -242,7 +242,7 @@ static void* console_worker_proc_posix(void* ctx) {
     char line_buffer[CONSOLE_MAX_LINE];
     int stop_fd = cctx->stop_pipe_fds[0];
 
-    SPDLOG_INFO ("console worker started (type: {})", console_type_str(cctx->console_type));
+    log_info ("console worker started (type: {})", console_type_str(cctx->console_type));
 
     while (!async_worker_should_stop(async_worker_current())) {
         /* Block in select() on stdin and the stop-pipe read end.
@@ -271,7 +271,7 @@ static void* console_worker_proc_posix(void* ctx) {
             if (errno == EINTR) {
                 continue; /* Interrupted by signal, retry */
             }
-            SPDLOG_ERROR ("select() failed: {}", strerror(errno));
+            log_error ("select() failed: {}", strerror(errno));
             break;
         }
 
@@ -290,11 +290,11 @@ static void* console_worker_proc_posix(void* ctx) {
             if (errno == EINTR || errno == EAGAIN) {
                 continue;
             }
-            SPDLOG_ERROR ("read() failed: {}", strerror(errno));
+            log_error ("read() failed: {}", strerror(errno));
             break;
         } else if (bytes_read == 0) {
             /* EOF */
-            SPDLOG_INFO ("console EOF detected");
+            log_info ("console EOF detected");
             console_worker_set_eof (cctx);
             break;
         }
@@ -304,14 +304,14 @@ static void* console_worker_proc_posix(void* ctx) {
 
         /* Enqueue line */
         if (!async_queue_enqueue(cctx->line_queue, line_buffer, bytes_read + 1)) {
-            SPDLOG_WARN ("console line queue full, dropping line");
+            log_warn ("console line queue full, dropping line");
         }
 
         /* Post completion to wake main thread */
         async_runtime_post_completion (cctx->runtime, cctx->completion_key, bytes_read);
     }
 
-    SPDLOG_INFO ("console worker stopped");
+    log_info ("console worker stopped");
     return NULL;
 }
 #endif
@@ -321,13 +321,13 @@ static void* console_worker_proc_posix(void* ctx) {
  */
 extern "C" console_worker_context_t* console_worker_init(async_runtime_t* runtime, async_queue_t* queue, uintptr_t completion_key) {
     if (!runtime || !queue) {
-        SPDLOG_ERROR ("console_worker_init: invalid arguments");
+        log_error ("console_worker_init: invalid arguments");
         return NULL;
     }
 
     console_worker_context_t* ctx = (console_worker_context_t*)calloc(1, sizeof(*ctx));
     if (!ctx) {
-        SPDLOG_ERROR ("console_worker_init: out of memory");
+        log_error ("console_worker_init: out of memory");
         return NULL;
     }
 
@@ -354,13 +354,13 @@ extern "C" console_worker_context_t* console_worker_init(async_runtime_t* runtim
      * and be woken by either stdin becoming readable or a stop signal. */
     ctx->stop_pipe_fds[0] = ctx->stop_pipe_fds[1] = -1;
     if (pipe(ctx->stop_pipe_fds) != 0) {
-        SPDLOG_WARN ("console_worker_init: failed to create stop pipe: {}", strerror(errno));
+        log_warn ("console_worker_init: failed to create stop pipe: {}", strerror(errno));
         /* Non-fatal: worker falls back to polling with timeout */
     }
 #endif
 
     if (ctx->console_type == CONSOLE_TYPE_NONE) {
-        SPDLOG_WARN ("no console detected, worker will not start");
+        log_warn ("no console detected, worker will not start");
         /* Don't treat as fatal - allow mudlib to run without console */
         return ctx;
     }
@@ -372,7 +372,7 @@ extern "C" console_worker_context_t* console_worker_init(async_runtime_t* runtim
 #endif
 
     if (!ctx->worker) {
-        SPDLOG_ERROR ("failed to create console worker thread");
+        log_error ("failed to create console worker thread");
 #ifndef _WIN32
         if (ctx->stop_pipe_fds[0] >= 0) close(ctx->stop_pipe_fds[0]);
         if (ctx->stop_pipe_fds[1] >= 0) close(ctx->stop_pipe_fds[1]);
