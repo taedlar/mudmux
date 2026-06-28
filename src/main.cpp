@@ -21,23 +21,23 @@ int main (int argc, char* argv[]) {
     auto runtime = async_runtime_init();
     bool success = runtime && comm_init_console(runtime);
     if (!success) {
-        log_error ("failed to initialize console");
+        SPDLOG_ERROR ("failed to initialize console");
         async_runtime_deinit(runtime);
         return EXIT_FAILURE;
     }
 
     // main event loop
-    log_info ("mudmux starting event loop");
+    SPDLOG_INFO ("mudmux starting event loop");
     io_event_t events[64];
     bool will_shutdown = false;
     while (!will_shutdown) {
         // [BLOCKING] wait for I/O events
         int num_events = async_runtime_wait(runtime, events, 64, nullptr);
         if (num_events < 0) {
-            log_error ("async_runtime_wait failed");
+            SPDLOG_ERROR ("async_runtime_wait failed");
             break;
         }
-        log_debug ("async_runtime_wait returned {} events", num_events);
+        SPDLOG_DEBUG ("async_runtime_wait returned {} events", num_events);
 
         // process console input (always check for console input, even if no events were returned)
         comm_process_console_input (runtime, &will_shutdown);
@@ -45,15 +45,15 @@ int main (int argc, char* argv[]) {
         // process events
         for (int i = 0; i < num_events; ++i) {
             auto& event = events[i];
-            log_debug ("event: fd={}, event_type={}, bytes_transferred={}", event.fd, event.event_type, event.bytes_transferred);
+            SPDLOG_DEBUG ("event: fd={}, event_type={}, bytes_transferred={}", event.fd, event.event_type, event.bytes_transferred);
         }
     }
 
     // shutdown console (gracefully)
-    log_info ("shutting down console");
+    SPDLOG_INFO ("shutting down console");
     comm_shutdown_console (runtime);
 
-    log_info ("shutting down mudmux");
+    SPDLOG_INFO ("shutting down mudmux");
     async_runtime_deinit (runtime);
     return EXIT_SUCCESS;
 }
@@ -72,7 +72,7 @@ static void process_command_line(int argc, char* argv[]) {
     try {
         program.parse_args(argc, argv);
         spdlog::set_level(static_cast<spdlog::level::level_enum>(log_level));
-        log_debug ("log level set to {}", spdlog::level::to_string_view(spdlog::get_level()));
+        SPDLOG_DEBUG ("log level set to {}", spdlog::level::to_string_view(spdlog::get_level()));
     }
     catch (const std::runtime_error& err) {
         std::cerr << err.what() << std::endl;
@@ -89,14 +89,14 @@ static void process_command_line(int argc, char* argv[]) {
         std::string config_file = program.get<std::string>("--config");
         try {
             YAML::Node config = YAML::LoadFile(config_file);
-            log_info ("loaded configuration file: {}", config_file);
+            SPDLOG_INFO ("loaded configuration file: {}", config_file);
         }
         catch (const YAML::BadFile& e) {
-            log_error ("failed to load configuration file {}: {}", config_file, e.what());
+            SPDLOG_ERROR ("failed to load configuration file {}: {}", config_file, e.what());
             std::exit(EXIT_FAILURE);
         }
         catch (const YAML::ParserException& e) {
-            log_error ("failed to parse configuration file {}: {}", config_file, e.what());
+            SPDLOG_ERROR ("failed to parse configuration file {}: {}", config_file, e.what());
             std::exit(EXIT_FAILURE);
         }
     }

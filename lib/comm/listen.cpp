@@ -11,24 +11,24 @@
 extern "C" bool comm_init_listening_ports(async_runtime_t *runtime, int port, void *ctx) {
 
     if (!runtime) {
-        log_error ("Invalid async runtime pointer");
+        SPDLOG_ERROR ("Invalid async runtime pointer");
         return false;
     }
 
     if (port < 1 || port > 65535) {
-        log_error ("Invalid port number: {}", port);
+        SPDLOG_ERROR ("Invalid port number: {}", port);
         return false;
     }
 
     socket_fd_t sock_fd = socket (AF_INET, SOCK_STREAM, 0);
     if (sock_fd == INVALID_SOCKET_FD) {
-        log_error ("socket() failed: {}", SOCKET_ERRNO);
+        SPDLOG_ERROR ("socket() failed: {}", SOCKET_ERRNO);
         return false;
     }
 
     int optval = 1;
     if (setsockopt (sock_fd, SOL_SOCKET, SO_REUSEADDR, (char *) &optval, sizeof (optval)) == SOCKET_ERROR) {
-        log_error ("setsockopt() failed: {}", SOCKET_ERRNO);
+        SPDLOG_ERROR ("setsockopt() failed: {}", SOCKET_ERRNO);
         SOCKET_CLOSE (sock_fd);
         return false;
     }
@@ -38,32 +38,32 @@ extern "C" bool comm_init_listening_ports(async_runtime_t *runtime, int port, vo
     sin.sin_addr.s_addr = INADDR_ANY;
     sin.sin_port = htons ((uint16_t) port);
     if (bind (sock_fd, (struct sockaddr *) &sin, sizeof (sin)) == SOCKET_ERROR) {
-        log_error ("bind() failed: {}", SOCKET_ERRNO);
+        SPDLOG_ERROR ("bind() failed: {}", SOCKET_ERRNO);
         SOCKET_CLOSE (sock_fd);
         return false;
     }
 
     socklen_t sin_len = sizeof (sin);
     if (getsockname (sock_fd, (struct sockaddr *) &sin, &sin_len) == SOCKET_ERROR) {
-          log_error ("getsockname() failed: {}", SOCKET_ERRNO);
+          SPDLOG_ERROR ("getsockname() failed: {}", SOCKET_ERRNO);
           SOCKET_CLOSE (sock_fd);
           return false;
     }
 
     if (set_socket_nonblocking (sock_fd, 1) == SOCKET_ERROR) {
-        log_error ("set_socket_nonblocking() failed: {}", SOCKET_ERRNO);
+        SPDLOG_ERROR ("set_socket_nonblocking() failed: {}", SOCKET_ERRNO);
         SOCKET_CLOSE (sock_fd);
         return false;
     }
 
     if (listen (sock_fd, SOMAXCONN) == SOCKET_ERROR) {
-        log_error ("listen() failed: {}", SOCKET_ERRNO);
+        SPDLOG_ERROR ("listen() failed: {}", SOCKET_ERRNO);
         SOCKET_CLOSE (sock_fd);
         return false;
     }
  
     if (async_runtime_add (runtime, sock_fd, EVENT_READ, ctx) != 0) {
-        log_error ("async_runtime_add() failed for listening socket: {}", SOCKET_ERRNO);
+        SPDLOG_ERROR ("async_runtime_add() failed for listening socket: {}", SOCKET_ERRNO);
         SOCKET_CLOSE (sock_fd);
         return false;
     }
@@ -96,6 +96,6 @@ extern "C" bool comm_init_listening_ports(async_runtime_t *runtime, int port, vo
   add_ip_entry (INADDR_LOOPBACK, "localhost");
 #endif
 
-    log_info ("Listening on port {}", port);
+    SPDLOG_INFO ("Listening on port {}", port);
     return true;
 }

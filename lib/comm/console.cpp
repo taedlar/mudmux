@@ -13,14 +13,14 @@ extern "C" bool comm_init_console (async_runtime_t *runtime) {
     if (!console_queue) {
         console_queue = async_queue_create (100, 4096, ASYNC_QUEUE_DROP_OLDEST);
         if (!console_queue) {
-            log_error ("failed to create console queue");
+            SPDLOG_ERROR ("failed to create console queue");
             return false;
         }
     }
 
     console_ctx = console_worker_init (runtime, console_queue, CONSOLE_COMPLETION_KEY);
     if (!console_ctx) {
-        log_error ("failed to initialize console worker");
+        SPDLOG_ERROR ("failed to initialize console worker");
         async_queue_destroy (console_queue);
         return false;
     }
@@ -48,12 +48,12 @@ extern "C" void comm_process_console_input (async_runtime_t *runtime, bool *eof_
         if (console_worker_take_eof (console_ctx)) {
             if (console_ctx->console_type == CONSOLE_TYPE_REAL) {
                 // re-arm console worker for next console input (e.g., after Ctrl+D EOF)
-                log_info ("console EOF detected, re-initializing console worker");
+                SPDLOG_INFO ("console EOF detected, re-initializing console worker");
                 console_worker_destroy(console_ctx);
                 console_ctx = console_worker_init (runtime, console_queue, CONSOLE_COMPLETION_KEY);
             }
             else {
-                log_info ("console EOF detected");
+                SPDLOG_INFO ("console EOF detected");
                 if (eof_received) {
                     *eof_received = true;
                 }
