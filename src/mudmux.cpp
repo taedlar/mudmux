@@ -2,6 +2,7 @@
 #include "config.h"
 #endif
 
+#include "mudmux.h"
 #include "async/async_runtime.h"
 #include "comm/console.h"
 #include "comm/listen.h"
