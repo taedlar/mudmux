@@ -2,6 +2,7 @@
 #include "config.h"
 #endif
 
+#include "mudmux.h"
 #include "console.h"
 #include "async/console_worker.h"
 
@@ -43,7 +44,7 @@ extern "C" void comm_shutdown_console (async_runtime_t *runtime) {
     }
 }
 
-extern "C" void comm_process_console_input (async_runtime_t *runtime, bool *eof_received) {
+extern "C" void comm_process_console_input (async_runtime_t *runtime) {
     if (console_ctx) {
         if (console_worker_take_eof (console_ctx)) {
             if (console_ctx->console_type == CONSOLE_TYPE_REAL) {
@@ -53,10 +54,9 @@ extern "C" void comm_process_console_input (async_runtime_t *runtime, bool *eof_
                 console_ctx = console_worker_init (runtime, console_queue, CONSOLE_COMPLETION_KEY);
             }
             else {
-                SPDLOG_INFO ("console EOF detected");
-                if (eof_received) {
-                    *eof_received = true;
-                }
+                // stdin is either a pipe or a file, so EOF means the end of input; shut down the server
+                SPDLOG_INFO ("EOF detected (pipe/file), shutting down server");
+                mudmux_shutdown();
             }
         }
     }

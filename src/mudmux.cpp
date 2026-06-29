@@ -7,32 +7,42 @@
 #include "comm/listen.h"
 
 #include <atomic>
+#include <filesystem>
+#include <string>
 #include <yaml-cpp/yaml.h>
 
-static bool enable_console = false;
+static std::atomic<bool> is_running{false};
+static std::atomic<bool> is_shutting_down{false};
+static bool enable_console{false};
 
-extern "C" bool mudmux_init(const char* config_yaml) {
-    if (!config_yaml)
-        return true; // use defaults
-
-    try {
-        YAML::Node config = YAML::Load(config_yaml);
-        if (config["transport"]) {
-            const YAML::Node& transport = config["transport"];
-            if (transport["console"]) {
-                enable_console = transport["console"].as<bool>();
-            }
-        }
+extern "C" bool mudmux_init (const char* config_yaml) {
+    if (is_running.load()) {
+        SPDLOG_ERROR ("mudmux_init() called while already running");
+        return false;
     }
-    catch (const YAML::ParserException& e) {
-        SPDLOG_ERROR ("failed to parse YAML configuration content: {}", e.what());
+    try {
+        YAML::Node config = YAML::Load (config_yaml ? config_yaml : "{\"transport\":{\"console\":true}}");
+        const YAML::Node& transport = config["transport"];
+        // initialize transport layer
+        enable_console = transport["console"].as<bool>(false);
+        is_shutting_down.store(false);
+    }
+    catch (const YAML::Exception& e) {
+        SPDLOG_ERROR ("configuration error: {}", e.what());
         return false;
     }
     return true;
 }
 
-extern "C" int mudmux_run(void* context) {
-    static std::atomic<bool> is_running{false};
+extern "C" void mudmux_deinit (void) {
+    if (is_running.load()) {
+        SPDLOG_ERROR ("mudmux_deinit() called while running");
+        return;
+    }
+    enable_console = false;
+}
+
+extern "C" int mudmux_run (void* context) {
     if (is_running.exchange(true)) {
         SPDLOG_ERROR ("mudmux_run() called while already running");
         return EXIT_FAILURE;
@@ -46,14 +56,14 @@ extern "C" int mudmux_run(void* context) {
     if (!success) {
         SPDLOG_ERROR ("failed to initialize");
         async_runtime_deinit(runtime);
+        is_running.store(false);
         return EXIT_FAILURE;
     }
 
     // main event loop
     SPDLOG_INFO ("entering event loop");
     io_event_t events[64];
-    bool will_shutdown = false;
-    while (!will_shutdown) {
+    while (!is_shutting_down.load()) {
         // [BLOCKING] wait for I/O events
         int num_events = async_runtime_wait(
             runtime, events, sizeof(events) / sizeof(events[0]), nullptr);
@@ -64,7 +74,7 @@ extern "C" int mudmux_run(void* context) {
         SPDLOG_DEBUG ("async_runtime_wait returned {} events", num_events);
 
         // process console input (always check for console input, even if no events were returned)
-        comm_process_console_input (runtime, &will_shutdown);
+        comm_process_console_input (runtime);
 
         // process I/O events (non-blocking)
         for (int i = 0; i < num_events; ++i) {
@@ -79,5 +89,10 @@ extern "C" int mudmux_run(void* context) {
 
     comm_shutdown_console (runtime);
     async_runtime_deinit (runtime);
+    is_running.store(false);
     return EXIT_SUCCESS;
+}
+
+extern "C" void mudmux_shutdown (void) {
+    is_shutting_down.store(true);
 }

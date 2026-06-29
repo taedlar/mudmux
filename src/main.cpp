@@ -11,9 +11,24 @@
 static void process_command_line (int argc, char* argv[]);
 
 int main (int argc, char* argv[]) {
-    process_command_line (argc, argv);
+    process_command_line (argc, argv); // calls mudmux_init() when returning
 
-    return mudmux_run(nullptr);
+    // create server context and register transport layer hooks
+    mudmux_register_hook ("connect", [](void* ctx, int msg, void* data, size_t size) -> int {
+        (void)ctx; // unused parameter
+        (void)msg; // unused parameter
+        (void)data; // unused parameter
+        (void)size; // unused parameter
+        return 0;
+    });
+
+    // run infinite event loop until shutdown is requested
+    int exit_code = mudmux_run(nullptr);
+    mudmux_deinit();
+
+    // cleanup server context
+
+    return exit_code;
 }
 
 /**
@@ -66,8 +81,8 @@ static void process_command_line (int argc, char* argv[]) {
         }
     }
     else {
-        SPDLOG_INFO ("no configuration file specified, using console mode");
-        if (!mudmux_init("{\"transport\":{\"console\":true}}")) {
+        SPDLOG_INFO ("no configuration file specified, using defaults");
+        if (!mudmux_init(nullptr)) {
             std::exit(EXIT_FAILURE);
         }
     }

@@ -9,4 +9,5 @@ add_library(mudmux::comm ALIAS comm)
 target_link_libraries(comm PRIVATE
     spdlog::spdlog
     mudmux::async
+    mudmux::headers
 )
