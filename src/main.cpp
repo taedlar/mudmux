@@ -1,64 +1,19 @@
 // main.cpp
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
-
-#include "async/async_runtime.h"
-#include "comm/console.h"
-#include "comm/listen.h"
+#include "mudmux.h"
 
 #include <iostream>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <argparse/argparse.hpp>
-#include <yaml-cpp/yaml.h>
+#include <spdlog/spdlog.h>
 
 static void process_command_line (int argc, char* argv[]);
 
 int main (int argc, char* argv[]) {
     process_command_line (argc, argv);
 
-    // initialize subsystems
-    auto runtime = async_runtime_init(nullptr);
-    bool success = runtime
-        && comm_init_console(runtime);
-        // && comm_init_listening_port (runtime, 4000, nullptr);
-    if (!success) {
-        SPDLOG_ERROR ("failed to initialize");
-        async_runtime_deinit(runtime);
-        return EXIT_FAILURE;
-    }
-
-    // main event loop
-    SPDLOG_INFO ("entering event loop");
-    io_event_t events[64];
-    bool will_shutdown = false;
-    while (!will_shutdown) {
-        // [BLOCKING] wait for I/O events
-        int num_events = async_runtime_wait(
-            runtime, events, sizeof(events) / sizeof(events[0]), nullptr);
-        if (num_events < 0) {
-            SPDLOG_CRITICAL ("async_runtime_wait failed"); // TODO: initiate retry or shutdown
-            break;
-        }
-        SPDLOG_DEBUG ("async_runtime_wait returned {} events", num_events);
-
-        // process console input (always check for console input, even if no events were returned)
-        comm_process_console_input (runtime, &will_shutdown);
-
-        // process I/O events (non-blocking)
-        for (int i = 0; i < num_events; ++i) {
-#ifndef NDEBUG
-            auto& event = events[i];
-            SPDLOG_DEBUG ("event: fd={}, event_type={}, bytes_transferred={}",
-                event.fd, event.event_type, event.bytes_transferred);
-#endif
-        }
-    }
-    SPDLOG_INFO ("exited event loop");
-
-    comm_shutdown_console (runtime);
-    async_runtime_deinit (runtime);
-    return EXIT_SUCCESS;
+    return mudmux_run(nullptr);
 }
 
 /**
@@ -68,7 +23,7 @@ int main (int argc, char* argv[]) {
 static void process_command_line (int argc, char* argv[]) {
     int log_level = spdlog::level::warn; // default log level
 
-    argparse::ArgumentParser program (PACKAGE, VERSION);
+    argparse::ArgumentParser program (argv[0], "1.0");
     program.add_argument("-f", "--config").metavar("FILE").default_value(std::string("mud.conf"))
         .help("specify configuration file");
     program.add_argument("-V", "--verbose").default_value(false).implicit_value(true).nargs(0)
@@ -80,7 +35,7 @@ static void process_command_line (int argc, char* argv[]) {
         .help("increase verbosity of logging output");
 
     try {
-        program.parse_args(argc, argv);
+        program.parse_args (argc, argv);
         spdlog::set_level(static_cast<spdlog::level::level_enum>(log_level));
         SPDLOG_DEBUG ("log level set to {}", spdlog::level::to_string_view(spdlog::get_level()));
     }
@@ -90,22 +45,29 @@ static void process_command_line (int argc, char* argv[]) {
     }
 
     if (program.get<bool>("--version")) {
-        std::cout << PACKAGE << " version " << VERSION << std::endl;
+        std::cout << "1.0" << std::endl;
         std::exit(EXIT_SUCCESS);
     }
 
     if (program.is_used("--config")) {
         std::string config_file = program.get<std::string>("--config");
-        try {
-            YAML::Node config = YAML::LoadFile(config_file);
-            SPDLOG_INFO ("loaded configuration file: {}", config_file);
-        }
-        catch (const YAML::BadFile& e) {
-            SPDLOG_ERROR ("failed to load configuration file: {}", e.what());
+        std::ifstream input(config_file);
+        if (!input) {
+            SPDLOG_ERROR ("failed to open configuration file: {}", config_file);
             std::exit(EXIT_FAILURE);
         }
-        catch (const YAML::ParserException& e) {
-            SPDLOG_ERROR ("failed to parse configuration file: {}", e.what());
+
+        std::stringstream buffer;
+        buffer << input.rdbuf();
+        std::string config_yaml = buffer.str();
+
+        if (!mudmux_init(config_yaml.c_str())) {
+            std::exit(EXIT_FAILURE);
+        }
+    }
+    else {
+        SPDLOG_INFO ("no configuration file specified, using console mode");
+        if (!mudmux_init("{\"transport\":{\"console\":true}}")) {
             std::exit(EXIT_FAILURE);
         }
     }
