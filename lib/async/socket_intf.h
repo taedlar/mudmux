@@ -36,6 +36,10 @@
     #include <poll.h>
 #endif
 
+#ifdef HAVE_UNISTD_H
+    #include <unistd.h>
+#endif
+
 #ifndef HAVE_GETTIMEOFDAY
 int gettimeofday(struct timeval *tv, void *tz);
 #endif

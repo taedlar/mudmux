@@ -7,6 +7,7 @@ target_link_libraries(mudmux PRIVATE
     argparse::argparse
     yaml-cpp::yaml-cpp
     mudmux::async
+    mudmux::comm
     OpenSSL::SSL
     OpenSSL::Crypto
 )

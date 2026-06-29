@@ -22,6 +22,7 @@
 #define MAX_EVENTS 64
 
 struct async_runtime_s {
+    void* context;  /* User-defined context pointer */
     int epoll_fd;
     int event_fd;  /* For worker completions */
     console_type_t console_type;  /* Detected console type */
@@ -47,10 +48,11 @@ static uint32_t epoll_to_events(uint32_t epoll_events) {
 
 /* Public API */
 
-extern "C" async_runtime_t* async_runtime_init(void) {
+extern "C" async_runtime_t* async_runtime_init(void* context) {
     async_runtime_t* runtime = (async_runtime_t*) calloc (1, sizeof(async_runtime_t));
     if (!runtime) return NULL;
     
+    runtime->context = context;
     runtime->epoll_fd = epoll_create1(0);
     if (runtime->epoll_fd < 0) {
         free(runtime);

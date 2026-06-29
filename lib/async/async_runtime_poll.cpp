@@ -31,6 +31,7 @@ typedef struct fd_mapping_s {
 } fd_mapping_t;
 
 struct async_runtime_s {
+    void* context;  /* User-defined context pointer */
     struct pollfd* pollfds;
     fd_mapping_t* mappings;
     int capacity;
@@ -98,10 +99,11 @@ static int expand_capacity(async_runtime_t* runtime) {
 
 /* Public API */
 
-extern "C" async_runtime_t* async_runtime_init(void) {
+extern "C" async_runtime_t* async_runtime_init(void* context) {
     async_runtime_t* runtime = (async_runtime_t*)calloc(1, sizeof(async_runtime_t));
     if (!runtime) return NULL;
     
+    runtime->context = context;
     runtime->pollfds = (struct pollfd*)malloc(INITIAL_CAPACITY * sizeof(struct pollfd));
     runtime->mappings = (fd_mapping_t*)malloc(INITIAL_CAPACITY * sizeof(fd_mapping_t));
     

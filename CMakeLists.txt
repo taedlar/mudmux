@@ -26,6 +26,12 @@ endif()
 if(WIN32)
     add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
 endif()
+add_compile_definitions($<$<CONFIG:Debug>:SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE>) # compile-time log level, default: >= SPDLOG_LEVEL_INFO
+
+# check for standard headers
+include(CheckIncludeFiles)
+check_include_files(stdbool.h HAVE_STDBOOL_H)
+check_include_files(unistd.h HAVE_UNISTD_H)
 
 # check for standard functions
 include(CheckSymbolExists)
@@ -50,6 +56,7 @@ add_compile_definitions(HAVE_CONFIG_H)
 
 # add subdirectories
 add_subdirectory(lib/async)
+add_subdirectory(lib/comm)
 add_subdirectory(src)
 
 # add tests

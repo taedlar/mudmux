@@ -56,6 +56,7 @@ typedef struct listening_socket_s {
  * Async runtime implementation for Windows
  */
 struct async_runtime_s {
+    void* context;  /* User-defined context pointer */
     HANDLE iocp_handle;
     int num_fds;
     
@@ -179,10 +180,12 @@ static DWORD WINAPI accept_worker_thread(LPVOID param) {
 
 /* Lifecycle management */
 
-extern "C" async_runtime_t* async_runtime_init(void) {
+extern "C" async_runtime_t* async_runtime_init(void* context) {
     async_runtime_t* runtime = (async_runtime_t*) calloc(1, sizeof(async_runtime_t));
     if (!runtime) return NULL;
     
+    runtime->context = context;
+
     /* Create IOCP with 1 concurrent thread (single-threaded model) */
     runtime->iocp_handle = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 1);
     if (!runtime->iocp_handle) {
