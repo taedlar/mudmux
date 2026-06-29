@@ -8,6 +8,7 @@ add_library(mudmux_headers INTERFACE)
 add_library(mudmux SHARED
     mudmux.cpp
     hooks.cpp
+    hooks.hpp
 )
 add_library(mudmux::mudmux ALIAS mudmux)
 add_library(mudmux::headers ALIAS mudmux_headers)
