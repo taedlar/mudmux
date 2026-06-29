@@ -5,9 +5,6 @@
 #define PACKAGE "@CMAKE_PROJECT_NAME@"
 #define VERSION "@CMAKE_PROJECT_VERSION@"
 
-/* compile-time log level activated (SPDLOG_*), must be set before including spdlog headers */
-#define SPDLOG_ACTIVE_LEVEL SPDLOG_LEVEL_TRACE
-
 #include <spdlog/spdlog.h>
 
 /* runtime log macros */
@@ -19,6 +16,7 @@
 #define log_trace       spdlog::trace
 
 #cmakedefine HAVE_STDBOOL_H
+#cmakedefine HAVE_UNISTD_H
 
 #cmakedefine HAVE_GETTIMEOFDAY
 

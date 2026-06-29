@@ -44,8 +44,10 @@ int main (int argc, char* argv[]) {
 
         // process events
         for (int i = 0; i < num_events; ++i) {
+#ifndef NDEBUG
             auto& event = events[i];
             SPDLOG_DEBUG ("event: fd={}, event_type={}, bytes_transferred={}", event.fd, event.event_type, event.bytes_transferred);
+#endif
         }
     }
 
