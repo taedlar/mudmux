@@ -8,13 +8,24 @@ project(mudmux
     HOMEPAGE_URL "https://github.com/taedlar/mudmux"
     LANGUAGES CXX
 )
+set(MUDMUX_MAIN_PROJECT OFF)
+if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
+  set(MUDMUX_MAIN_PROJECT ON)
+endif()
+
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake")
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_COMPILE_WARNING_AS_ERROR OFF)
+
 include(CTest) # optionally enable testing with -DBUILD_TESTING=ON
+include(CMakeDependentOption)
 include(utils)
+
+cmake_dependent_option(MUDMUX_BUILD_TESTS
+  "Enable mudmux tests" ON
+  "BUILD_TESTING;MUDMUX_MAIN_PROJECT" OFF)
 
 # compiler settings
 if(MSVC)
@@ -60,7 +71,7 @@ add_subdirectory(lib/comm)
 add_subdirectory(src)
 
 # add tests
-if (BUILD_TESTING)
+if (BUILD_TESTING AND MUDMUX_BUILD_TESTS)
     FetchContent_MakeAvailable(GTest) # always fetch GoogleTest (as recommended by Google)
     if (NOT TARGET GTest::gtest OR NOT TARGET GTest::gtest_main)
         message(FATAL_ERROR "GTest not found and could not be fetched."
