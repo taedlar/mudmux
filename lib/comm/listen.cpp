@@ -8,7 +8,7 @@
 /**
  *  @brief Initialize new user connection socket.
  */
-extern "C" bool comm_init_listening_ports(async_runtime_t *runtime, int port, void *ctx) {
+extern "C" bool comm_init_listening_port (async_runtime_t *runtime, int port, void *ctx) {
 
     if (!runtime) {
         SPDLOG_ERROR ("Invalid async runtime pointer");

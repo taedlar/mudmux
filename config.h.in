@@ -7,14 +7,6 @@
 
 #include <spdlog/spdlog.h>
 
-/* runtime log macros */
-#define log_critical    spdlog::critical
-#define log_error       spdlog::error
-#define log_warn        spdlog::warn
-#define log_info        spdlog::info
-#define log_debug       spdlog::debug
-#define log_trace       spdlog::trace
-
 #cmakedefine HAVE_STDBOOL_H
 #cmakedefine HAVE_UNISTD_H
 

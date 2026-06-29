@@ -7,7 +7,7 @@
 extern "C" {
 #endif
 
-bool comm_init_listening_ports (async_runtime_t *runtime, int port, void *ctx);
+bool comm_init_listening_port (async_runtime_t *runtime, int port, void *ctx);
 
 #ifdef __cplusplus
 }
