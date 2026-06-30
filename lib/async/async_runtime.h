@@ -86,6 +86,8 @@ typedef struct async_runtime_s async_runtime_t;
  */
 async_runtime_t* async_runtime_init(void* context);
 
+void* async_runtime_get_context(async_runtime_t* runtime);
+
 /**
  * Destroy the async runtime and release all resources
  * 

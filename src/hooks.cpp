@@ -2,12 +2,26 @@
 #include "config.h"
 #endif
 
-#include "mudmux.h"
+#include "mudmux/hooks.h"
 
-extern "C" bool mudmux_register_hook (const char* hook_name, mudmux_hook_func_t hook_func) {
-    if (!hook_name || !hook_func) {
-        SPDLOG_ERROR ("mudmux_register_hook() called with null hook_name or hook_func");
+static mudmux_hook_func_t all_hooks[256] = {nullptr}; // array of hook functions
+
+extern "C" bool mudmux_register_hook (enum mudmux_hook_type_t hook_type, mudmux_hook_func_t hook_func) {
+    if (hook_type <= 0 || hook_type >= 256 || !hook_func) {
+        SPDLOG_ERROR ("mudmux_register_hook() called with invalid hook_type or null hook_func");
         return false;
     }
-    return true; // TODO: implement hook registration
+    all_hooks[hook_type] = hook_func;
+    return true;
+}
+
+extern "C" int mudmux_invoke_hook (enum mudmux_hook_type_t hook_type, void* ctx, int msg, void* data, size_t size) {
+    if (hook_type <= 0 || hook_type >= 256) {
+        SPDLOG_ERROR ("mudmux_invoke_hook() called with invalid hook_type");
+        return -1;
+    }
+    mudmux_hook_func_t hook_func = all_hooks[hook_type];
+    if (!hook_func)
+        return 0; // no-op if no hook is registered for this type
+    return hook_func(ctx, msg, data, size);
 }
