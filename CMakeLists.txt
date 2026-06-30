@@ -51,7 +51,7 @@ check_symbol_exists(gettimeofday sys/time.h HAVE_GETTIMEOFDAY)
 # find or fetch dependencies
 find_boost(1.70 COMPONENTS json)
 find_boost_headers(boost/json.hpp)
-find_package(OpenSSL)
+find_package(OpenSSL REQUIRED)
 include(fetch-settings) # pulls in FetchContent and declares dependencies
 FetchContent_MakeAvailable(argparse spdlog yaml-cpp)
 

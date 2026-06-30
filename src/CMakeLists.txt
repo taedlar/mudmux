@@ -40,4 +40,5 @@ target_link_libraries(example_server PRIVATE
     spdlog::spdlog
     argparse::argparse
     mudmux::mudmux
+    mudmux::comm
 )

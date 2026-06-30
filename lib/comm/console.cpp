@@ -2,6 +2,7 @@
 #include "config.h"
 #endif
 
+#include "abstract.h"
 #include "console.h"
 #include "async/console_worker.h"
 #include "mudmux/mudmux.h"
@@ -31,8 +32,19 @@ extern "C" bool comm_init_console (async_runtime_t *runtime) {
         return false;
     }
 
+    comm_abstract_t comm;
+    comm.bio = BIO_new_fp(stdout, BIO_NOCLOSE);
+    if (!comm.bio) {
+        SPDLOG_ERROR ("failed to create BIO for stdin");
+        console_worker_destroy (console_ctx);
+        console_ctx = nullptr;
+        async_queue_destroy (console_queue);
+        console_queue = nullptr;
+        return false;
+    }
     mudmux_invoke_hook (MUDMUX_HOOK_CONNECT,
-        async_runtime_get_context(runtime), 0, nullptr, 0); // invoke connect hook for initial console input
+        async_runtime_get_context(runtime), 0, &comm, 0); // invoke connect hook for console user
+    BIO_free(comm.bio);
     return true;
 }
 

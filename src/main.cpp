@@ -1,5 +1,6 @@
 // main.cpp
 #include "mudmux/mudmux.h"
+#include "comm/abstract.h"
 
 #include <iostream>
 #include <fstream>
@@ -10,8 +11,10 @@
 
 static void process_command_line (int argc, char* argv[]);
 
-static int on_connect (void*, int, void*, size_t) {
-    std::cout << "Hello!" << std::endl;
+static int on_connect (void*, int, void* data, size_t) {
+    SPDLOG_INFO ("New connection established");
+    comm_abstract_t* comm = static_cast<comm_abstract_t*>(data);
+    comm_write (comm, "Welcome to mudmux!\n", 0);
     return 0;
 }
 
