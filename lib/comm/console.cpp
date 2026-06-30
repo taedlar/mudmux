@@ -4,14 +4,17 @@
 
 #include "abstract.h"
 #include "console.h"
+#include "inbound.h"
 #include "async/console_worker.h"
 #include "mudmux/mudmux.h"
 #include <openssl/bio.h>
+#include <cstring>
 #include <mutex>
 
 static std::mutex console_mutex;
 static async_queue_t* console_queue{nullptr};
 static console_worker_context_t* console_ctx{nullptr};
+static char console_line_buffer[4096];
 
 extern "C" bool comm_init_console (async_runtime_t *runtime) {
 
@@ -92,11 +95,9 @@ extern "C" int comm_process_console_input (async_runtime_t *runtime) {
                 async_runtime_get_context(runtime), 0, nullptr, 0); // invoke connect hook for console user
         }
 
-        // drain completed lines from the console queue and invoke the hook for each line
-        char line_buffer[4096];
-        while (async_queue_dequeue (console_queue, line_buffer, sizeof(line_buffer), nullptr)) {
-            mudmux_invoke_hook (MUDMUX_HOOK_MESSAGE_INBOUND,
-                async_runtime_get_context(runtime), 0, line_buffer, strlen(line_buffer));
+        // drain completed lines from the console queue and invoke the shared inbound hook path
+        while (async_queue_dequeue (console_queue, console_line_buffer, sizeof(console_line_buffer), nullptr)) {
+            comm_invoke_inbound_message(runtime, 0, console_line_buffer, strlen(console_line_buffer));
         }
         return 1;
     }
