@@ -11,11 +11,14 @@
 #include <atomic>
 #include <filesystem>
 #include <string>
+#include <vector>
 #include <yaml-cpp/yaml.h>
 
 static std::atomic<bool> is_running{false};
 static std::atomic<bool> is_shutting_down{false};
+
 static bool enable_console{false};
+static std::vector<std::string> accept_names; // array of names for BIO_set_accept_name()
 
 extern "C" bool mudmux_init (const char* config_yaml) {
     if (is_running.load()) {
@@ -27,6 +30,11 @@ extern "C" bool mudmux_init (const char* config_yaml) {
         const YAML::Node& transport = config["transport"];
         // initialize transport layer
         enable_console = transport["console"].as<bool>(false);
+        if (transport["accept"]) {
+            for (const auto& name : transport["accept"]) {
+                accept_names.push_back(name.as<std::string>());
+            }
+        }
         is_shutting_down.store(false);
     }
     catch (const YAML::Exception& e) {
@@ -42,6 +50,7 @@ extern "C" void mudmux_deinit (void) {
         return;
     }
     enable_console = false;
+    accept_names.clear();
 }
 
 extern "C" int mudmux_run (void* context) {
