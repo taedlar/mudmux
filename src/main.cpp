@@ -11,25 +11,30 @@
 
 static void process_command_line (int argc, char* argv[]);
 
-static int on_connect (void*, int, void* data, size_t) {
-    SPDLOG_INFO ("New connection established");
-    comm_abstract_t* comm = static_cast<comm_abstract_t*>(data);
-    comm_write (comm, "Welcome to mudmux!\n", 0);
+static int on_connect (void*, int slot, void*, size_t) {
+    auto comm = comm_abstract_get(slot);
+    comm_write (comm, "Welcome to mudmux!\r\n", 0);
     return 0;
 }
 
-static int on_message_inbound (void*, int, void* data, size_t size) {
+static int on_message_inbound (void*, int slot, void* data, size_t size) {
     std::string message(static_cast<char*>(data), size);
-    std::cout << "Received message: " << message << std::endl;
+    auto comm = comm_abstract_get(slot);
+    comm_write (comm, "Received message: ", 0);
+    comm_write (comm, message.c_str(), message.size());
+    comm_write (comm, "\r\n", 1);
     return 0;
 }
 
 int main (int argc, char* argv[]) {
     process_command_line (argc, argv); // calls mudmux_init() when returning
 
-    // create server context and register transport layer hooks
+    // create server context
+    // register hooks
     mudmux_register_hook (MUDMUX_HOOK_CONNECT, on_connect);
     mudmux_register_hook (MUDMUX_HOOK_MESSAGE_INBOUND, on_message_inbound);
+
+    // [optional] connect any additional transports (e.g., listening sockets, etc.) here
 
     // run infinite event loop until shutdown is requested
     int exit_code = mudmux_run(nullptr);

@@ -6,7 +6,7 @@
 #include "console.h"
 #include "async/console_worker.h"
 #include "mudmux/mudmux.h"
-
+#include <openssl/bio.h>
 #include <mutex>
 
 static std::mutex console_mutex;
@@ -32,10 +32,9 @@ extern "C" bool comm_init_console (async_runtime_t *runtime) {
         return false;
     }
 
-    comm_abstract_t comm;
-    comm.bio = BIO_new_fp(stdout, BIO_NOCLOSE);
-    if (!comm.bio) {
-        SPDLOG_ERROR ("failed to create BIO for stdin");
+    // invoke connect hook for console user
+    if (comm_abstract_add (STDIN_FILENO) < 0) {
+        SPDLOG_ERROR ("failed to register STDIN in comm_abstract_add()");
         console_worker_destroy (console_ctx);
         console_ctx = nullptr;
         async_queue_destroy (console_queue);
@@ -43,8 +42,7 @@ extern "C" bool comm_init_console (async_runtime_t *runtime) {
         return false;
     }
     mudmux_invoke_hook (MUDMUX_HOOK_CONNECT,
-        async_runtime_get_context(runtime), 0, &comm, 0); // invoke connect hook for console user
-    BIO_free(comm.bio);
+        async_runtime_get_context(runtime), 0, nullptr, 0); // invoke connect hook for console user
     return true;
 }
 
@@ -72,6 +70,7 @@ extern "C" int comm_process_console_input (async_runtime_t *runtime) {
             auto console_type = console_ctx->console_type;
             console_worker_destroy (console_ctx);
             console_ctx = nullptr;
+            comm_abstract_remove (STDIN_FILENO); // remove console from comm_abstract
             if (console_type == CONSOLE_TYPE_REAL) {
                 // re-arm console worker for next console input (e.g., after Ctrl+D EOF)
                 SPDLOG_INFO ("console EOF detected, re-initializing console worker");
@@ -87,6 +86,12 @@ extern "C" int comm_process_console_input (async_runtime_t *runtime) {
                 return 0;
             }
         }
+        if (!comm_abstract_get(0)) {
+            comm_abstract_add (STDIN_FILENO); // re-connect console user if it was removed due to EOF
+            mudmux_invoke_hook (MUDMUX_HOOK_CONNECT,
+                async_runtime_get_context(runtime), 0, nullptr, 0); // invoke connect hook for console user
+        }
+
         // drain completed lines from the console queue and invoke the hook for each line
         char line_buffer[4096];
         while (async_queue_dequeue (console_queue, line_buffer, sizeof(line_buffer), nullptr)) {
