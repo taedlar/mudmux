@@ -4,6 +4,7 @@ add_library(comm OBJECT
     console.cpp
     abstract.cpp
     accept.cpp
+    inbound.cpp
 )
 add_library(mudmux::comm ALIAS comm)
 target_sources(comm INTERFACE
@@ -13,6 +14,7 @@ target_sources(comm INTERFACE
         abstract.h
         accept.h
         console.h
+        inbound.h
 )
 target_compile_definitions(comm PRIVATE mudmux_EXPORTS)
 
