@@ -23,7 +23,7 @@ target_link_libraries(mudmux PRIVATE
 )
 
 # headers
-file(GLOB _mudmux_headers include/*.h)
+file(GLOB _mudmux_headers include/mudmux/*.h)
 target_sources(mudmux_headers PUBLIC
     FILE_SET HEADERS
         BASE_DIRS include
@@ -40,4 +40,5 @@ target_link_libraries(example_server PRIVATE
     spdlog::spdlog
     argparse::argparse
     mudmux::mudmux
+    mudmux::comm
 )

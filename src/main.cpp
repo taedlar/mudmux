@@ -1,5 +1,6 @@
 // main.cpp
-#include "mudmux.h"
+#include "mudmux/mudmux.h"
+#include "comm/abstract.h"
 
 #include <iostream>
 #include <fstream>
@@ -10,17 +11,25 @@
 
 static void process_command_line (int argc, char* argv[]);
 
+static int on_connect (void*, int, void* data, size_t) {
+    SPDLOG_INFO ("New connection established");
+    comm_abstract_t* comm = static_cast<comm_abstract_t*>(data);
+    comm_write (comm, "Welcome to mudmux!\n", 0);
+    return 0;
+}
+
+static int on_message_inbound (void*, int, void* data, size_t size) {
+    std::string message(static_cast<char*>(data), size);
+    std::cout << "Received message: " << message << std::endl;
+    return 0;
+}
+
 int main (int argc, char* argv[]) {
     process_command_line (argc, argv); // calls mudmux_init() when returning
 
     // create server context and register transport layer hooks
-    mudmux_register_hook ("connect", [](void* ctx, int msg, void* data, size_t size) -> int {
-        (void)ctx; // unused parameter
-        (void)msg; // unused parameter
-        (void)data; // unused parameter
-        (void)size; // unused parameter
-        return 0;
-    });
+    mudmux_register_hook (MUDMUX_HOOK_CONNECT, on_connect);
+    mudmux_register_hook (MUDMUX_HOOK_MESSAGE_INBOUND, on_message_inbound);
 
     // run infinite event loop until shutdown is requested
     int exit_code = mudmux_run(nullptr);

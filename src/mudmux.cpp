@@ -2,7 +2,7 @@
 #include "config.h"
 #endif
 
-#include "mudmux.h"
+#include "mudmux/mudmux.h"
 #include "async/async_runtime.h"
 #include "comm/console.h"
 #include "comm/listen.h"
@@ -75,7 +75,8 @@ extern "C" int mudmux_run (void* context) {
         SPDLOG_DEBUG ("async_runtime_wait returned {} events", num_events);
 
         // process console input (always check for console input, even if no events were returned)
-        comm_process_console_input (runtime);
+        if (enable_console)
+            comm_process_console_input (runtime);
 
         // process I/O events (non-blocking)
         for (int i = 0; i < num_events; ++i) {

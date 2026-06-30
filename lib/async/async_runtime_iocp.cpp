@@ -232,6 +232,10 @@ extern "C" async_runtime_t* async_runtime_init(void* context) {
     return runtime;
 }
 
+extern "C" void* async_runtime_get_context(async_runtime_t* runtime) {
+    return runtime ? runtime->context : nullptr;
+}
+
 extern "C" void async_runtime_deinit(async_runtime_t* runtime) {
     if (!runtime) return;
     

@@ -1,13 +1,24 @@
 # lib/comm/CMakeLists.txt
 
-add_library(comm STATIC
+add_library(comm OBJECT
     console.cpp
     listen.cpp
+    abstract.cpp
 )
 add_library(mudmux::comm ALIAS comm)
+target_sources(comm INTERFACE
+    FILE_SET HEADERS
+    BASE_DIRS ${CMAKE_SOURCE_DIR}/lib
+    FILES
+        abstract.h
+        console.h
+        listen.h
+)
+target_compile_definitions(comm PRIVATE mudmux_EXPORTS)
 
 target_link_libraries(comm PRIVATE
     spdlog::spdlog
     mudmux::async
     mudmux::headers
+    OpenSSL::SSL
 )
