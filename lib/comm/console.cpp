@@ -57,9 +57,10 @@ extern "C" int comm_process_console_input (async_runtime_t *runtime) {
     std::lock_guard<std::mutex> lock(console_mutex);
     if (console_ctx) {
         if (console_worker_take_eof (console_ctx)) {
+            auto console_type = console_ctx->console_type;
             console_worker_destroy (console_ctx);
             console_ctx = nullptr;
-            if (console_ctx->console_type == CONSOLE_TYPE_REAL) {
+            if (console_type == CONSOLE_TYPE_REAL) {
                 // re-arm console worker for next console input (e.g., after Ctrl+D EOF)
                 SPDLOG_INFO ("console EOF detected, re-initializing console worker");
                 console_ctx = console_worker_init (runtime, console_queue, CONSOLE_COMPLETION_KEY);
