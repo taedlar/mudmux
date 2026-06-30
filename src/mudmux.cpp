@@ -4,6 +4,7 @@
 
 #include "mudmux/mudmux.h"
 #include "async/async_runtime.h"
+#include "comm/abstract.h"
 #include "comm/console.h"
 #include "comm/listen.h"
 
@@ -62,7 +63,7 @@ extern "C" int mudmux_run (void* context) {
     }
 
     // main event loop
-    SPDLOG_INFO ("entering event loop");
+    SPDLOG_INFO ("===== entering event loop =====");
     io_event_t events[64];
     while (!is_shutting_down.load()) {
         // [BLOCKING] wait for I/O events
@@ -87,8 +88,10 @@ extern "C" int mudmux_run (void* context) {
 #endif
         }
     }
-    SPDLOG_INFO ("exited event loop");
+    SPDLOG_INFO ("===== exited event loop =====");
 
+    // cleanup communications and teardown subsystems
+    comm_abstract_cleanup();
     comm_shutdown_console (runtime);
     async_runtime_deinit (runtime);
     is_running.store(false);
