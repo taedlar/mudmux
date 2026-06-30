@@ -18,9 +18,10 @@ Transport layer integrations:
 - TELNET Support
 - TLS Support
 
-In-Process integration with logics layer:
-- Loads logics layers as shared librarie / DLL plugins
-- RAII guards and multithread-safety synchronizations
+In-Process integration with the MUD server:
+- Loaded as a shared library and provides in-process C APIs for transport layer
+- Interact with the main server by registered hook functions
+- Provides RAII guards and multithread-safety synchronizations as C++ wrappers
 
 ## How to build
 
