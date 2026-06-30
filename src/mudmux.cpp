@@ -5,17 +5,35 @@
 #include "mudmux/mudmux.h"
 #include "async/async_runtime.h"
 #include "comm/abstract.h"
+#include "comm/accept.h"
 #include "comm/console.h"
-#include "comm/listen.h"
 
 #include <atomic>
+#include <cstdint>
 #include <filesystem>
 #include <string>
+#include <vector>
 #include <yaml-cpp/yaml.h>
 
 static std::atomic<bool> is_running{false};
 static std::atomic<bool> is_shutting_down{false};
+
 static bool enable_console{false};
+static std::vector<std::string> accept_names; // array of names for BIO_set_accept_name()
+
+static int context_to_slot (void* context) {
+    return static_cast<int>(reinterpret_cast<intptr_t>(context));
+}
+
+static void* slot_to_context (int slot) {
+    return reinterpret_cast<void*>(static_cast<intptr_t>(slot));
+}
+
+static void disconnect_comm (async_runtime_t* runtime, void* context, int slot, socket_fd_t fd) {
+    async_runtime_remove(runtime, fd);
+    mudmux_invoke_hook(MUDMUX_HOOK_DISCONNECT, context, slot, nullptr, 0);
+    comm_abstract_remove(slot);
+}
 
 extern "C" bool mudmux_init (const char* config_yaml) {
     if (is_running.load()) {
@@ -27,6 +45,11 @@ extern "C" bool mudmux_init (const char* config_yaml) {
         const YAML::Node& transport = config["transport"];
         // initialize transport layer
         enable_console = transport["console"].as<bool>(false);
+        if (transport["accept"]) {
+            for (const auto& name : transport["accept"]) {
+                accept_names.push_back(name.as<std::string>());
+            }
+        }
         is_shutting_down.store(false);
     }
     catch (const YAML::Exception& e) {
@@ -42,6 +65,7 @@ extern "C" void mudmux_deinit (void) {
         return;
     }
     enable_console = false;
+    accept_names.clear();
 }
 
 extern "C" int mudmux_run (void* context) {
@@ -54,7 +78,16 @@ extern "C" int mudmux_run (void* context) {
     auto runtime = async_runtime_init(context);
     bool success = runtime
         && (!enable_console || comm_init_console(runtime));
-        // && comm_init_listening_port (runtime, 4000, nullptr);
+
+    if (success) {
+        for (const auto& accept_name : accept_names) {
+            if (comm_accept(runtime, accept_name.c_str()) < 0) {
+                SPDLOG_ERROR ("failed to initialize accept transport {}", accept_name);
+                success = false;
+                break;
+            }
+        }
+    }
     if (!success) {
         SPDLOG_ERROR ("failed to initialize");
         async_runtime_deinit(runtime);
@@ -81,11 +114,103 @@ extern "C" int mudmux_run (void* context) {
 
         // process I/O events (non-blocking)
         for (int i = 0; i < num_events; ++i) {
-#ifndef NDEBUG
             auto& event = events[i];
+#ifndef NDEBUG
             SPDLOG_DEBUG ("event: fd={}, event_type={}, bytes_transferred={}",
                 event.fd, event.event_type, event.bytes_transferred);
 #endif
+
+            if (!event.context) {
+                continue;
+            }
+
+            int slot = context_to_slot(event.context);
+            auto* comm = comm_abstract_get(slot);
+            if (!comm) {
+                SPDLOG_WARN ("event for invalid comm slot {}", slot);
+                continue;
+            }
+
+            if (comm_abstract_is_listener(comm)) {
+                int accepted_slot = -1;
+#ifdef _WIN32
+                socket_fd_t listener_fd = comm_abstract_get_fd(comm);
+                if (event.fd != INVALID_SOCKET_FD && event.fd != listener_fd) {
+                    accepted_slot = comm_abstract_add(event.fd);
+                }
+                else {
+                    accepted_slot = comm_abstract_accept(slot);
+                }
+#else
+                accepted_slot = comm_abstract_accept(slot);
+#endif
+                if (accepted_slot < 0) {
+                    continue;
+                }
+
+                auto* accepted_comm = comm_abstract_get(accepted_slot);
+                socket_fd_t accepted_fd = comm_abstract_get_fd(accepted_comm);
+                if (!accepted_comm || accepted_fd == INVALID_SOCKET_FD) {
+                    SPDLOG_WARN ("accepted comm slot {} has invalid fd", accepted_slot);
+                    comm_abstract_remove(accepted_slot);
+                    continue;
+                }
+
+                if (async_runtime_add(runtime, accepted_fd, EVENT_READ, slot_to_context(accepted_slot)) < 0) {
+                    SPDLOG_ERROR ("failed to register accepted fd {} with runtime", accepted_fd);
+                    comm_abstract_remove(accepted_slot);
+                    continue;
+                }
+
+#ifdef _WIN32
+                if (async_runtime_post_read(runtime, accepted_fd, nullptr, 0) < 0) {
+                    SPDLOG_ERROR ("failed to post initial read for fd {}", accepted_fd);
+                    async_runtime_remove(runtime, accepted_fd);
+                    comm_abstract_remove(accepted_slot);
+                    continue;
+                }
+#endif
+
+                mudmux_invoke_hook (MUDMUX_HOOK_CONNECT,
+                    async_runtime_get_context(runtime), accepted_slot, nullptr, 0);
+                continue;
+            }
+
+            if (event.event_type & EVENT_READ) {
+#ifdef _WIN32
+                if (!event.buffer || event.bytes_transferred == 0) {
+                    disconnect_comm(runtime, async_runtime_get_context(runtime), slot, event.fd);
+                    continue;
+                }
+
+                mudmux_invoke_hook (MUDMUX_HOOK_MESSAGE_INBOUND,
+                    async_runtime_get_context(runtime), slot, event.buffer, event.bytes_transferred);
+
+                if (async_runtime_post_read(runtime, event.fd, nullptr, 0) < 0) {
+                    SPDLOG_ERROR ("failed to re-arm read for fd {}", event.fd);
+                    disconnect_comm(runtime, async_runtime_get_context(runtime), slot, event.fd);
+                }
+#else
+                char buffer[4096];
+                int read_bytes = comm_read(comm, buffer, sizeof(buffer));
+                if (read_bytes <= 0) {
+                    disconnect_comm(runtime, async_runtime_get_context(runtime), slot, event.fd);
+                    continue;
+                }
+
+                mudmux_invoke_hook (MUDMUX_HOOK_MESSAGE_INBOUND,
+                    async_runtime_get_context(runtime), slot, buffer, read_bytes);
+
+                if (event.event_type & (EVENT_CLOSE | EVENT_ERROR)) {
+                    disconnect_comm(runtime, async_runtime_get_context(runtime), slot, event.fd);
+                }
+#endif
+                continue;
+            }
+
+            if (event.event_type & (EVENT_CLOSE | EVENT_ERROR)) {
+                disconnect_comm(runtime, async_runtime_get_context(runtime), slot, event.fd);
+            }
         }
     }
     SPDLOG_INFO ("===== exited event loop =====");
