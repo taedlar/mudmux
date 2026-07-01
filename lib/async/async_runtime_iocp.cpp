@@ -117,6 +117,7 @@ static void free_iocp_context(async_runtime_t* runtime, iocp_context_t* ctx) {
 
 /* Accept worker thread - monitors listening sockets and posts accepted connections to IOCP */
 static DWORD WINAPI accept_worker_thread(LPVOID param) {
+    SPDLOG_DEBUG ("accept_worker_thread started");
     async_runtime_t* runtime = (async_runtime_t*)param;
     
     while (runtime->accept_thread_running) {
@@ -161,11 +162,16 @@ static DWORD WINAPI accept_worker_thread(LPVOID param) {
                     socket_fd_t accepted_fd = accept(listen_fd, (struct sockaddr*)&addr, &addr_len);
                     
                     if (accepted_fd != INVALID_SOCKET) {
-                        /* Post completion to IOCP with listening socket context */
-                        PostQueuedCompletionStatus(runtime->iocp_handle,
-                                                  (DWORD)(uintptr_t)accepted_fd,
-                                                  (ULONG_PTR)context,
-                                                  NULL);
+                        /* Carry the full 64-bit SOCKET in an iocp_context_t to avoid
+                         * truncation through DWORD (dwNumberOfBytesTransferred is 32-bit). */
+                        iocp_context_t* ctx = alloc_iocp_context(runtime, accepted_fd, context, OP_ACCEPT);
+                        if (ctx) {
+                            PostQueuedCompletionStatus(runtime->iocp_handle, 0,
+                                                      ACCEPT_COMPLETION_KEY,
+                                                      &ctx->overlapped);
+                        } else {
+                            closesocket(accepted_fd);
+                        }
                     }
                     
                     EnterCriticalSection(&runtime->listen_lock);
@@ -175,6 +181,7 @@ static DWORD WINAPI accept_worker_thread(LPVOID param) {
         }
     }
     
+    SPDLOG_DEBUG ("accept_worker_thread stopping");
     return 0;
 }
 
@@ -228,7 +235,8 @@ extern "C" async_runtime_t* async_runtime_init(void* context) {
     runtime->console_handle = INVALID_HANDLE_VALUE;
     runtime->console_enabled = 0;
     runtime->console_read_ctx = NULL;
-    
+
+    SPDLOG_DEBUG ("async_runtime_init completed");
     return runtime;
 }
 
@@ -388,47 +396,38 @@ extern "C" int async_runtime_wait(async_runtime_t* runtime, io_event_t* events,
             iocp_context_t* io_ctx = (iocp_context_t*)entries[i].lpOverlapped;
             
             if (io_ctx) {
-                /* Connected socket I/O completion */
                 events[event_count].fd = io_ctx->fd;
                 events[event_count].handle = NULL;
                 events[event_count].completion_key = entries[i].lpCompletionKey;
-                events[event_count].context = (void*)entries[i].lpCompletionKey;
                 events[event_count].bytes_transferred = entries[i].dwNumberOfBytesTransferred;
                 events[event_count].buffer = io_ctx->buffer;
-                
-                if (io_ctx->operation == OP_READ) {
+
+                if (io_ctx->operation == OP_ACCEPT) {
+                    /* Accept worker posted accepted socket via iocp_context_t.
+                     * user_context holds the listener slot's context pointer;
+                     * fd holds the full 64-bit accepted SOCKET. */
+                    events[event_count].context = io_ctx->user_context;
+                    events[event_count].event_type = EVENT_READ;
+                    events[event_count].bytes_transferred = 0;
+                    events[event_count].buffer = NULL;
+                } else if (io_ctx->operation == OP_READ) {
+                    events[event_count].context = (void*)entries[i].lpCompletionKey;
                     events[event_count].event_type = (entries[i].dwNumberOfBytesTransferred > 0)
                                                      ? EVENT_READ : EVENT_CLOSE;
                 } else if (io_ctx->operation == OP_WRITE) {
+                    events[event_count].context = (void*)entries[i].lpCompletionKey;
                     events[event_count].event_type = EVENT_WRITE;
                 }
                 free_iocp_context(runtime, io_ctx);
-                event_count++;  /* CRITICAL: Increment event count after processing I/O completion */
+                event_count++;
             } else {
-                /* NULL overlapped - either worker completion, accepted connection, or wakeup */
-                
-                /* Skip wakeup completions - they're just to interrupt the wait */
+                /* NULL overlapped - wakeup or console worker completion */
                 if (entries[i].lpCompletionKey == WAKEUP_COMPLETION_KEY) {
                     continue;
                 }
-                
-                /* Skip console worker completions - they're processed via queue mechanism */
                 if (entries[i].lpCompletionKey == CONSOLE_COMPLETION_KEY) {
                     continue;
                 }
-                
-                /* Accept worker posts accepted FD in dwNumberOfBytesTransferred */
-                socket_fd_t accepted_fd = (socket_fd_t)entries[i].dwNumberOfBytesTransferred;
-                
-                events[event_count].fd = accepted_fd;
-                events[event_count].handle = NULL;
-                events[event_count].completion_key = entries[i].lpCompletionKey;
-                events[event_count].context = (void*)entries[i].lpCompletionKey;
-                events[event_count].event_type = EVENT_READ;  /* Listening socket ready or worker completion */
-                events[event_count].bytes_transferred = 0;
-                events[event_count].buffer = NULL;
-                
-                event_count++;
             }
         }
     }

@@ -29,7 +29,18 @@ static int on_message_inbound (void*, int slot, void* data, size_t size) {
 int main (int argc, char* argv[]) {
     process_command_line (argc, argv); // calls mudmux_init() when returning
 
+#ifdef _WIN32
+    // Initialize Winsock
+    WSADATA wsa_data;
+    if (WSAStartup(MAKEWORD(2, 2), &wsa_data) != 0) {
+        SPDLOG_ERROR ("WSAStartup failed");
+        return EXIT_FAILURE;
+    }
+    SPDLOG_INFO ("Winsock initialized: version {}.{}", LOBYTE(wsa_data.wVersion), HIBYTE(wsa_data.wVersion));
+#endif
+
     // create server context
+
     // register hooks
     mudmux_register_hook (MUDMUX_HOOK_CONNECT, on_connect);
     mudmux_register_hook (MUDMUX_HOOK_MESSAGE_INBOUND, on_message_inbound);
@@ -42,6 +53,9 @@ int main (int argc, char* argv[]) {
 
     // cleanup server context
 
+#ifdef _WIN32
+    WSACleanup();
+#endif
     return exit_code;
 }
 
