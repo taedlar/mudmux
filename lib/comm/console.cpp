@@ -52,6 +52,9 @@ extern "C" bool comm_init_console (async_runtime_t *runtime) {
         return false;
     }
     // invoke connect hook for console user
+    if (console_ctx->console_type == CONSOLE_TYPE_REAL) {
+        SPDLOG_INFO ("----- connecting console user");
+    }
     mudmux_invoke_hook (MUDMUX_HOOK_CONNECT,
         async_runtime_get_context(runtime), COMM_SLOT_CONSOLE, nullptr, 0); // invoke connect hook for console user
     return true;
@@ -84,7 +87,7 @@ extern "C" int comm_process_console_input (async_runtime_t *runtime) {
             comm_abstract_remove (COMM_SLOT_CONSOLE); // remove console from comm_abstract
             if (console_type == CONSOLE_TYPE_REAL) {
                 // re-arm console worker for next console input (e.g., after Ctrl+D EOF)
-                SPDLOG_INFO ("EOF detected, re-arming console worker for next console session");
+                SPDLOG_INFO ("----- console user disconnected (press ENTER to reconnect)");
                 console_ctx = console_worker_init (runtime, console_queue, CONSOLE_COMPLETION_KEY);
                 return 0;
             }
@@ -98,7 +101,7 @@ extern "C" int comm_process_console_input (async_runtime_t *runtime) {
 
         // check if console communication needs re-connection (e.g., after Ctrl+D EOF on a real console)
         if (!comm_abstract_get_rbio(COMM_SLOT_CONSOLE)) {
-            SPDLOG_INFO ("console communication missing, re-registering console communication for stdout");
+            SPDLOG_INFO ("----- recconnecting console user");
             BIO* stdout_bio = BIO_new_fp (stdout, BIO_NOCLOSE);
             BIO* stdin_bio = BIO_new_fp (stdin, BIO_NOCLOSE);
             if (!stdout_bio || !stdin_bio || comm_abstract_add_bio (stdin_bio, stdout_bio, 0) < 0) {
