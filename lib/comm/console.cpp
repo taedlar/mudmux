@@ -35,9 +35,10 @@ extern "C" bool comm_init_console (async_runtime_t *runtime) {
         return false;
     }
 
-    // Register stdout at communication slot #0 for console output
+    // Register stdin/stdout communication at slot #0
     BIO* stdout_bio = BIO_new_fp (stdout, BIO_NOCLOSE);
-    if (!stdout_bio || comm_abstract_add_bio (stdout_bio, 0) < 0) {
+    BIO* stdin_bio = BIO_new_fp (stdin, BIO_NOCLOSE);
+    if (!stdout_bio || !stdin_bio || comm_abstract_add_bio (stdout_bio, stdin_bio, 0) < 0) {
         SPDLOG_ERROR ("failed to register console communication for stdout");
         console_worker_destroy (console_ctx);
         console_ctx = nullptr;
@@ -45,6 +46,8 @@ extern "C" bool comm_init_console (async_runtime_t *runtime) {
         console_queue = nullptr;
         if (stdout_bio)
             BIO_free (stdout_bio);
+        if (stdin_bio)
+            BIO_free (stdin_bio);
         return false;
     }
     // invoke connect hook for console user
@@ -95,7 +98,8 @@ extern "C" int comm_process_console_input (async_runtime_t *runtime) {
         }
         if (!comm_abstract_get(0)) {
             BIO* stdout_bio = BIO_new_fp (stdout, BIO_NOCLOSE);
-            if (!stdout_bio || comm_abstract_add_bio (stdout_bio, 0) < 0) {
+            BIO* stdin_bio = BIO_new_fp (stdin, BIO_NOCLOSE);
+            if (!stdout_bio || !stdin_bio || comm_abstract_add_bio (stdout_bio, stdin_bio, 0) < 0) {
                 SPDLOG_ERROR ("failed to re-register console communication for stdout");
                 if (stdout_bio)
                     BIO_free (stdout_bio);

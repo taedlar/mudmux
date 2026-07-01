@@ -9,7 +9,8 @@ extern "C" {
 #endif
 
 MUDMUX_EXPORT int comm_accept (async_runtime_t* runtime, const char* accept_name);
-MUDMUX_EXPORT int comm_process_listener_event (
+
+int comm_process_listener_event (
 	async_runtime_t* runtime,
 	int listener_slot,
 	socket_fd_t event_fd);

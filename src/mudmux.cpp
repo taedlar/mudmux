@@ -128,15 +128,13 @@ extern "C" int mudmux_run (void* context) {
                 continue;
             }
 
-            if (comm_abstract_is_listener(comm)) {
-                if (comm_process_listener_event(runtime, slot, event.fd) < 0) {
-                    continue;
-                }
+            if (comm_is_listener(comm)) {
+                comm_process_listener_event (runtime, slot, event.fd);
                 continue;
             }
 
             if (event.event_type & EVENT_READ) {
-                if (comm_process_input(runtime, &event, slot, comm) != 0) {
+                if (comm_process_input(runtime, &event, slot) != 0) {
                     disconnect_comm(runtime, async_runtime_get_context(runtime), slot, event.fd);
                 }
                 continue;

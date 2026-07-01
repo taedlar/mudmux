@@ -44,3 +44,7 @@ target_link_libraries(example_server PRIVATE
     OpenSSL::Crypto
 )
 target_include_directories(example_server PRIVATE ${CMAKE_SOURCE_DIR}/lib)
+
+if(WIN32)
+    target_link_libraries(example_server PRIVATE OpenSSL::applink)
+endif()
