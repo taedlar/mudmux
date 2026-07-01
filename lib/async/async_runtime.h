@@ -216,7 +216,7 @@ int async_runtime_wait(async_runtime_t* runtime, io_event_t* events,
  * @param data Optional data value (platform-specific, often unused)
  * @returns 0 on success, -1 on failure
  */
-int async_runtime_post_completion(async_runtime_t* runtime, uintptr_t completion_key, uintptr_t data);
+int async_runtime_post_completion (async_runtime_t* runtime, uintptr_t completion_key, uintptr_t data);
 
 /*
  * =============================================================================

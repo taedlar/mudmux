@@ -5,8 +5,6 @@
  * This implementation uses Windows I/O Completion Ports for unified handling
  * of both I/O events and worker thread completions.
  */
-#ifdef _WIN32
-
 #ifdef HAVE_CONFIG_H
 #include <config.h>
 #endif /* HAVE_CONFIG_H */
@@ -84,8 +82,8 @@ struct async_runtime_s {
 
 /* Context pool management */
 
-static iocp_context_t* alloc_iocp_context(async_runtime_t* runtime, socket_fd_t fd,
-                                          void* user_context, int operation) {
+static iocp_context_t* alloc_iocp_context (async_runtime_t* runtime, socket_fd_t fd,
+                                           void* user_context, int operation) {
     iocp_context_t* ctx;
     
     if (runtime->pool_size > 0) {
@@ -95,7 +93,7 @@ static iocp_context_t* alloc_iocp_context(async_runtime_t* runtime, socket_fd_t 
         if (!ctx) return NULL;
     }
     
-    ZeroMemory(&ctx->overlapped, sizeof(OVERLAPPED));
+    ZeroMemory (&ctx->overlapped, sizeof(OVERLAPPED));
     ctx->user_context = user_context;
     ctx->operation = operation;
     ctx->fd = fd;
@@ -105,19 +103,18 @@ static iocp_context_t* alloc_iocp_context(async_runtime_t* runtime, socket_fd_t 
     return ctx;
 }
 
-static void free_iocp_context(async_runtime_t* runtime, iocp_context_t* ctx) {
+static void free_iocp_context (async_runtime_t* runtime, iocp_context_t* ctx) {
     if (!ctx) return;
     
     if (runtime->pool_size < runtime->pool_capacity) {
         runtime->context_pool[runtime->pool_size++] = ctx;
     } else {
-        free(ctx);
+        free (ctx);
     }
 }
 
 /* Accept worker thread - monitors listening sockets and posts accepted connections to IOCP */
-static DWORD WINAPI accept_worker_thread(LPVOID param) {
-    SPDLOG_DEBUG ("accept_worker_thread started");
+static DWORD WINAPI accept_worker_thread (LPVOID param) {
     async_runtime_t* runtime = (async_runtime_t*)param;
     
     while (runtime->accept_thread_running) {
@@ -138,13 +135,13 @@ static DWORD WINAPI accept_worker_thread(LPVOID param) {
         
         if (listen_count == 0) {
             /* No listening sockets, sleep briefly */
-            Sleep(100);
+            Sleep (100);
             continue;
         }
         
         /* Wait for activity with 1 second timeout */
         struct timeval timeout = {1, 0};
-        int result = select((int)max_fd + 1, &read_fds, NULL, NULL, &timeout);
+        int result = select ((int)max_fd + 1, &read_fds, NULL, NULL, &timeout);
         
         if (result > 0) {
             /* Check each listening socket */
@@ -155,25 +152,33 @@ static DWORD WINAPI accept_worker_thread(LPVOID param) {
                 
                 if (FD_ISSET(listen_fd, &read_fds)) {
                     LeaveCriticalSection(&runtime->listen_lock);
-                    
-                    /* Accept connection (non-blocking) */
-                    struct sockaddr_in addr;
-                    int addr_len = sizeof(addr);
-                    socket_fd_t accepted_fd = accept(listen_fd, (struct sockaddr*)&addr, &addr_len);
-                    
-                    if (accepted_fd != INVALID_SOCKET) {
+                    SPDLOG_TRACE ("readability reported on listen socket {}", listen_fd);
+
+                    /* Drain all pending accepts so the listener stops reporting
+                     * readability once the backlog is empty. */
+                    for (;;) {
+                        struct sockaddr_storage addr; // generic storage for IPv4 or IPv6
+                        int addr_len = sizeof(addr);
+                        socket_fd_t accepted_fd = accept (listen_fd, (struct sockaddr*)&addr, &addr_len);
+
+                        if (accepted_fd == INVALID_SOCKET) {
+                            int err = WSAGetLastError();
+                            if (err == WSAEWOULDBLOCK) {
+                                break;
+                            }
+                            SPDLOG_WARN ("accept on listen socket {} failed: {}", listen_fd, err);
+                            break;
+                        }
+
                         /* Carry the full 64-bit SOCKET in an iocp_context_t to avoid
                          * truncation through DWORD (dwNumberOfBytesTransferred is 32-bit). */
-                        iocp_context_t* ctx = alloc_iocp_context(runtime, accepted_fd, context, OP_ACCEPT);
+                        iocp_context_t* ctx = alloc_iocp_context (runtime, accepted_fd, context, OP_ACCEPT);
                         if (ctx) {
-                            PostQueuedCompletionStatus(runtime->iocp_handle, 0,
-                                                      ACCEPT_COMPLETION_KEY,
-                                                      &ctx->overlapped);
+                            PostQueuedCompletionStatus (runtime->iocp_handle, 0, ACCEPT_COMPLETION_KEY, &ctx->overlapped);
                         } else {
-                            closesocket(accepted_fd);
+                            closesocket (accepted_fd);
                         }
                     }
-                    
                     EnterCriticalSection(&runtime->listen_lock);
                 }
             }
@@ -181,7 +186,6 @@ static DWORD WINAPI accept_worker_thread(LPVOID param) {
         }
     }
     
-    SPDLOG_DEBUG ("accept_worker_thread stopping");
     return 0;
 }
 
@@ -236,7 +240,6 @@ extern "C" async_runtime_t* async_runtime_init(void* context) {
     runtime->console_enabled = 0;
     runtime->console_read_ctx = NULL;
 
-    SPDLOG_DEBUG ("async_runtime_init completed");
     return runtime;
 }
 
@@ -285,6 +288,7 @@ extern "C" int async_runtime_add (async_runtime_t* runtime, socket_fd_t fd, uint
     BOOL is_listening = FALSE;
     int optlen = sizeof(is_listening);
     if (getsockopt (fd, SOL_SOCKET, SO_ACCEPTCONN, (char*)&is_listening, &optlen) == 0 && is_listening) {
+        SPDLOG_DEBUG ("adding listening socket {} to accept worker", fd);
         /* Listening socket - add to accept worker's monitoring list */
         EnterCriticalSection (&runtime->listen_lock);
         
@@ -525,5 +529,3 @@ extern "C" void* async_runtime_get_console_ctx(async_runtime_t* runtime) {
 extern "C" HANDLE async_runtime_get_iocp(async_runtime_t* runtime) {
     return runtime ? runtime->iocp_handle : NULL;
 }
-
-#endif /* _WIN32 */

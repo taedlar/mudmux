@@ -64,7 +64,7 @@ int main (int argc, char* argv[]) {
  *  Exits the program on error or if --help or --version is specified.
  */
 static void process_command_line (int argc, char* argv[]) {
-    int log_level = spdlog::level::warn; // default log level
+    int log_level = spdlog::level::warn; // keep quieter defaults for non-Debug builds
 
     argparse::ArgumentParser program (argv[0], "1.0");
     program.add_argument("-f", "--config").metavar("FILE").default_value(std::string("mud.conf"))
@@ -80,6 +80,7 @@ static void process_command_line (int argc, char* argv[]) {
     try {
         program.parse_args (argc, argv);
         spdlog::set_level(static_cast<spdlog::level::level_enum>(log_level));
+        mudmux_set_log_level(log_level); // set shared library log level to match main program
         SPDLOG_DEBUG ("log level set to {}", spdlog::level::to_string_view(spdlog::get_level()));
     }
     catch (const std::runtime_error& err) {

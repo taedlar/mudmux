@@ -32,6 +32,10 @@ static void disconnect_comm (async_runtime_t* runtime, void* context, int slot, 
     comm_abstract_remove(slot);
 }
 
+extern "C" void mudmux_set_log_level (int level) {
+    spdlog::set_level(static_cast<spdlog::level::level_enum>(level));
+}
+
 extern "C" bool mudmux_init (const char* config_yaml) {
     if (is_running.load()) {
         SPDLOG_ERROR ("mudmux_init() called while already running");
