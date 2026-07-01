@@ -4,10 +4,10 @@
 
 #include "mudmux/hooks.h"
 
-static mudmux_hook_func_t all_hooks[256] = {nullptr}; // array of hook functions
+static mudmux_hook_func_t all_hooks[MUDMUX_HOOK_MAX] = {nullptr}; // array of hook functions
 
 extern "C" bool mudmux_register_hook (enum mudmux_hook_type_t hook_type, mudmux_hook_func_t hook_func) {
-    if (hook_type <= 0 || hook_type >= 256 || !hook_func) {
+    if (hook_type <= 0 || hook_type >= MUDMUX_HOOK_MAX || !hook_func) {
         SPDLOG_ERROR ("mudmux_register_hook() called with invalid hook_type or null hook_func");
         return false;
     }
@@ -16,7 +16,7 @@ extern "C" bool mudmux_register_hook (enum mudmux_hook_type_t hook_type, mudmux_
 }
 
 extern "C" int mudmux_invoke_hook (enum mudmux_hook_type_t hook_type, void* ctx, int msg, void* data, size_t size) {
-    if (hook_type <= 0 || hook_type >= 256) {
+    if (hook_type <= 0 || hook_type >= MUDMUX_HOOK_MAX) {
         SPDLOG_ERROR ("mudmux_invoke_hook() called with invalid hook_type");
         return -1;
     }
