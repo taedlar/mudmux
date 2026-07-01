@@ -175,7 +175,6 @@ int comm_process_listener_event (async_runtime_t* runtime, int listener_slot, so
 	SPDLOG_INFO ("accepted new connection on listener slot {} -> new comm slot {}", listener_slot, accepted_slot);
 
 	// validate accepted socket_fd_t
-	BIO* accepted_rbio = comm_abstract_get_rbio (accepted_slot);
 	if (_async_poll_read (runtime, accepted_slot) < 0) {
 		SPDLOG_ERROR ("failed to register accepted comm slot {} with runtime", accepted_slot);
 		comm_abstract_remove (accepted_slot);
@@ -186,7 +185,7 @@ int comm_process_listener_event (async_runtime_t* runtime, int listener_slot, so
 #ifdef _WIN32
 	// [IOCP] post an initial IOCP read for the accepted socket to trigger the first read event
 	int accepted_raw_fd = -1;
-	if (BIO_get_fd(accepted_rbio, &accepted_raw_fd) <= 0 || accepted_raw_fd < 0) {
+	if (BIO_get_fd(comm_abstract_get_rbio(accepted_slot), &accepted_raw_fd) <= 0 || accepted_raw_fd < 0) {
 		SPDLOG_ERROR ("BIO_get_fd failed for accepted slot {}", accepted_slot);
 		comm_abstract_remove (accepted_slot);
 		return -1;
