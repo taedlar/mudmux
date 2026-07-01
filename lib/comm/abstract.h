@@ -21,8 +21,7 @@ extern "C" {
 typedef struct comm_abstract_s comm_abstract_t;
 enum comm_slot_e {
     COMM_SLOT_CONSOLE = 0,
-    COMM_SLOT_FIRST = 1,
-    COMM_SLOT_LAST = 1023
+    RESERVED_SLOTS = 1
 };
 
 #ifndef MUDMUX_NO_OPENSSL

@@ -14,7 +14,6 @@ struct comm_abstract_s {
 
 static comm_abstract_t* all_comms{nullptr};
 static size_t max_comms{0};
-static const int RESERVED_SLOTS = 1; // reserve slot #0 for console communication
 
 static int comm_abstract_ensure_capacity (void) {
     if (all_comms)
