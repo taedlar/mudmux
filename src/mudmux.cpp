@@ -73,8 +73,10 @@ extern "C" int mudmux_run (void* context) {
 
     // initialize subsystems
     auto runtime = async_runtime_init(context);
-    bool success = runtime
-        && (!enable_console || comm_init_console(runtime));
+    bool success = (runtime != nullptr);
+
+    if (success && enable_console)
+        success = comm_init_console (runtime);
 
     if (success) {
         for (const auto& accept_name : accept_names) {
@@ -122,12 +124,12 @@ extern "C" int mudmux_run (void* context) {
             }
 
             int slot = context_to_slot(event.context);
-            auto* comm = comm_abstract_get(slot);
+            auto* comm = comm_abstract_get (slot);
             if (!comm) {
-                SPDLOG_WARN ("event for invalid comm slot {}", slot);
+                // This can happen if the comm was removed (e.g., due to disconnect) while events were still pending
                 continue;
             }
-            SPDLOG_DEBUG ("processing event for slot {} (fd={})", slot, event.fd);
+            SPDLOG_DEBUG ("processing event for slot {} (event.fd={})", slot, event.fd);
 
             if (comm_is_listener(comm)) {
                 comm_process_listener_event (runtime, slot, event.fd);

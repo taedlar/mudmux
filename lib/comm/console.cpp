@@ -84,7 +84,7 @@ extern "C" int comm_process_console_input (async_runtime_t *runtime) {
             comm_abstract_remove (COMM_SLOT_CONSOLE); // remove console from comm_abstract
             if (console_type == CONSOLE_TYPE_REAL) {
                 // re-arm console worker for next console input (e.g., after Ctrl+D EOF)
-                SPDLOG_INFO ("console EOF detected, re-initializing console worker");
+                SPDLOG_INFO ("EOF detected, re-arming console worker for next console session");
                 console_ctx = console_worker_init (runtime, console_queue, CONSOLE_COMPLETION_KEY);
                 return 0;
             }
@@ -97,17 +97,20 @@ extern "C" int comm_process_console_input (async_runtime_t *runtime) {
         }
 
         // check if console communication needs re-connection (e.g., after Ctrl+D EOF on a real console)
-        if (!comm_abstract_get(0)) {
+        if (!comm_abstract_get_rbio(COMM_SLOT_CONSOLE)) {
+            SPDLOG_INFO ("console communication missing, re-registering console communication for stdout");
             BIO* stdout_bio = BIO_new_fp (stdout, BIO_NOCLOSE);
             BIO* stdin_bio = BIO_new_fp (stdin, BIO_NOCLOSE);
-            if (!stdout_bio || !stdin_bio || comm_abstract_add_bio (stdout_bio, stdin_bio, 0) < 0) {
+            if (!stdout_bio || !stdin_bio || comm_abstract_add_bio (stdin_bio, stdout_bio, 0) < 0) {
                 SPDLOG_ERROR ("failed to re-register console communication for stdout");
                 if (stdout_bio)
                     BIO_free (stdout_bio);
                 return -1;
             }
+            async_queue_clear (console_queue); // clear any pending lines in the queue
             mudmux_invoke_hook (MUDMUX_HOOK_CONNECT,
                 async_runtime_get_context(runtime), COMM_SLOT_CONSOLE, nullptr, 0); // invoke connect hook for console user
+            return 1;
         }
 
         // drain completed lines from the console queue and invoke the shared inbound hook path

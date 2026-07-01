@@ -2,6 +2,7 @@
 #include "config.h"
 #endif
 
+#include "abstract.h"
 #include "inbound.h"
 
 #include "mudmux/mudmux.h"
@@ -29,6 +30,10 @@ int comm_process_input (
     const io_event_t* event,
     int slot) {
     if (!runtime || !event || slot < 0) {
+        return -1;
+    }
+    comm_abstract_t* comm = comm_abstract_get(slot);
+    if (!comm) {
         return -1;
     }
 
