@@ -2,12 +2,16 @@
 #include "mudmux/mudmux.h"
 #include "comm/abstract.h"
 
+#include <atomic>
+#include <csignal>
 #include <iostream>
 #include <fstream>
 #include <sstream>
 #include <string>
 #include <argparse/argparse.hpp>
 #include <spdlog/spdlog.h>
+
+static void sigint_handler (int signal);
 
 static void process_command_line (int argc, char* argv[]);
 
@@ -27,6 +31,7 @@ static int on_message_inbound (void*, int slot, void* data, size_t size) {
 }
 
 int main (int argc, char* argv[]) {
+    std::signal(SIGINT, sigint_handler);
     process_command_line (argc, argv); // calls mudmux_init() when returning
 
 #ifdef _WIN32
@@ -115,4 +120,10 @@ static void process_command_line (int argc, char* argv[]) {
             std::exit(EXIT_FAILURE);
         }
     }
+}
+
+static void sigint_handler (int signal) {
+    SPDLOG_INFO ("SIGINT received, shutting down...");
+    (void)signal; // unused
+    mudmux_shutdown();
 }

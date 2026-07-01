@@ -163,5 +163,9 @@ extern "C" int mudmux_run (void* context) {
 }
 
 extern "C" void mudmux_shutdown (void) {
-    is_shutting_down.store(true);
+    if (is_running.load()) {
+        SPDLOG_INFO ("mudmux_shutdown() called");
+        is_shutting_down.store(true);
+        async_runtime_wakeup(async_get_current_runtime());
+    }
 }
