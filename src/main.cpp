@@ -29,7 +29,18 @@ static int on_message_inbound (void*, int slot, void* data, size_t size) {
 int main (int argc, char* argv[]) {
     process_command_line (argc, argv); // calls mudmux_init() when returning
 
+#ifdef _WIN32
+    // Initialize Winsock
+    WSADATA wsa_data;
+    if (WSAStartup(MAKEWORD(2, 2), &wsa_data) != 0) {
+        SPDLOG_ERROR ("WSAStartup failed");
+        return EXIT_FAILURE;
+    }
+    SPDLOG_INFO ("Winsock initialized: version {}.{}", LOBYTE(wsa_data.wVersion), HIBYTE(wsa_data.wVersion));
+#endif
+
     // create server context
+
     // register hooks
     mudmux_register_hook (MUDMUX_HOOK_CONNECT, on_connect);
     mudmux_register_hook (MUDMUX_HOOK_MESSAGE_INBOUND, on_message_inbound);
@@ -42,6 +53,9 @@ int main (int argc, char* argv[]) {
 
     // cleanup server context
 
+#ifdef _WIN32
+    WSACleanup();
+#endif
     return exit_code;
 }
 
@@ -50,7 +64,7 @@ int main (int argc, char* argv[]) {
  *  Exits the program on error or if --help or --version is specified.
  */
 static void process_command_line (int argc, char* argv[]) {
-    int log_level = spdlog::level::warn; // default log level
+    int log_level = spdlog::level::warn; // keep quieter defaults for non-Debug builds
 
     argparse::ArgumentParser program (argv[0], "1.0");
     program.add_argument("-f", "--config").metavar("FILE").default_value(std::string("mud.conf"))
@@ -66,6 +80,7 @@ static void process_command_line (int argc, char* argv[]) {
     try {
         program.parse_args (argc, argv);
         spdlog::set_level(static_cast<spdlog::level::level_enum>(log_level));
+        mudmux_set_log_level(log_level); // set shared library log level to match main program
         SPDLOG_DEBUG ("log level set to {}", spdlog::level::to_string_view(spdlog::get_level()));
     }
     catch (const std::runtime_error& err) {

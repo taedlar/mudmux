@@ -2,6 +2,7 @@
 #include "config.h"
 #endif
 
+#include "abstract.h"
 #include "inbound.h"
 
 #include "mudmux/mudmux.h"
@@ -27,9 +28,12 @@ int comm_invoke_inbound_message (
 int comm_process_input (
     async_runtime_t* runtime,
     const io_event_t* event,
-    int slot,
-    comm_abstract_t* comm) {
-    if (!runtime || !event || !comm || slot < 0) {
+    int slot) {
+    if (!runtime || !event || slot < 0) {
+        return -1;
+    }
+    comm_abstract_t* comm = comm_abstract_get(slot);
+    if (!comm) {
         return -1;
     }
 

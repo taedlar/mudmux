@@ -11,6 +11,13 @@ extern "C" {
 #endif
 
 /**
+ * @brief Set mudmux internal logger level.
+ *
+ * @param level Integer value from spdlog::level::level_enum.
+ */
+MUDMUX_EXPORT void mudmux_set_log_level (int level);
+
+/**
  * @brief Initialize the mudmux server library.
  * @param config_yaml YAML configuration contents, or NULL to use defaults.
  * @return true on success, false on failure.

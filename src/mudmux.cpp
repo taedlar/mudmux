@@ -32,6 +32,10 @@ static void disconnect_comm (async_runtime_t* runtime, void* context, int slot, 
     comm_abstract_remove(slot);
 }
 
+extern "C" void mudmux_set_log_level (int level) {
+    spdlog::set_level(static_cast<spdlog::level::level_enum>(level));
+}
+
 extern "C" bool mudmux_init (const char* config_yaml) {
     if (is_running.load()) {
         SPDLOG_ERROR ("mudmux_init() called while already running");
@@ -73,8 +77,10 @@ extern "C" int mudmux_run (void* context) {
 
     // initialize subsystems
     auto runtime = async_runtime_init(context);
-    bool success = runtime
-        && (!enable_console || comm_init_console(runtime));
+    bool success = (runtime != nullptr);
+
+    if (success && enable_console)
+        success = comm_init_console (runtime);
 
     if (success) {
         for (const auto& accept_name : accept_names) {
@@ -122,21 +128,20 @@ extern "C" int mudmux_run (void* context) {
             }
 
             int slot = context_to_slot(event.context);
-            auto* comm = comm_abstract_get(slot);
+            auto* comm = comm_abstract_get (slot);
             if (!comm) {
-                SPDLOG_WARN ("event for invalid comm slot {}", slot);
+                // This can happen if the comm was removed (e.g., due to disconnect) while events were still pending
                 continue;
             }
+            SPDLOG_DEBUG ("processing event for slot {} (event.fd={})", slot, event.fd);
 
-            if (comm_abstract_is_listener(comm)) {
-                if (comm_process_listener_event(runtime, slot, event.fd) < 0) {
-                    continue;
-                }
+            if (comm_is_listener(comm)) {
+                comm_process_listener_event (runtime, slot, event.fd);
                 continue;
             }
 
             if (event.event_type & EVENT_READ) {
-                if (comm_process_input(runtime, &event, slot, comm) != 0) {
+                if (comm_process_input(runtime, &event, slot) != 0) {
                     disconnect_comm(runtime, async_runtime_get_context(runtime), slot, event.fd);
                 }
                 continue;
