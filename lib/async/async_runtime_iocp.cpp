@@ -412,6 +412,11 @@ extern "C" int async_runtime_wait(async_runtime_t* runtime, io_event_t* events,
                     continue;
                 }
                 
+                /* Skip console worker completions - they're processed via queue mechanism */
+                if (entries[i].lpCompletionKey == CONSOLE_COMPLETION_KEY) {
+                    continue;
+                }
+                
                 /* Accept worker posts accepted FD in dwNumberOfBytesTransferred */
                 socket_fd_t accepted_fd = (socket_fd_t)entries[i].dwNumberOfBytesTransferred;
                 

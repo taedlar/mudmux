@@ -19,6 +19,7 @@ static char console_line_buffer[4096];
 extern "C" bool comm_init_console (async_runtime_t *runtime) {
 
     std::lock_guard<std::mutex> lock(console_mutex);
+    // create console queue if it doesn't exist
     if (!console_queue) {
         console_queue = async_queue_create (100, 4096, ASYNC_QUEUE_DROP_OLDEST);
         if (!console_queue) {
@@ -27,6 +28,7 @@ extern "C" bool comm_init_console (async_runtime_t *runtime) {
         }
     }
 
+    // start console worker thread to read from stdin and enqueue lines into console_queue
     console_ctx = console_worker_init (runtime, console_queue, CONSOLE_COMPLETION_KEY);
     if (!console_ctx) {
         SPDLOG_ERROR ("failed to initialize console worker");
@@ -38,7 +40,7 @@ extern "C" bool comm_init_console (async_runtime_t *runtime) {
     // Register stdin/stdout communication at slot #0
     BIO* stdout_bio = BIO_new_fp (stdout, BIO_NOCLOSE);
     BIO* stdin_bio = BIO_new_fp (stdin, BIO_NOCLOSE);
-    if (!stdout_bio || !stdin_bio || comm_abstract_add_bio (stdout_bio, stdin_bio, 0) < 0) {
+    if (!stdout_bio || !stdin_bio || comm_abstract_add_bio (stdin_bio, stdout_bio, COMM_SLOT_CONSOLE) < 0) {
         SPDLOG_ERROR ("failed to register console communication for stdout");
         console_worker_destroy (console_ctx);
         console_ctx = nullptr;
@@ -52,7 +54,7 @@ extern "C" bool comm_init_console (async_runtime_t *runtime) {
     }
     // invoke connect hook for console user
     mudmux_invoke_hook (MUDMUX_HOOK_CONNECT,
-        async_runtime_get_context(runtime), 0, nullptr, 0); // invoke connect hook for console user
+        async_runtime_get_context(runtime), COMM_SLOT_CONSOLE, nullptr, 0); // invoke connect hook for console user
     return true;
 }
 
@@ -80,13 +82,11 @@ extern "C" int comm_process_console_input (async_runtime_t *runtime) {
             auto console_type = console_ctx->console_type;
             console_worker_destroy (console_ctx);
             console_ctx = nullptr;
-            comm_abstract_remove (0); // remove console from comm_abstract
+            comm_abstract_remove (COMM_SLOT_CONSOLE); // remove console from comm_abstract
             if (console_type == CONSOLE_TYPE_REAL) {
                 // re-arm console worker for next console input (e.g., after Ctrl+D EOF)
                 SPDLOG_INFO ("console EOF detected, re-initializing console worker");
                 console_ctx = console_worker_init (runtime, console_queue, CONSOLE_COMPLETION_KEY);
-
-                // TODO: invoke hook_connect when next console input is received
                 return 0;
             }
             else {
@@ -96,6 +96,8 @@ extern "C" int comm_process_console_input (async_runtime_t *runtime) {
                 return 0;
             }
         }
+
+        // check if console communication needs re-connection (e.g., after Ctrl+D EOF on a real console)
         if (!comm_abstract_get(0)) {
             BIO* stdout_bio = BIO_new_fp (stdout, BIO_NOCLOSE);
             BIO* stdin_bio = BIO_new_fp (stdin, BIO_NOCLOSE);
@@ -106,12 +108,12 @@ extern "C" int comm_process_console_input (async_runtime_t *runtime) {
                 return -1;
             }
             mudmux_invoke_hook (MUDMUX_HOOK_CONNECT,
-                async_runtime_get_context(runtime), 0, nullptr, 0); // invoke connect hook for console user
+                async_runtime_get_context(runtime), COMM_SLOT_CONSOLE, nullptr, 0); // invoke connect hook for console user
         }
 
         // drain completed lines from the console queue and invoke the shared inbound hook path
         while (async_queue_dequeue (console_queue, console_line_buffer, sizeof(console_line_buffer), nullptr)) {
-            comm_invoke_inbound_message(runtime, 0, console_line_buffer, strlen(console_line_buffer));
+            comm_invoke_inbound_message(runtime, COMM_SLOT_CONSOLE, console_line_buffer, strlen(console_line_buffer));
         }
         return 1;
     }
