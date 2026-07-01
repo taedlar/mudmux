@@ -42,7 +42,7 @@ extern "C" bool mudmux_init (const char* config_yaml) {
         return false;
     }
     try {
-        YAML::Node config = YAML::Load (config_yaml ? config_yaml : "{\"transport\":{\"console\":true}}");
+        YAML::Node config = YAML::Load (config_yaml ? config_yaml : "{\"transport\":{\"console\":false}}");
         const YAML::Node& transport = config["transport"];
         // initialize transport layer
         enable_console = transport["console"].as<bool>(false);

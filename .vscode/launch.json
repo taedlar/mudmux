@@ -11,6 +11,16 @@
             "cwd": "${cmake.testWorkingDirectory}"
         },
         {
+            "name": "(gdb) Debug Test",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${cmake.testProgram}",
+            "args": ["${cmake.testArgs}"],
+            "cwd": "${cmake.testWorkingDirectory}",
+            "MIMode": "gdb",
+            "miDebuggerPath": "/usr/bin/gdb"
+        },
+        {
             "name": "Example Server",
             "type": "cppvsdbg",
             "request": "launch",

@@ -71,11 +71,12 @@ add_subdirectory(lib/comm)
 add_subdirectory(src)
 
 # add tests
-if (BUILD_TESTING AND MUDMUX_BUILD_TESTS)
+if (MUDMUX_BUILD_TESTS)
     FetchContent_MakeAvailable(GTest) # always fetch GoogleTest (as recommended by Google)
     if (NOT TARGET GTest::gtest OR NOT TARGET GTest::gtest_main)
         message(FATAL_ERROR "GTest not found and could not be fetched."
             " Please check your internet connection or disable testing with -DBUILD_TESTING=OFF.")
     endif()
     include(GoogleTest)
+    add_subdirectory(tests/unit_comm)
 endif()
