@@ -11,6 +11,7 @@
 
 #include "async_runtime.h"
 #include "console_worker.h"
+#include <atomic>
 
 /* Maximum text buffer size */
 #ifndef MAX_TEXT
@@ -79,6 +80,8 @@ struct async_runtime_s {
     int console_enabled;
     iocp_context_t* console_read_ctx;
 };
+
+static std::atomic<async_runtime_t*> current_runtime(nullptr);
 
 /* Context pool management */
 
@@ -187,6 +190,10 @@ static DWORD WINAPI accept_worker_thread (LPVOID param) {
     }
     
     return 0;
+}
+
+extern "C" async_runtime_t* async_get_current_runtime(void) {
+    return current_runtime.load(std::memory_order_acquire);
 }
 
 /* Lifecycle management */
@@ -392,9 +399,11 @@ extern "C" int async_runtime_wait(async_runtime_t* runtime, io_event_t* events,
      * flow through IOCP - single blocking point, no polling */
     OVERLAPPED_ENTRY entries[64];
     ULONG num_entries = 0;
-    
+
+    current_runtime.store(runtime, std::memory_order_release);
     if (GetQueuedCompletionStatusEx(runtime->iocp_handle, entries, 64,
                                     &num_entries, timeout_ms, FALSE)) {
+        current_runtime.store(nullptr, std::memory_order_release);
         /* Process IOCP completions */
         for (ULONG i = 0; i < num_entries && event_count < max_events; i++) {
             iocp_context_t* io_ctx = (iocp_context_t*)entries[i].lpOverlapped;

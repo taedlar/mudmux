@@ -70,6 +70,13 @@ typedef enum console_type_e {
  */
 typedef struct async_runtime_s async_runtime_t;
 
+/**
+ * Get the current async runtime being waited on, or NULL if not set.
+ * 
+ * @returns Current async_runtime_t pointer, or NULL if not in wait context
+ */
+async_runtime_t* async_get_current_runtime(void);
+
 /*
  * =============================================================================
  * Lifecycle Management
