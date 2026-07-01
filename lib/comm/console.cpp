@@ -14,7 +14,6 @@
 static std::mutex console_mutex;
 static async_queue_t* console_queue{nullptr};
 static console_worker_context_t* console_ctx{nullptr};
-static char console_line_buffer[4096];
 
 extern "C" bool comm_init_console (async_runtime_t *runtime) {
 
@@ -112,6 +111,7 @@ extern "C" int comm_process_console_input (async_runtime_t *runtime) {
         }
 
         // drain completed lines from the console queue and invoke the shared inbound hook path
+        char console_line_buffer[4096];
         while (async_queue_dequeue (console_queue, console_line_buffer, sizeof(console_line_buffer), nullptr)) {
             comm_invoke_inbound_message(runtime, COMM_SLOT_CONSOLE, console_line_buffer, strlen(console_line_buffer));
         }

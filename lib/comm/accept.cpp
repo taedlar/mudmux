@@ -43,7 +43,7 @@ int comm_accept (async_runtime_t* runtime, const char* accept_name) {
 	}
 
 	int bio_fd = -1;
-	if (BIO_get_fd(listener_bio, &bio_fd) <= 0 || bio_fd < 0) {
+	if (BIO_get_fd(listener_bio, &bio_fd) <= 0 || bio_fd == INVALID_SOCKET_FD) {
 		SPDLOG_ERROR ("BIO_get_fd failed for {}", accept_name);
 		BIO_free(listener_bio);
 		return -1;
@@ -69,13 +69,16 @@ int comm_accept (async_runtime_t* runtime, const char* accept_name) {
 		return -1;
 	}
 
-	SPDLOG_INFO ("listening transport {} registered (slot={}, fd={})", accept_name, slot, listen_fd);
+	if (comm_is_listener(comm_abstract_get(slot)))
+		SPDLOG_INFO ("listening transport {} registered (slot={}, fd={})", accept_name, slot, listen_fd);
+
 	return 0;
 }
 
 static int _accept_new_comm (int slot, socket_fd_t event_fd) {
+	comm_abstract_t* listener_comm = comm_abstract_get(slot);
 	BIO* listener_bio = comm_abstract_get_rbio(slot);
-	if (!listener_bio || BIO_method_type(listener_bio) != BIO_TYPE_ACCEPT) {
+	if (!listener_bio || !comm_is_listener(listener_comm)) {
 		SPDLOG_WARN ("slot {} is not a valid listener", slot);
 		return -1;
 	}
@@ -145,6 +148,7 @@ int comm_process_listener_event (async_runtime_t* runtime, int listener_slot, so
 		SPDLOG_WARN ("invalid arguments");
 		return -1;
 	}
+	SPDLOG_DEBUG ("processing listener event on slot {} (fd={})", listener_slot, event_fd);
 
 	// accept and register comm slot for the new connection
 #ifdef _WIN32

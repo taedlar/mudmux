@@ -127,6 +127,7 @@ extern "C" int mudmux_run (void* context) {
                 SPDLOG_WARN ("event for invalid comm slot {}", slot);
                 continue;
             }
+            SPDLOG_DEBUG ("processing event for slot {} (fd={})", slot, event.fd);
 
             if (comm_is_listener(comm)) {
                 comm_process_listener_event (runtime, slot, event.fd);

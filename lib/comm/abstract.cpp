@@ -16,6 +16,18 @@ static comm_abstract_t* all_comms{nullptr};
 static size_t max_comms{0};
 static const int RESERVED_SLOTS = 1; // reserve slot #0 for console communication
 
+static bool _bio_is_listener (BIO* bio) {
+    if (!bio)
+        return false;
+
+    // Some platforms/OpenSSL builds may report accept BIOs with composite type bits.
+    if (BIO_method_type(bio) == BIO_TYPE_ACCEPT)
+        return true;
+
+    const char* method_name = BIO_method_name(bio);
+    return method_name && strstr(method_name, "accept");
+}
+
 static int comm_abstract_ensure_capacity (void) {
     if (all_comms)
         return 0;
@@ -59,7 +71,14 @@ int comm_abstract_add_bio (BIO* rbio, BIO* wbio, int slot) {
         comm_abstract_remove (slot); // clear existing comm at this slot
     all_comms[slot].rbio = rbio;
     all_comms[slot].wbio = wbio;
-    all_comms[slot].is_listener = BIO_method_type(rbio) == BIO_TYPE_ACCEPT;
+    all_comms[slot].is_listener = [](BIO* bio) {
+        if (!bio)
+            return false;
+        if (BIO_method_type(bio) == BIO_TYPE_ACCEPT)
+            return true;
+        const char* method_name = BIO_method_name(bio);
+        return method_name && strstr(method_name, "accept");
+    } (rbio);
     return slot;
 }
 
