@@ -42,8 +42,7 @@ static int comm_abstract_find_slot (void) {
     return static_cast<int>(slot);
 }
 
-int comm_abstract_add_bio (void* bio_ptr) {
-    BIO* bio = static_cast<BIO*>(bio_ptr);
+int comm_abstract_add_bio (BIO* bio, int slot) {
     if (!bio) {
         SPDLOG_ERROR ("comm_abstract_add_bio() called with null BIO");
         return -1;
@@ -53,45 +52,13 @@ int comm_abstract_add_bio (void* bio_ptr) {
         return -1;
     }
 
-    int slot = comm_abstract_find_slot();
+    if (slot < 0 || slot >= static_cast<int>(max_comms)) {
+        slot = comm_abstract_find_slot();
+    } else if (all_comms[slot].bio) {
+        BIO_free_all (all_comms[slot].bio);
+    }
     all_comms[slot].bio = bio;
     all_comms[slot].is_listener = BIO_method_type(bio) == BIO_TYPE_ACCEPT;
-    return slot;
-}
-
-int comm_abstract_add (socket_fd_t fd) {
-    if (comm_abstract_ensure_capacity() < 0) {
-        return -1;
-    }
-
-    // STDIN is a special case, always use slot 0 for it
-    if (fd == STDIN_FILENO) {
-        if (all_comms[0].bio) {
-            SPDLOG_WARN ("STDIN already registered in comm_abstract_add()");
-            return 0; // already registered
-        }
-        all_comms[0].bio = BIO_new_fp (stdin, BIO_NOCLOSE); // leave stdin open for the lifetime of the program
-        if (!all_comms[0].bio) {
-            SPDLOG_ERROR ("failed to create BIO for STDIN");
-            return -1;
-        }
-        SPDLOG_INFO ("STDIN registered in comm_abstract_add() at slot 0");
-        return 0;
-    }
-
-    BIO* bio = BIO_new_fd (fd, BIO_CLOSE); // close fd when BIO is freed
-    if (!bio) {
-        SPDLOG_ERROR ("failed to create BIO for fd {}", fd);
-        return -1;
-    }
-
-    int slot = comm_abstract_add_bio(bio);
-    if (slot < 0) {
-        BIO_free(bio);
-        return -1;
-    }
-
-    SPDLOG_INFO ("fd {} registered in comm_abstract_add() at slot {}", fd, slot);
     return slot;
 }
 
@@ -100,7 +67,7 @@ int comm_abstract_remove (int slot) {
         SPDLOG_WARN ("invalid slot {} in comm_abstract_remove()", slot);
         return -1;
     }
-    BIO_free (all_comms[slot].bio);
+    BIO_free_all (all_comms[slot].bio);
     all_comms[slot].bio = nullptr;
     all_comms[slot].is_listener = false;
     return 0;
@@ -125,17 +92,51 @@ socket_fd_t comm_abstract_get_fd (comm_abstract_t *comm) {
     return fd;
 }
 
+BIO* comm_abstract_get_bio (comm_abstract_t *comm) {
+    if (!comm) {
+        return nullptr;
+    }
+    return comm->bio;
+}
+
 int comm_abstract_is_listener (comm_abstract_t *comm) {
     return comm && comm->bio && comm->is_listener;
 }
 
-int comm_abstract_accept (int slot) {
+int comm_abstract_accept (int slot, socket_fd_t event_fd) {
     comm_abstract_t* comm = comm_abstract_get(slot);
     if (!comm || !comm->bio || !comm->is_listener) {
         SPDLOG_WARN ("invalid listener slot {} in comm_abstract_accept()", slot);
         return -1;
     }
 
+#ifdef _WIN32
+    // Windows IOCP delivers the accepted fd directly in the event (proactive).
+    // Unix epoll/poll only signal readability; accept() must be called to extract fd (reactive).
+    if (event_fd != INVALID_SOCKET_FD) {
+        socket_fd_t listener_fd = INVALID_SOCKET_FD;
+        if (BIO_get_fd(comm->bio, &listener_fd) <= 0) {
+            listener_fd = INVALID_SOCKET_FD;
+        }
+        if (event_fd != listener_fd) {
+            BIO* accepted_bio = BIO_new_fd(event_fd, BIO_CLOSE);
+            if (!accepted_bio) {
+                SPDLOG_ERROR("failed to create BIO for accepted fd {}", event_fd);
+                return -1;
+            }
+            int accepted_slot = comm_abstract_add_bio(accepted_bio, -1);
+            if (accepted_slot < 0) {
+                BIO_free(accepted_bio);
+                return -1;
+            }
+            return accepted_slot;
+        }
+    }
+#else
+    (void)event_fd;
+#endif
+
+    // Fall back to standard BIO_do_accept path
     if (BIO_do_accept(comm->bio) <= 0) {
         if (!BIO_should_retry(comm->bio)) {
             SPDLOG_WARN ("BIO_do_accept failed for listener slot {}", slot);
@@ -149,7 +150,7 @@ int comm_abstract_accept (int slot) {
         return -1;
     }
 
-    int accepted_slot = comm_abstract_add_bio(accepted_bio);
+    int accepted_slot = comm_abstract_add_bio(accepted_bio, -1);
     if (accepted_slot < 0) {
         BIO_free(accepted_bio);
         return -1;
@@ -190,9 +191,7 @@ int comm_write (comm_abstract_t *comm, const void *buf, size_t len) {
     }
     if (len == 0)
         len = strlen (static_cast<const char*>(buf)); // auto-detect length for null-terminated strings
-    int written = BIO_get_fd(comm->bio, nullptr) == 0 ?
-        write (STDOUT_FILENO, buf, len) :  // write to stdout if BIO is stdin
-        BIO_write (comm->bio, buf, static_cast<int>(len));
+    int written = BIO_write (comm->bio, buf, static_cast<int>(len));
     if (written <= 0) {
         return -1; // write error
     }

@@ -18,8 +18,8 @@ target_link_libraries(mudmux PRIVATE
     yaml-cpp::yaml-cpp
     mudmux::async
     mudmux::comm
-    # OpenSSL::SSL
-    # OpenSSL::Crypto
+    OpenSSL::SSL
+    OpenSSL::Crypto
 )
 
 # headers
@@ -40,5 +40,7 @@ target_link_libraries(example_server PRIVATE
     spdlog::spdlog
     argparse::argparse
     mudmux::mudmux
-    mudmux::comm
+    OpenSSL::SSL
+    OpenSSL::Crypto
 )
+target_include_directories(example_server PRIVATE ${CMAKE_SOURCE_DIR}/lib)

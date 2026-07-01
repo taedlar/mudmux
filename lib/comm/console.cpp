@@ -35,15 +35,19 @@ extern "C" bool comm_init_console (async_runtime_t *runtime) {
         return false;
     }
 
-    // invoke connect hook for console user
-    if (comm_abstract_add (STDIN_FILENO) < 0) {
-        SPDLOG_ERROR ("failed to register STDIN in comm_abstract_add()");
+    // Register stdout at communication slot #0 for console output
+    BIO* stdout_bio = BIO_new_fp (stdout, BIO_NOCLOSE);
+    if (!stdout_bio || comm_abstract_add_bio (stdout_bio, 0) < 0) {
+        SPDLOG_ERROR ("failed to register console communication for stdout");
         console_worker_destroy (console_ctx);
         console_ctx = nullptr;
         async_queue_destroy (console_queue);
         console_queue = nullptr;
+        if (stdout_bio)
+            BIO_free (stdout_bio);
         return false;
     }
+    // invoke connect hook for console user
     mudmux_invoke_hook (MUDMUX_HOOK_CONNECT,
         async_runtime_get_context(runtime), 0, nullptr, 0); // invoke connect hook for console user
     return true;
@@ -73,7 +77,7 @@ extern "C" int comm_process_console_input (async_runtime_t *runtime) {
             auto console_type = console_ctx->console_type;
             console_worker_destroy (console_ctx);
             console_ctx = nullptr;
-            comm_abstract_remove (STDIN_FILENO); // remove console from comm_abstract
+            comm_abstract_remove (0); // remove console from comm_abstract
             if (console_type == CONSOLE_TYPE_REAL) {
                 // re-arm console worker for next console input (e.g., after Ctrl+D EOF)
                 SPDLOG_INFO ("console EOF detected, re-initializing console worker");
@@ -90,7 +94,13 @@ extern "C" int comm_process_console_input (async_runtime_t *runtime) {
             }
         }
         if (!comm_abstract_get(0)) {
-            comm_abstract_add (STDIN_FILENO); // re-connect console user if it was removed due to EOF
+            BIO* stdout_bio = BIO_new_fp (stdout, BIO_NOCLOSE);
+            if (!stdout_bio || comm_abstract_add_bio (stdout_bio, 0) < 0) {
+                SPDLOG_ERROR ("failed to re-register console communication for stdout");
+                if (stdout_bio)
+                    BIO_free (stdout_bio);
+                return -1;
+            }
             mudmux_invoke_hook (MUDMUX_HOOK_CONNECT,
                 async_runtime_get_context(runtime), 0, nullptr, 0); // invoke connect hook for console user
         }

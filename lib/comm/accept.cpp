@@ -49,7 +49,7 @@ int comm_accept (async_runtime_t* runtime, const char* accept_name) {
 		return -1;
 	}
 
-	int slot = comm_abstract_add_bio(static_cast<void*>(accept_bio));
+	int slot = comm_abstract_add_bio(accept_bio, -1);
 	if (slot < 0) {
 		SPDLOG_ERROR ("comm_abstract_add_bio failed for {}", accept_name);
 		BIO_free(accept_bio);
@@ -84,16 +84,10 @@ int comm_process_listener_event (
 
 	int accepted_slot = -1;
 #ifdef _WIN32
-	socket_fd_t listener_fd = comm_abstract_get_fd(listener_comm);
-	if (event_fd != INVALID_SOCKET_FD && event_fd != listener_fd) {
-		accepted_slot = comm_abstract_add(event_fd);
-	}
-	else {
-		accepted_slot = comm_abstract_accept(listener_slot);
-	}
+	accepted_slot = comm_abstract_accept(listener_slot, event_fd);
 #else
 	(void)event_fd;
-	accepted_slot = comm_abstract_accept(listener_slot);
+	accepted_slot = comm_abstract_accept(listener_slot, INVALID_SOCKET_FD);
 #endif
 
 	if (accepted_slot < 0) {
@@ -101,7 +95,11 @@ int comm_process_listener_event (
 	}
 
 	auto* accepted_comm = comm_abstract_get(accepted_slot);
-	socket_fd_t accepted_fd = comm_abstract_get_fd(accepted_comm);
+	BIO* accepted_bio = comm_abstract_get_bio(accepted_comm);
+	socket_fd_t accepted_fd = INVALID_SOCKET_FD;
+	if (!accepted_bio || BIO_get_fd(accepted_bio, &accepted_fd) <= 0) {
+		accepted_fd = INVALID_SOCKET_FD;
+	}
 	if (!accepted_comm || accepted_fd == INVALID_SOCKET_FD) {
 		SPDLOG_WARN ("accepted comm slot {} has invalid fd", accepted_slot);
 		comm_abstract_remove(accepted_slot);
