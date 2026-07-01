@@ -17,6 +17,7 @@
 #include <errno.h>
 #include <unistd.h>
 
+#include <atomic>
 #include "async_runtime.h"
 
 #define MAX_EVENTS 64
@@ -27,6 +28,8 @@ struct async_runtime_s {
     int event_fd;  /* For worker completions */
     console_type_t console_type;  /* Detected console type */
 };
+
+std::atomic<async_runtime_t*> current_runtime(nullptr);  /* Global pointer to current runtime for signal handling */
 
 /* Helper functions */
 
@@ -47,6 +50,10 @@ static uint32_t epoll_to_events(uint32_t epoll_events) {
 }
 
 /* Public API */
+
+extern "C" async_runtime_t* async_get_current_runtime() {
+    return current_runtime.load(std::memory_order_acquire);
+}
 
 extern "C" async_runtime_t* async_runtime_init(void* context) {
     async_runtime_t* runtime = (async_runtime_t*) calloc (1, sizeof(async_runtime_t));
@@ -148,7 +155,9 @@ extern "C" int async_runtime_wait(async_runtime_t* runtime, io_event_t* events,
     struct epoll_event epoll_events[MAX_EVENTS];
     int max_epoll_events = (max_events < MAX_EVENTS) ? max_events : MAX_EVENTS;
 
+    current_runtime.store(runtime, std::memory_order_release);  /* Set current runtime for signal handling */
     int result = epoll_wait(runtime->epoll_fd, epoll_events, max_epoll_events, timeout_ms);
+    current_runtime.store(nullptr, std::memory_order_release);  /* Clear current runtime after wait */
     if (result < 0) {
         /* EINTR (signal interruption) is used to wake up the event loop.
          * Treat it as timeout so backend can check heartbeat/shutdown flags. */

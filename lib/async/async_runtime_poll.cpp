@@ -18,6 +18,8 @@
 #include <errno.h>
 #include <unistd.h>
 
+#include <atomic>
+
 #define INITIAL_CAPACITY 64
 #define MAX_FD_COUNT 4096
 
@@ -42,6 +44,8 @@ struct async_runtime_s {
     
     console_type_t console_type;  /* Detected console type */
 };
+
+std::atomic<async_runtime_t*> current_runtime(nullptr);  /* Global pointer to current runtime for signal handling */
 
 /* Helper functions */
 
@@ -98,6 +102,10 @@ static int expand_capacity(async_runtime_t* runtime) {
 }
 
 /* Public API */
+
+extern "C" async_runtime_t* async_get_current_runtime() {
+    return current_runtime.load(std::memory_order_acquire);
+}
 
 extern "C" async_runtime_t* async_runtime_init(void* context) {
     async_runtime_t* runtime = (async_runtime_t*)calloc(1, sizeof(async_runtime_t));
@@ -232,8 +240,10 @@ extern "C" int async_runtime_wait(async_runtime_t* runtime, io_event_t* events,
     if (timeout) {
         timeout_ms = (timeout->tv_sec * 1000) + (timeout->tv_usec / 1000);
     }
-    
+
+    current_runtime.store(runtime, std::memory_order_release);  /* Set current runtime for signal handling */
     int result = poll(runtime->pollfds, runtime->count, timeout_ms);
+    current_runtime.store(nullptr, std::memory_order_release);  /* Clear current runtime after wait */
     if (result < 0) {
         /* EINTR (signal interruption) is used to wake up the event loop.
          * Treat it as timeout so backend can check heartbeat/shutdown flags. */
