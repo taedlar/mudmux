@@ -10,6 +10,10 @@
 #include <string>
 #include <argparse/argparse.hpp>
 #include <spdlog/spdlog.h>
+#ifdef _WIN32
+#include <winsock2.h>
+#pragma comment(lib, "ws2_32.lib")
+#endif
 
 static void sigint_handler (int signal);
 
