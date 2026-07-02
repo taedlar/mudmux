@@ -15,13 +15,29 @@ struct comm_abstract_s {
 static comm_abstract_t* all_comms{nullptr};
 static size_t max_comms{0};
 
-static int comm_abstract_ensure_capacity (void) {
-    if (all_comms)
+static int comm_abstract_ensure_capacity (size_t required_slots = RESERVED_SLOTS + 1) {
+    if (all_comms && max_comms >= required_slots) {
         return 0;
+    }
 
-    max_comms = 64;
-    all_comms = new comm_abstract_t[max_comms];
-    memset(all_comms, 0, sizeof(comm_abstract_t) * max_comms);
+    if (!all_comms) {
+        max_comms = 64; // initial capacity: 64 slots (including RESERVED_SLOTS)
+        while (max_comms < required_slots)
+            max_comms *= 2;
+        all_comms = new comm_abstract_t[max_comms];
+        memset(all_comms, 0, sizeof(comm_abstract_t) * max_comms);
+    }
+    else {
+        size_t new_max = max_comms * 2;
+        while (new_max < required_slots)
+            new_max *= 2; // grow to 128, 256, 512, etc. until it can accommodate required_slots
+        comm_abstract_t* new_comms = new comm_abstract_t[new_max];
+        memset(new_comms, 0, sizeof(comm_abstract_t) * new_max);
+        memcpy(new_comms, all_comms, sizeof(comm_abstract_t) * max_comms);
+        delete[] all_comms;
+        all_comms = new_comms;
+        max_comms = new_max;
+    }
     return 0;
 }
 
@@ -31,15 +47,8 @@ static int comm_abstract_find_slot (void) {
     while (slot < max_comms && (all_comms[slot].rbio || all_comms[slot].wbio))
         slot++;
     // if no available slot, expand the array
-    if (slot >= max_comms) {
-        size_t new_max = max_comms * 2;
-        comm_abstract_t* new_comms = new comm_abstract_t[new_max];
-        memset(new_comms, 0, sizeof(comm_abstract_t) * new_max);
-        memcpy(new_comms, all_comms, sizeof(comm_abstract_t) * max_comms);
-        delete[] all_comms;
-        all_comms = new_comms;
-        max_comms = new_max;
-    }
+    if (slot >= max_comms)
+        comm_abstract_ensure_capacity (slot + 1);
     return static_cast<int>(slot);
 }
 
@@ -67,6 +76,28 @@ int comm_abstract_add_bio (BIO* rbio, BIO* wbio, int slot) {
         return method_name && strstr(method_name, "accept");
     } (rbio);
     return slot;
+}
+
+int comm_abstract_add_file (const char* fn_in, const char* fn_out, int slot) {
+    BIO* bio_in = fn_in ? BIO_new_file(fn_in, "r") : BIO_new_fp (stdin, BIO_NOCLOSE);
+    if (!bio_in) {
+        SPDLOG_ERROR ("failed to open file {} for reading", fn_in ? fn_in : "stdin");
+        return -1;
+    }
+    BIO* bio_out = fn_out ? BIO_new_file(fn_out, "w") : BIO_new_fp (stdout, BIO_NOCLOSE);
+    if (!bio_out) {
+        SPDLOG_ERROR ("failed to open file {} for writing", fn_out ? fn_out : "stdout");
+        BIO_free_all(bio_in);
+        return -1;
+    }
+    int ret = comm_abstract_add_bio (bio_in, bio_out, slot);
+    if (ret < 0) {
+        SPDLOG_ERROR ("failed to add communication slot");
+        BIO_free_all(bio_in);
+        BIO_free_all(bio_out);
+        return -1;
+    }
+    return ret;
 }
 
 int comm_abstract_remove (int slot) {

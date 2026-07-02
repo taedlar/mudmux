@@ -37,6 +37,12 @@ Build output lands in `out/build/<preset>/`. A `compile_commands.json` is always
 
 **Preferred verify step**: build the default target — it builds both `mudmux` (the shared library) and `example_server`.
 
+### Quick Testing with `example_server`
+
+To test the `mudmux` shared library, use the executable `example_server` to setup a simple MUD server.
+
+- Running `example_server` without argumnets will start the server without listening ports and idle until Ctrl-C pressed or SIGINT received. The default logging verbosity is set to "warning". Use `--help` option to get program help documents.
+
 ## Dependencies
 
 Fetched automatically by CMake via FetchContent (declared in `cmake/fetch-settings.cmake`):

@@ -4,9 +4,11 @@
 
 #include "mudmux/mudmux.h"
 #include "async/async_runtime.h"
+#include "async/console_worker.h"
 #include "comm/abstract.h"
 #include "comm/accept.h"
 #include "comm/console.h"
+#include "comm/file_input.h"
 #include "comm/inbound.h"
 
 #include <atomic>
@@ -19,6 +21,7 @@
 static std::atomic<bool> is_running{false};
 static std::atomic<bool> is_shutting_down{false};
 
+static bool enable_standard_input{false};
 static bool enable_console{false};
 static std::vector<std::string> accept_names; // array of names for BIO_set_accept_name()
 
@@ -36,6 +39,14 @@ extern "C" void mudmux_set_log_level (int level) {
     spdlog::set_level(static_cast<spdlog::level::level_enum>(level));
 }
 
+extern "C" void mudmux_enable_standard_input (bool enable) {
+    enable_standard_input = enable;
+}
+
+extern "C" void mudmux_enable_console (bool enable) {
+    enable_console = enable;
+}
+
 extern "C" bool mudmux_init (const char* config_yaml) {
     if (is_running.load()) {
         SPDLOG_ERROR ("mudmux_init() called while already running");
@@ -45,7 +56,7 @@ extern "C" bool mudmux_init (const char* config_yaml) {
         YAML::Node config = YAML::Load (config_yaml ? config_yaml : "{\"transport\":{\"console\":false}}");
         const YAML::Node& transport = config["transport"];
         // initialize transport layer
-        enable_console = transport["console"].as<bool>(false);
+        mudmux_enable_console (transport["console"].as<bool>(false));
         if (transport["accept"]) {
             for (const auto& name : transport["accept"]) {
                 accept_names.push_back(name.as<std::string>());
@@ -79,8 +90,22 @@ extern "C" int mudmux_run (void* context) {
     auto runtime = async_runtime_init(context);
     bool success = (runtime != nullptr);
 
-    if (success && enable_console)
-        success = comm_init_console (runtime);
+    if (success) {
+        if (enable_console || enable_standard_input) { // console input is enabled, initialize console worker
+            success = comm_init_console (runtime);
+        }
+        else { // file input is enabled (before entering event loop), simulate a single console session with file input
+            BIO* rbio = comm_abstract_get_rbio (COMM_SLOT_CONSOLE);
+            if (rbio) {
+                SPDLOG_DEBUG("detected existing file input, initializing async file input processing");
+                // Initialize file input (starts reader thread)
+                if (!comm_init_async_file_input(runtime, COMM_SLOT_CONSOLE)) {
+                    SPDLOG_ERROR("failed to initialize async file input");
+                    success = false;
+                }
+            }
+        }
+    }
 
     if (success) {
         for (const auto& accept_name : accept_names) {
@@ -91,6 +116,7 @@ extern "C" int mudmux_run (void* context) {
             }
         }
     }
+
     if (!success) {
         SPDLOG_ERROR ("failed to initialize");
         async_runtime_deinit(runtime);
@@ -111,13 +137,23 @@ extern "C" int mudmux_run (void* context) {
         }
         SPDLOG_DEBUG ("async_runtime_wait returned {} events", num_events);
 
-        // process console input (always check for console input, even if no events were returned)
-        if (enable_console)
-            comm_process_console_input (runtime);
+        // Process console input before event loop (needed for mode switching and ReadConsoleW limitations)
+        if (enable_console || enable_standard_input)
+            comm_process_console_input (runtime, enable_console);
 
-        // process I/O events (non-blocking)
+        // Process file input before event loop (async file reader thread posts completions,
+        // but needs to be drained even if no events were returned by async_runtime_wait)
+        if (comm_has_file_inputs()) {
+            comm_process_file_input(runtime, COMM_SLOT_CONSOLE, nullptr);
+        }
+
+        // Process I/O events from transports (non-blocking)
         for (int i = 0; i < num_events; ++i) {
             auto& event = events[i];
+            
+            // Skip file input and console completion events (already processed above)
+            if (IS_FILE_INPUT_COMPLETION_KEY(event.fd) || event.fd == CONSOLE_COMPLETION_KEY)
+                continue;
 #ifndef NDEBUG
             SPDLOG_DEBUG ("event: fd={}, event_type={}, bytes_transferred={}",
                 event.fd, event.event_type, event.bytes_transferred);

@@ -74,6 +74,10 @@ static void process_command_line (int argc, char* argv[]) {
     argparse::ArgumentParser program (argv[0], "1.0");
     program.add_argument("-f", "--config").metavar("FILE").default_value(std::string("mud.conf"))
         .help("specify configuration file");
+    program.add_argument("-i", "--input").metavar("FILE").default_value(std::string("stdin"))
+        .help("specify input file (default: stdin)");
+    program.add_argument("-o", "--output").metavar("FILE").default_value(std::string("stdout"))
+        .help("specify output file (default: stdout)");
     program.add_argument("-V", "--verbose").default_value(false).implicit_value(true).nargs(0)
         .action([&](const auto & /*unused*/) {
             if (log_level > spdlog::level::trace)
@@ -98,6 +102,7 @@ static void process_command_line (int argc, char* argv[]) {
         std::exit(EXIT_SUCCESS);
     }
 
+    // call mudmux_init() to process configuration file (or use defaults if no file is specified)
     if (program.is_used("--config")) {
         std::string config_file = program.get<std::string>("--config");
         std::ifstream input(config_file);
@@ -119,6 +124,22 @@ static void process_command_line (int argc, char* argv[]) {
         if (!mudmux_init(nullptr)) {
             std::exit(EXIT_FAILURE);
         }
+    }
+
+    if (program.is_used("--input") || program.is_used("--output")) {
+        // standard input/output overrides console mode (no re-connection after EOF)
+        mudmux_enable_console(false);
+        std::string input_file_str = program.get<std::string>("--input");
+        std::string output_file_str = program.get<std::string>("--output");
+        const char* input_file = (input_file_str != "stdin") ? input_file_str.c_str() : nullptr; // stdin by default
+        const char* output_file = (output_file_str != "stdout") ? output_file_str.c_str() : nullptr; // stdout by default
+        if (comm_abstract_add_file(input_file, output_file, COMM_SLOT_CONSOLE) < 0) { // set up file/stdin and stdout
+            SPDLOG_ERROR ("failed to open input/output files");
+            std::exit(EXIT_FAILURE);
+        }
+        // Enable standard input handling only for stdin (not for file input)
+        if (!input_file)
+            mudmux_enable_standard_input(true);
     }
 }
 

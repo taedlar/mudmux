@@ -384,8 +384,8 @@ extern "C" int async_runtime_wakeup(async_runtime_t* runtime) {
 
 /* Event loop */
 
-extern "C" int async_runtime_wait(async_runtime_t* runtime, io_event_t* events,
-                       int max_events, struct timeval* timeout) {
+extern "C" int async_runtime_wait (async_runtime_t* runtime, io_event_t* events,
+                                   int max_events, struct timeval* timeout) {
     if (!runtime || !events || max_events <= 0) return -1;
     
     DWORD timeout_ms = INFINITE;
@@ -400,13 +400,13 @@ extern "C" int async_runtime_wait(async_runtime_t* runtime, io_event_t* events,
     OVERLAPPED_ENTRY entries[64];
     ULONG num_entries = 0;
 
-    current_runtime.store(runtime, std::memory_order_release);
-    if (GetQueuedCompletionStatusEx(runtime->iocp_handle, entries, 64,
-                                    &num_entries, timeout_ms, FALSE)) {
-        current_runtime.store(nullptr, std::memory_order_release);
+    current_runtime.store (runtime, std::memory_order_release);
+    if (GetQueuedCompletionStatusEx (runtime->iocp_handle, entries, 64,
+                                     &num_entries, timeout_ms, FALSE)) {
+        current_runtime.store (nullptr, std::memory_order_release);
         /* Process IOCP completions */
         for (ULONG i = 0; i < num_entries && event_count < max_events; i++) {
-            iocp_context_t* io_ctx = (iocp_context_t*)entries[i].lpOverlapped;
+            iocp_context_t* io_ctx = (iocp_context_t*) entries[i].lpOverlapped;
             
             if (io_ctx) {
                 events[event_count].fd = io_ctx->fd;
@@ -424,11 +424,11 @@ extern "C" int async_runtime_wait(async_runtime_t* runtime, io_event_t* events,
                     events[event_count].bytes_transferred = 0;
                     events[event_count].buffer = NULL;
                 } else if (io_ctx->operation == OP_READ) {
-                    events[event_count].context = (void*)entries[i].lpCompletionKey;
+                    events[event_count].context = (void*) entries[i].lpCompletionKey;
                     events[event_count].event_type = (entries[i].dwNumberOfBytesTransferred > 0)
                                                      ? EVENT_READ : EVENT_CLOSE;
                 } else if (io_ctx->operation == OP_WRITE) {
-                    events[event_count].context = (void*)entries[i].lpCompletionKey;
+                    events[event_count].context = (void*) entries[i].lpCompletionKey;
                     events[event_count].event_type = EVENT_WRITE;
                 }
                 free_iocp_context(runtime, io_ctx);
