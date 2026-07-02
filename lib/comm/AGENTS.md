@@ -50,18 +50,25 @@ Slots are accessed exclusively through opaque `comm_abstract_t` structs via publ
 
 ```c
 // Register I/O sources at a slot
-int comm_abstract_add_bio(BIO *rbio, BIO *wbio, int slot);
-int comm_abstract_add_file(const char *fn_in, const char *fn_out, int slot);
+int comm_abstract_add_bio(BIO *rbio, BIO *wbio, int slot, uint32_t flags);
+int comm_abstract_add_file(const char *fn_in, const char *fn_out, int slot, uint32_t flags);
 
-// Query state
+// Slot access
 BIO* comm_abstract_get_rbio(int slot);
 comm_abstract_t* comm_abstract_get(int slot);
-int comm_is_listener(comm_abstract_t *comm);
+
+// Flag management
+uint32_t comm_get_flags (comm_abstract_t *comm);
+void comm_set_flags (comm_abstract_t *comm, uint32_t flags);
+void comm_clear_flags (comm_abstract_t *comm, uint32_t flags);
 
 // Read/write operations
 int comm_read(comm_abstract_t *comm, void *buf, size_t len);
 int comm_write(comm_abstract_t *comm, const void *buf, size_t len);
 void comm_flush(comm_abstract_t *comm);
+
+// Non-blcoking (buffer) writer C++ helper for operator<<
+void comm_buffered_write (comm_abstract_t *comm, const void *buf, size_t len);
 
 // Lifecycle
 int comm_abstract_remove(int slot);

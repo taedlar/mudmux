@@ -1,5 +1,5 @@
-#ifndef MUDMUX_H
-#define MUDMUX_H
+#ifndef MUDMUX_MUDMUX_H
+#define MUDMUX_MUDMUX_H
 
 #include "mudmux_export.h"
 #include "mudmux/hooks.h"
@@ -63,4 +63,4 @@ MUDMUX_EXPORT void mudmux_shutdown (void);
 }
 #endif
 
-#endif /* MUDMUX_H */
+#endif /* MUDMUX_MUDMUX_H */

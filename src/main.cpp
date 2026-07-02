@@ -1,6 +1,6 @@
 // main.cpp
 #include "mudmux/mudmux.h"
-#include "comm/abstract.h"
+#include "mudmux/comm.h"
 
 #include <atomic>
 #include <csignal>
@@ -17,16 +17,14 @@ static void process_command_line (int argc, char* argv[]);
 
 static int on_connect (void*, int slot, void*, size_t) {
     auto comm = comm_abstract_get(slot);
-    comm_write (comm, "Welcome to mudmux!\r\n", 0);
+    *comm << "Welcome to mudmux!\r\n";
     return 0;
 }
 
 static int on_message_inbound (void*, int slot, void* data, size_t size) {
     std::string message(static_cast<char*>(data), size);
     auto comm = comm_abstract_get(slot);
-    comm_write (comm, "Received message: ", 0);
-    comm_write (comm, message.c_str(), message.size());
-    comm_write (comm, "\r\n", 1);
+    *comm << "Received message: " << message << "\r\n";
     return 0;
 }
 
@@ -133,7 +131,7 @@ static void process_command_line (int argc, char* argv[]) {
         std::string output_file_str = program.get<std::string>("--output");
         const char* input_file = (input_file_str != "stdin") ? input_file_str.c_str() : nullptr; // stdin by default
         const char* output_file = (output_file_str != "stdout") ? output_file_str.c_str() : nullptr; // stdout by default
-        if (comm_abstract_add_file(input_file, output_file, COMM_SLOT_CONSOLE) < 0) { // set up file/stdin and stdout
+        if (comm_abstract_add_file(input_file, output_file, COMM_SLOT_CONSOLE, 0) < 0) { // set up file/stdin and stdout
             SPDLOG_ERROR ("failed to open input/output files");
             std::exit(EXIT_FAILURE);
         }

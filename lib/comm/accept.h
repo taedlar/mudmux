@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-MUDMUX_EXPORT int comm_accept (async_runtime_t* runtime, const char* accept_name);
+int comm_accept (async_runtime_t* runtime, const char* accept_name);
 
 int comm_process_listener_event (
 	async_runtime_t* runtime,
