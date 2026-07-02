@@ -3,8 +3,7 @@
 #endif
 
 #include "mudmux/mudmux.h"
-#include "accept.h"
-#include "abstract.h"
+#include "mudmux/comm.h"
 #include <cstdint>
 #include <openssl/bio.h>
 
@@ -58,7 +57,7 @@ int comm_accept (async_runtime_t* runtime, const char* accept_name) {
 		return -1;
 	}
 
-	int slot = comm_abstract_add_bio (listener_bio, nullptr, -1);
+	int slot = comm_abstract_add_bio (listener_bio, nullptr, -1, C_SOCKET_LISTENING);
 	if (slot < 0) {
 		SPDLOG_ERROR ("comm_abstract_add_bio failed for {}", accept_name);
 		BIO_free(listener_bio);
@@ -72,7 +71,7 @@ int comm_accept (async_runtime_t* runtime, const char* accept_name) {
 		return -1;
 	}
 
-	if (comm_is_listener(comm_abstract_get(slot)))
+	if (comm_abstract_get(slot))
 		SPDLOG_INFO ("listening transport {} registered (slot={}, fd={})", accept_name, slot, listen_fd);
 
 	return 0;
@@ -81,7 +80,7 @@ int comm_accept (async_runtime_t* runtime, const char* accept_name) {
 static int _accept_new_comm (int slot, socket_fd_t event_fd) {
 	comm_abstract_t* listener_comm = comm_abstract_get(slot);
 	BIO* listener_bio = comm_abstract_get_rbio(slot);
-	if (!listener_bio || !comm_is_listener(listener_comm)) {
+	if (!listener_bio || !(comm_get_flags(listener_comm) & C_SOCKET_LISTENING)) {
 		SPDLOG_WARN ("slot {} is not a valid listener", slot);
 		return -1;
 	}
@@ -96,7 +95,7 @@ static int _accept_new_comm (int slot, socket_fd_t event_fd) {
             return -1;
         }
         BIO_set_nbio (accepted_bio, 1); // set accepted socket to non-blocking mode
-		int accepted_slot = comm_abstract_add_bio (accepted_bio, accepted_bio, -1);
+		int accepted_slot = comm_abstract_add_bio (accepted_bio, accepted_bio, -1, C_SOCKET_READABLE);
 		if (accepted_slot < 0) {
 			BIO_free (accepted_bio);
 			return -1;
@@ -123,7 +122,7 @@ static int _accept_new_comm (int slot, socket_fd_t event_fd) {
 	BIO_set_nbio (accepted_bio, 1); // set accepted socket to non-blocking mode
 
 	// add to communication slots
-    int accepted_slot = comm_abstract_add_bio (accepted_bio, accepted_bio, -1);
+    int accepted_slot = comm_abstract_add_bio (accepted_bio, accepted_bio, -1, C_SOCKET_READABLE);
     if (accepted_slot < 0) {
         BIO_free (accepted_bio);
         return -1;

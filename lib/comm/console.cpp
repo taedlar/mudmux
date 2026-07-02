@@ -2,11 +2,10 @@
 #include "config.h"
 #endif
 
-#include "abstract.h"
-#include "console.h"
-#include "inbound.h"
-#include "async/console_worker.h"
 #include "mudmux/mudmux.h"
+#include "mudmux/comm.h"
+#include "async/console_worker.h"
+
 #include <openssl/bio.h>
 #include <cstring>
 #include <mutex>
@@ -38,7 +37,7 @@ extern "C" bool comm_init_console (async_runtime_t *runtime) {
     }
 
     // Register stdin/stdout communication at slot #0
-    if (comm_abstract_add_file (nullptr, nullptr, COMM_SLOT_CONSOLE) < 0) {
+    if (comm_abstract_add_file (nullptr, nullptr, COMM_SLOT_CONSOLE, 0) < 0) {
         SPDLOG_ERROR ("failed to connect console communication");
         console_worker_destroy (console_ctx);
         console_ctx = nullptr;
@@ -100,7 +99,7 @@ extern "C" int comm_process_console_input (async_runtime_t *runtime, bool allow_
         // check if console communication needs re-connection (e.g., after Ctrl+D EOF on a real console)
         if (!comm_abstract_get_rbio(COMM_SLOT_CONSOLE) && allow_reconnect) {
             SPDLOG_INFO ("----- recconnecting console communication");
-            if (comm_abstract_add_file (nullptr, nullptr, COMM_SLOT_CONSOLE) < 0) {
+            if (comm_abstract_add_file (nullptr, nullptr, COMM_SLOT_CONSOLE, 0) < 0) {
                 SPDLOG_ERROR ("failed to re-connect console communication");
                 return -1;
             }

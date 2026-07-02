@@ -1,5 +1,5 @@
-#ifndef MUDMUX_HOOKS_HPP
-#define MUDMUX_HOOKS_HPP
+#ifndef MUDMUX_HOOKS_H
+#define MUDMUX_HOOKS_H
 
 #include "mudmux_export.h"
 #include <stddef.h>
@@ -32,4 +32,4 @@ MUDMUX_EXPORT int mudmux_invoke_hook (enum mudmux_hook_type_t hook_type, void* c
 }
 #endif
 
-#endif // MUDMUX_HOOKS_HPP
+#endif /* MUDMUX_HOOKS_H */

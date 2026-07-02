@@ -3,13 +3,9 @@
 #endif
 
 #include "mudmux/mudmux.h"
+#include "mudmux/comm.h"
 #include "async/async_runtime.h"
 #include "async/console_worker.h"
-#include "comm/abstract.h"
-#include "comm/accept.h"
-#include "comm/console.h"
-#include "comm/file_input.h"
-#include "comm/inbound.h"
 
 #include <atomic>
 #include <cstdint>
@@ -18,12 +14,31 @@
 #include <vector>
 #include <yaml-cpp/yaml.h>
 
+extern "C" {
+    mudmux_comm_api_t* mudmux_comm_api {nullptr}; // global pointer to comm API struct, initialized by mudmux_init()
+}
+
 static std::atomic<bool> is_running{false};
 static std::atomic<bool> is_shutting_down{false};
 
 static bool enable_standard_input{false};
 static bool enable_console{false};
 static std::vector<std::string> accept_names; // array of names for BIO_set_accept_name()
+
+static void init_comm_api (void) {
+    static mudmux_comm_api_t comm_api;
+    comm_api.add_bio = comm_abstract_add_bio;
+    comm_api.add_file = comm_abstract_add_file;
+    comm_api.get = comm_abstract_get;
+    comm_api.remove = comm_abstract_remove;
+    comm_api.cleanup = comm_abstract_cleanup;
+    comm_api.get_flags = comm_get_flags;
+    comm_api.set_flags = comm_set_flags;
+    comm_api.clear_flags = comm_clear_flags;
+    comm_api.buffered_write = comm_buffered_write;
+
+    mudmux_comm_api = &comm_api; // set global pointer to initialized struct
+}
 
 static int context_to_slot (void* context) {
     return static_cast<int>(reinterpret_cast<intptr_t>(context));
@@ -52,6 +67,7 @@ extern "C" bool mudmux_init (const char* config_yaml) {
         SPDLOG_ERROR ("mudmux_init() called while already running");
         return false;
     }
+    init_comm_api();
     try {
         YAML::Node config = YAML::Load (config_yaml ? config_yaml : "{\"transport\":{\"console\":false}}");
         const YAML::Node& transport = config["transport"];
@@ -78,6 +94,7 @@ extern "C" void mudmux_deinit (void) {
     }
     enable_console = false;
     accept_names.clear();
+    memset(mudmux_comm_api, 0, sizeof(mudmux_comm_api_t));
 }
 
 extern "C" int mudmux_run (void* context) {
@@ -171,7 +188,7 @@ extern "C" int mudmux_run (void* context) {
             }
             SPDLOG_DEBUG ("processing event for slot {} (event.fd={})", slot, event.fd);
 
-            if (comm_is_listener(comm)) {
+            if (comm_get_flags(comm) & C_SOCKET_LISTENING) {
                 comm_process_listener_event (runtime, slot, event.fd);
                 continue;
             }

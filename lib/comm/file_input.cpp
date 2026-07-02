@@ -3,10 +3,8 @@
 #endif
 
 #include "mudmux/mudmux.h"
+#include "mudmux/comm.h"
 #include "async/async_queue.h"
-#include "abstract.h"
-#include "file_input.h"
-#include "inbound.h"
 
 #include <openssl/bio.h>
 #include <mutex>
