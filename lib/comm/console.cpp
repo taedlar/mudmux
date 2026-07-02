@@ -10,6 +10,7 @@
 #include <openssl/bio.h>
 #include <cstring>
 #include <mutex>
+#include <thread>
 
 static std::mutex console_mutex;
 static async_queue_t* console_queue{nullptr};
@@ -37,18 +38,12 @@ extern "C" bool comm_init_console (async_runtime_t *runtime) {
     }
 
     // Register stdin/stdout communication at slot #0
-    BIO* stdout_bio = BIO_new_fp (stdout, BIO_NOCLOSE);
-    BIO* stdin_bio = BIO_new_fp (stdin, BIO_NOCLOSE);
-    if (!stdout_bio || !stdin_bio || comm_abstract_add_bio (stdin_bio, stdout_bio, COMM_SLOT_CONSOLE) < 0) {
-        SPDLOG_ERROR ("failed to register console communication for stdout");
+    if (comm_abstract_add_file (nullptr, nullptr, COMM_SLOT_CONSOLE) < 0) {
+        SPDLOG_ERROR ("failed to connect console communication");
         console_worker_destroy (console_ctx);
         console_ctx = nullptr;
         async_queue_destroy (console_queue);
         console_queue = nullptr;
-        if (stdout_bio)
-            BIO_free (stdout_bio);
-        if (stdin_bio)
-            BIO_free (stdin_bio);
         return false;
     }
     // invoke connect hook for console user
@@ -63,6 +58,7 @@ extern "C" bool comm_init_console (async_runtime_t *runtime) {
 extern "C" void comm_shutdown_console (async_runtime_t *runtime) {
     (void)runtime; // unused parameter
     std::lock_guard<std::mutex> lock(console_mutex);
+    
     if (console_ctx) {
         bool stopped = console_worker_shutdown (console_ctx, 5000);
         if (!stopped) {
@@ -77,15 +73,17 @@ extern "C" void comm_shutdown_console (async_runtime_t *runtime) {
     }
 }
 
-extern "C" int comm_process_console_input (async_runtime_t *runtime) {
+extern "C" int comm_process_console_input (async_runtime_t *runtime, bool allow_reconnect) {
     std::lock_guard<std::mutex> lock(console_mutex);
+    
+    // Handle worker thread input (stdin/console)
     if (console_ctx) {
         if (console_worker_take_eof (console_ctx)) {
             auto console_type = console_ctx->console_type;
             console_worker_destroy (console_ctx);
             console_ctx = nullptr;
             comm_abstract_remove (COMM_SLOT_CONSOLE); // remove console from comm_abstract
-            if (console_type == CONSOLE_TYPE_REAL) {
+            if (console_type == CONSOLE_TYPE_REAL && allow_reconnect) {
                 // re-arm console worker for next console input (e.g., after Ctrl+D EOF)
                 SPDLOG_INFO ("----- console user disconnected (press ENTER to reconnect)");
                 console_ctx = console_worker_init (runtime, console_queue, CONSOLE_COMPLETION_KEY);
@@ -93,21 +91,17 @@ extern "C" int comm_process_console_input (async_runtime_t *runtime) {
             }
             else {
                 // stdin is either a pipe or a file, so EOF means the end of input; shut down the server
-                SPDLOG_INFO ("EOF detected (pipe/file), shutting down server");
+                SPDLOG_INFO ("EOF detected, shutting down server");
                 mudmux_shutdown();
                 return 0;
             }
         }
 
         // check if console communication needs re-connection (e.g., after Ctrl+D EOF on a real console)
-        if (!comm_abstract_get_rbio(COMM_SLOT_CONSOLE)) {
-            SPDLOG_INFO ("----- recconnecting console user");
-            BIO* stdout_bio = BIO_new_fp (stdout, BIO_NOCLOSE);
-            BIO* stdin_bio = BIO_new_fp (stdin, BIO_NOCLOSE);
-            if (!stdout_bio || !stdin_bio || comm_abstract_add_bio (stdin_bio, stdout_bio, 0) < 0) {
-                SPDLOG_ERROR ("failed to re-register console communication for stdout");
-                if (stdout_bio)
-                    BIO_free (stdout_bio);
+        if (!comm_abstract_get_rbio(COMM_SLOT_CONSOLE) && allow_reconnect) {
+            SPDLOG_INFO ("----- recconnecting console communication");
+            if (comm_abstract_add_file (nullptr, nullptr, COMM_SLOT_CONSOLE) < 0) {
+                SPDLOG_ERROR ("failed to re-connect console communication");
                 return -1;
             }
             async_queue_clear (console_queue); // clear any pending lines in the queue
@@ -123,5 +117,5 @@ extern "C" int comm_process_console_input (async_runtime_t *runtime) {
         }
         return 1;
     }
-    return -1; // no console worker
+    return -1; // no console input available
 }

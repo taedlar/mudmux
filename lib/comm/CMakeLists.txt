@@ -1,9 +1,10 @@
 # lib/comm/CMakeLists.txt
 
 add_library(comm OBJECT
-    console.cpp
     abstract.cpp
     accept.cpp
+    console.cpp
+    file_input.cpp
     inbound.cpp
 )
 add_library(mudmux::comm ALIAS comm)
@@ -14,6 +15,7 @@ target_sources(comm INTERFACE
         abstract.h
         accept.h
         console.h
+        file_input.h
         inbound.h
 )
 target_compile_definitions(comm PRIVATE mudmux_EXPORTS)

@@ -28,6 +28,7 @@ enum comm_slot_e {
 MUDMUX_EXPORT int comm_abstract_add_bio (BIO *rbio, BIO *wbio, int slot);
 MUDMUX_EXPORT BIO* comm_abstract_get_rbio (int slot);
 #endif
+MUDMUX_EXPORT int comm_abstract_add_file(const char *fn_in, const char* fn_out, int slot);
 MUDMUX_EXPORT comm_abstract_t* comm_abstract_get (int slot);
 MUDMUX_EXPORT int comm_abstract_remove (int slot);
 MUDMUX_EXPORT void comm_abstract_cleanup (void);

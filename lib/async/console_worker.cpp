@@ -140,7 +140,7 @@ static void* console_worker_proc_win32(void* ctx) {
 
     SPDLOG_INFO ("console worker started (type: {})", console_type_str(cctx->console_type));
 
-    while (!async_worker_should_stop(async_worker_current())) {
+    while (!async_worker_should_stop (async_worker_current())) {
         /* Wait for stdin to be signaled OR stop event */
         HANDLE events[2] = { hStdin, hStopEvent };
         DWORD wait_result = WaitForMultipleObjects(2, events, FALSE, INFINITE);
@@ -148,6 +148,7 @@ static void* console_worker_proc_win32(void* ctx) {
         if (wait_result == WAIT_OBJECT_0) {
             /* stdin is signaled - data available, read it synchronously */
             BOOL result;
+            DWORD err {ERROR_SUCCESS};
             if (cctx->console_type == CONSOLE_TYPE_REAL) {
                 /* Real console: ReadConsoleW (Unicode).
                  * dwCtrlWakeupMask is only honored by ReadConsoleW, not ReadConsoleA.
@@ -159,7 +160,9 @@ static void* console_worker_proc_win32(void* ctx) {
                 rdcon.dwCtrlWakeupMask = (1UL << 27); /* ESC = ASCII 27 */
                 rdcon.dwControlKeyState = 0;
                 DWORD wchars_read = 0;
-                result = ReadConsoleW(hStdin, wide_buffer, CONSOLE_MAX_LINE - 1, &wchars_read, &rdcon);
+                result = ReadConsoleW (hStdin, wide_buffer, CONSOLE_MAX_LINE - 1, &wchars_read, &rdcon);
+                if (!result)
+                    err = GetLastError();
                 if (result && wchars_read > 0) {
                     /* ESC wakeup: last wide char is ESC - discard the partial line */
                     if (wide_buffer[wchars_read - 1] == L'\x1B')
@@ -173,7 +176,7 @@ static void* console_worker_proc_win32(void* ctx) {
                     /* ReadConsoleW returned TRUE with 0 chars: spurious wakeup from an
                      * injected input event (e.g. VK_ESCAPE key-up during mode switch).
                      * This is not EOF; loop back and wait for real input. */
-                    SPDLOG_INFO ("console woken with no chars (spurious wakeup), continuing\n");
+                    SPDLOG_DEBUG ("console woken with no chars (spurious wakeup), continuing\n");
                     continue;
                 }
                 else {
@@ -182,41 +185,54 @@ static void* console_worker_proc_win32(void* ctx) {
             } else {
                 /* Pipe or file: Use ReadFile (synchronous) */
                 result = ReadFile (hStdin, line_buffer, CONSOLE_MAX_LINE - 1, &chars_read, NULL);
+                if (!result)
+                    err = GetLastError();
             }
-            SPDLOG_INFO ("read {} chars from console (result: {})", chars_read, result ? "success" : "failure");
 
             if (!result) {
-                DWORD err = GetLastError();
-                if (err == ERROR_OPERATION_ABORTED) {
-                    SPDLOG_INFO ("console read interrupted by shutdown or input mode switch");
-                    restore_desired_console_input_mode (cctx);
-                    continue;
+                if (err == ERROR_BROKEN_PIPE) {
+                    SPDLOG_INFO ("EOF detected (pipe)");
+                    console_worker_set_eof(cctx);
+                    break;
                 }
+                
                 if (cctx->console_type == CONSOLE_TYPE_REAL) {
                     /* SetConsoleMode changing ENABLE_LINE_INPUT while ReadConsoleW is blocking
                      * can return errors such as ERROR_INVALID_FUNCTION; treat these as
                      * non-fatal mode-switch interruptions rather than killing the thread. */
-                    SPDLOG_WARN ("ReadConsoleW() interrupted (err={}), restoring mode and continuing", err);
+                    SPDLOG_DEBUG ("ReadConsoleW() interrupted (err={}), restoring mode and continuing", err);
                     restore_desired_console_input_mode (cctx);
                     continue;
                 }
                 SPDLOG_ERROR ("console read failed: {}", err);
                 break;
             }
-            
+
             if (chars_read > 0) {
                 /* Null-terminate */
                 line_buffer[chars_read] = '\0';
 
+#ifdef _WIN32
+                if (line_buffer[0] == '\x1A') {
+                    if (strspn (line_buffer, "\x1A\r\n") == chars_read) {
+                        /* Ctrl+Z + ENTER (EOF) on Windows console */
+                        SPDLOG_INFO ("EOF detected (Ctrl+Z)");
+                        console_worker_set_eof(cctx);
+                        break;
+                    }
+                }
+#endif
                 /* Enqueue line */
                 if (!async_queue_enqueue(cctx->line_queue, line_buffer, chars_read + 1)) {
-                    SPDLOG_WARN  ("console line queue full, dropping line");
+                    SPDLOG_WARN  ("line queue full, dropping line");
                 }
 
-                /* Post completion to wake main thread */
-                async_runtime_post_completion(cctx->runtime, cctx->completion_key, chars_read);
+                /* Post completion to wake main thread (blocked in async_runtime_wait) */
+                SPDLOG_DEBUG ("read {} chars from console", chars_read);
+                async_runtime_post_completion (cctx->runtime, cctx->completion_key, chars_read);
             } else {
                 /* EOF */
+                SPDLOG_INFO ("EOF detected (no more data)");
                 console_worker_set_eof(cctx);
                 break;
             }

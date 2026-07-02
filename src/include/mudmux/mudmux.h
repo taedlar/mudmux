@@ -18,6 +18,24 @@ extern "C" {
 MUDMUX_EXPORT void mudmux_set_log_level (int level);
 
 /**
+ * @brief Enable or disable standard input for the mudmux server.
+ *
+ * @param enable true to enable standard input, false to disable.
+ */
+MUDMUX_EXPORT void mudmux_enable_standard_input (bool enable);
+
+/**
+ * @brief Enable or disable console support for the mudmux server.
+ * Console mode is simular to standard input mode, except the server does not exit when
+ * EOF is received on stdin or disconnected by the MUD server. Instead, the console can be
+ * re-connected after EOF or disconnection if any input is received on stdin (e.g., pressing
+ * ENTER on the keyboard).
+ * 
+ * @param enable true to enable console support, false to disable.
+ */
+MUDMUX_EXPORT void mudmux_enable_console (bool enable);
+
+/**
  * @brief Initialize the mudmux server library.
  * @param config_yaml YAML configuration contents, or NULL to use defaults.
  * @return true on success, false on failure.
