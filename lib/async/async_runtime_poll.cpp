@@ -169,6 +169,7 @@ extern "C" void async_runtime_deinit(async_runtime_t* runtime) {
     
     free(runtime->pollfds);
     free(runtime->mappings);
+    current_runtime.compare_exchange_strong(runtime, nullptr); // read-modify-write to clear current_runtime if it matches this runtime
     free(runtime);
 }
 
@@ -241,9 +242,8 @@ extern "C" int async_runtime_wait(async_runtime_t* runtime, io_event_t* events,
         timeout_ms = (timeout->tv_sec * 1000) + (timeout->tv_usec / 1000);
     }
 
-    current_runtime.store(runtime, std::memory_order_release);  /* Set current runtime for signal handling */
+    current_runtime.store(runtime, std::memory_order_release);  /* Set current runtime */
     int result = poll(runtime->pollfds, runtime->count, timeout_ms);
-    current_runtime.store(nullptr, std::memory_order_release);  /* Clear current runtime after wait */
     if (result < 0) {
         /* EINTR (signal interruption) is used to wake up the event loop.
          * Treat it as timeout so backend can check heartbeat/shutdown flags. */
