@@ -41,18 +41,13 @@ static void init_comm_api (void) {
     comm_api.set_flags = comm_set_flags;
     comm_api.clear_flags = comm_clear_flags;
     comm_api.buffered_write = comm_buffered_write;
+    comm_api.close = comm_close;
 
     mudmux_comm_api = &comm_api; // set global pointer to initialized struct
 }
 
 static int context_to_slot (void* context) {
     return static_cast<int>(reinterpret_cast<intptr_t>(context));
-}
-
-static void disconnect_comm (async_runtime_t* runtime, void* context, int slot, socket_fd_t fd) {
-    async_runtime_remove(runtime, fd);
-    mudmux_invoke_hook(MUDMUX_HOOK_DISCONNECT, context, slot, nullptr, 0);
-    comm_abstract_remove(slot);
 }
 
 extern "C" void mudmux_set_log_level (int level) {
@@ -200,13 +195,22 @@ extern "C" int mudmux_run (void* context) {
 
             if (event.event_type & EVENT_READ) {
                 if (comm_process_input(runtime, &event, slot) != 0) {
-                    disconnect_comm(runtime, async_runtime_get_context(runtime), slot, event.fd);
+                    (void) comm_close(runtime, slot);
+                    continue;
                 }
+                // TODO: dispatch inbound message to logic layer with fair command turns
                 continue;
             }
 
             if (event.event_type & (EVENT_CLOSE | EVENT_ERROR)) {
-                disconnect_comm(runtime, async_runtime_get_context(runtime), slot, event.fd);
+                (void) comm_close(runtime, slot); // close the connection on error or close event
+                continue;
+            }
+
+            if (comm_get_flags(comm) & C_SOCKET_CLOSING) {
+                SPDLOG_DEBUG ("comm slot {} has C_SOCKET_CLOSING flag set, proceeding with graceful close", slot);
+                (void) comm_close(runtime, slot); // proceed pending graceful close if C_SOCKET_CLOSING flag is set
+                continue;
             }
         }
     }

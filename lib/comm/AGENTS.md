@@ -69,13 +69,16 @@ int comm_write(comm_abstract_t *comm, const void *buf, size_t len);
 
 // Non-blocking (buffered) write path
 void comm_buffered_write (comm_abstract_t *comm, const void *buf, size_t len);
-void comm_flush(comm_abstract_t *comm, async_runtime_t *runtime);
+void comm_flush(async_runtime_t *runtime, int slot);
 void comm_flush_all_outbound(async_runtime_t *runtime);
+bool comm_close(async_runtime_t *runtime, int slot);
 
 // Lifecycle
 int comm_abstract_remove(int slot);
 void comm_abstract_cleanup(void);
 ```
+
+`comm_close()` is also exposed to logic-layer code through `mudmux/comm.h` (`#define comm_close mudmux_comm_api->close`), so hooks can proactively close slots.
 
 ### C++ Convenience Writer (`mudmux/comm.h`)
 
@@ -134,6 +137,14 @@ Outbound writes are intentionally staged and flushed after hook execution.
 - `comm_buffered_write()` sets `C_BUFFERED_WRITE` to mark pending outbound data.
 - `mudmux_invoke_hook()` calls `comm_flush_all_outbound(async_get_current_runtime())` after each hook callback returns.
 - `comm_flush_all_outbound()` iterates all slots and flushes those with `C_BUFFERED_WRITE`.
+
+### Proactive Close Path (`comm_close`)
+
+- Hooks may request close directly (for example in `MUDMUX_HOOK_MESSAGE_INBOUND` after receiving `quit`).
+- `comm_close()` marks `C_SOCKET_CLOSING` and invokes `MUDMUX_HOOK_DISCONNECT` once on first close request.
+- If buffered outbound bytes exist, close is deferred until flush drains; function returns `false` in this state.
+- After flush drains and no buffered data remains, runtime fd registrations are removed and the slot is removed.
+- For `COMM_SLOT_CONSOLE`, close is coordinated through console EOF signaling and may return `false` until console shutdown completes.
 
 ### Partial Write Handling
 
@@ -281,13 +292,16 @@ Input Sources:
                                               ↓
                                            [Hook dispatch to logic layer]
                                               ↓
-                                           [Hook code writes with operator<<]
-                                              ↓
-                                            comm_buffered_write()
-                                              ↓
-                                         comm_flush_all_outbound()
-                                              ↓
-                                          BIO/socket/file write path
+                              ┌─────────────────────┴─────────────────────┐
+                              ↓                                           ↓
+                      [Hook code writes with operator<<]      [Hook code requests close]
+                              ↓                                           ↓
+                          comm_buffered_write()                     comm_close()
+                              ↓                                           ↓
+                         comm_flush_all_outbound()        [set C_SOCKET_CLOSING, invoke
+                              ↓                         disconnect, defer if buffered]
+                          BIO/socket/file write path                     ↓
+                                                  [final slot removal]
 ```
 
 ## Main Loop Integration
@@ -409,6 +423,11 @@ telnet localhost 4000
 - Check: Is `mudmux_invoke_hook()` being called (flush happens after hook callback)?
 - Check: Is slot capped at max outbound buffers (look for "Exceeded maximum outbound buffers per slot")?
 - Check: BIO errors from flush (`BIO_write failed during flush`, `BIO_get_fd failed during flush`)?
+
+**"Slot does not close immediately"**
+- Check: Is `C_BUFFERED_WRITE` still set (expected deferred close until flush)?
+- Check: Was `comm_close(nullptr, slot)` called from hook (runtime auto-resolved)?
+- Check: Is this `COMM_SLOT_CONSOLE` (close coordinated via EOF signal)?
 
 ### Debug Log Points
 

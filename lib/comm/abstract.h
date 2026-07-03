@@ -23,6 +23,7 @@ extern "C" {
 int comm_max_slot (void);
 int comm_abstract_add_bio (BIO *rbio, BIO *wbio, int slot, uint32_t flags);
 BIO* comm_abstract_get_rbio (int slot);
+BIO* comm_abstract_get_wbio (int slot);
 int comm_abstract_add_file(const char *fn_in, const char* fn_out, int slot, uint32_t flags);
 comm_abstract_t* comm_abstract_get (int slot);
 int comm_abstract_remove (int slot);

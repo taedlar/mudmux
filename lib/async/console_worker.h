@@ -92,6 +92,13 @@ bool console_worker_shutdown (console_worker_context_t* ctx, int timeout_ms);
 void console_worker_destroy (console_worker_context_t* ctx);
 
 /**
+ * Signal EOF to console worker
+ * 
+ * Simulates EOF on stdin, causing the worker to enqueue an EOF event.
+ */
+void console_worker_set_eof (console_worker_context_t* ctx);
+
+/**
  * Consume the console EOF signal.
  *
  * Returns true once after EOF is observed by the worker, then resets the

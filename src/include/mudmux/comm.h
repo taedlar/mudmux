@@ -6,11 +6,13 @@
 #endif
 
 #include "mudmux_export.h"
+#include "async.h"
 
-#define C_SOCKET_LISTENING  0x80000000
-#define C_SOCKET_READABLE   0x40000000
-#define C_SOCKET_WRITABLE   0x20000000
-#define C_BUFFERED_WRITE    0x10000000
+#define C_SOCKET_CLOSING    0x80000000
+#define C_SOCKET_LISTENING  0x40000000
+#define C_SOCKET_READABLE   0x20000000
+#define C_SOCKET_WRITABLE   0x10000000
+#define C_BUFFERED_WRITE    0x00000001
 
 typedef struct comm_abstract_s comm_abstract_t;
 
@@ -42,6 +44,7 @@ typedef struct mudmux_comm_api_s {
     void (*set_flags)(comm_abstract_t *comm, uint32_t flags);
     void (*clear_flags)(comm_abstract_t *comm, uint32_t flags);
     void (*buffered_write)(comm_abstract_t *comm, const void *buf, size_t len);
+    bool (*close)(async_runtime_t* runtime, int slot);
 } mudmux_comm_api_t;
 
 #ifdef mudmux_EXPORTS
@@ -64,6 +67,7 @@ typedef struct mudmux_comm_api_s {
 #define comm_set_flags             mudmux_comm_api->set_flags
 #define comm_clear_flags           mudmux_comm_api->clear_flags
 #define comm_buffered_write        mudmux_comm_api->buffered_write
+#define comm_close                 mudmux_comm_api->close
 #endif
 
 #ifdef __cplusplus
