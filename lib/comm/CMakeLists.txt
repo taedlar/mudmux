@@ -6,6 +6,7 @@ add_library(comm OBJECT
     console.cpp
     file_input.cpp
     inbound.cpp
+    outbound.cpp
 )
 add_library(mudmux::comm ALIAS comm)
 target_sources(comm INTERFACE

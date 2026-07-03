@@ -2,7 +2,6 @@
 #define MUDMUX_MUDMUX_H
 
 #include "mudmux_export.h"
-#include "mudmux/hooks.h"
 
 /* In-process APIs for hosted MUD servers */
 

@@ -1,7 +1,6 @@
 #ifndef COMM_ACCEPT_H
 #define COMM_ACCEPT_H
 
-#include "mudmux_export.h"
 #include "async/async_runtime.h"
 
 #ifdef __cplusplus

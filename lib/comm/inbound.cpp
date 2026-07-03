@@ -2,9 +2,10 @@
 #include "config.h"
 #endif
 
-#include "mudmux/mudmux.h"
-#include "mudmux/comm.h"
-#include "async/async_runtime.h"
+#include "inbound.h"
+
+#include "abstract.h"
+#include "mudmux/hooks.h"
 
 int comm_invoke_inbound_message (
     async_runtime_t* runtime,

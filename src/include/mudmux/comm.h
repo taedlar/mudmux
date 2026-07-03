@@ -10,6 +10,7 @@
 #define C_SOCKET_LISTENING  0x80000000
 #define C_SOCKET_READABLE   0x40000000
 #define C_SOCKET_WRITABLE   0x20000000
+#define C_BUFFERED_WRITE    0x10000000
 
 typedef struct comm_abstract_s comm_abstract_t;
 
@@ -27,6 +28,7 @@ enum comm_slot_e {
  * the appropriate function pointers during mudmux_init().
  */
 typedef struct mudmux_comm_api_s {
+    int (*max_slot)(void);
 #ifndef MUDMUX_NO_OPENSSL
     int (*add_bio)(BIO *rbio, BIO *wbio, int slot, uint32_t flags);
 #else
@@ -49,8 +51,10 @@ typedef struct mudmux_comm_api_s {
 #include "comm/console.h"
 #include "comm/file_input.h"
 #include "comm/inbound.h"
+#include "comm/outbound.h"
 #else
 /* public interface */
+#define comm_max_slot              mudmux_comm_api->max_slot
 #define comm_abstract_add_bio      mudmux_comm_api->add_bio
 #define comm_abstract_add_file     mudmux_comm_api->add_file
 #define comm_abstract_get          mudmux_comm_api->get
