@@ -4,10 +4,12 @@
 
 #include "outbound.h"
 
+#include "console.h"
 #include <openssl/bio.h>
 #include <openssl/err.h>
 
 #include "mudmux/comm.h"
+#include "mudmux/hooks.h"
 
 struct outbound_buffer_s {
     outbound_buffer_t* next{nullptr};
@@ -98,7 +100,8 @@ void comm_buffered_write (comm_abstract_t *comm, const void *buf, size_t len) {
     }
 }
 
-void comm_flush (comm_abstract_t *comm, async_runtime_t* runtime) {
+void comm_flush (async_runtime_t* runtime, int slot) {
+    auto comm = comm_abstract_get (slot);
     if (!comm || !comm->wbio)
         return; // invalid parameters
     outbound_buffer_t* obb = comm->outbound;
@@ -109,7 +112,15 @@ void comm_flush (comm_abstract_t *comm, async_runtime_t* runtime) {
             if (written <= 0) {
                 if (!BIO_should_retry(comm->wbio)) {
                     SPDLOG_ERROR ("BIO_write failed during flush: {}", ERR_error_string(ERR_get_error(), nullptr));
-                    // TODO: set error flag and invoke disconnect hook
+                    // invoke disconnect hook (if not already closing), drop any buffered outbound data
+                    if (!(comm_get_flags(comm) & C_SOCKET_CLOSING))
+                        comm_invoke_disconnect(runtime, slot); // invoke disconnect hook for this comm slot
+                    while (comm->outbound) {
+                        outbound_buffer_t* next_buffer = comm->outbound->next;
+                        free_outbound_buffer(comm->outbound);
+                        comm->outbound = next_buffer;
+                    }
+                    // dropping all buffered outbound data will have C_BUFFERED_WRITE cleared before return
                 }
                 break;
             }
@@ -124,38 +135,92 @@ void comm_flush (comm_abstract_t *comm, async_runtime_t* runtime) {
         obb = next_buffer;
     }
 
+    socket_fd_t fd = INVALID_SOCKET_FD;
+    if (BIO_get_fd(comm->wbio, reinterpret_cast<int*>(&fd)) <= 0 || fd == INVALID_SOCKET_FD) {
+        // This can happen on console user because the wbio is a FILE* (stdout) and BIO does not
+        // support BIO_get_fd for FILE* BIOs. In this case, we cannot modify the async runtime
+        // events, but we can still flush the data.
+    }
+
     if (comm->outbound) {
-        comm_set_flags(comm, C_SOCKET_WRITABLE); // we shall wait for the socket to be writable to continue flushing
-        socket_fd_t fd;
-        if (BIO_get_fd(comm->wbio, reinterpret_cast<int*>(&fd)) <= 0 || fd == INVALID_SOCKET_FD) {
-            SPDLOG_ERROR("BIO_get_fd failed during flush");
-            return;
+        if (!(comm_get_flags(comm) & C_SOCKET_WRITABLE)) {
+            comm_set_flags(comm, C_SOCKET_WRITABLE);
+            if (fd != INVALID_SOCKET_FD)
+                async_runtime_modify (runtime, fd, EVENT_READ | EVENT_WRITE, nullptr);
         }
-        async_runtime_add (runtime, fd, EVENT_WRITE, nullptr);
+        // we'll wait for writable event to flush remaining data
         return;
     }
-
-    // all buffered data flushed, remove writable event if it was set
-    if (comm_get_flags(comm) & C_SOCKET_WRITABLE) {
-        comm_clear_flags(comm, C_SOCKET_WRITABLE);
-        socket_fd_t fd;
-        if (BIO_get_fd(comm->wbio, reinterpret_cast<int*>(&fd)) <= 0 || fd == INVALID_SOCKET_FD) {
-            SPDLOG_ERROR("BIO_get_fd failed during flush");
-            return;
+    else {
+        // all buffered data flushed, remove writable event if it was set
+        if (comm_get_flags(comm) & C_SOCKET_WRITABLE) {
+            if (fd != INVALID_SOCKET_FD)
+                async_runtime_modify (runtime, fd, EVENT_READ, nullptr); // remove writable event, keep readable event
+            comm_clear_flags(comm, C_SOCKET_WRITABLE);
         }
-        async_runtime_remove (runtime, fd);
-    }
 
-    // clear flushable flag, it will be set until next buffered write
-    comm_clear_flags(comm, C_BUFFERED_WRITE);
+        // clear buffered-write flag, it will be set again when new data is written
+        comm_clear_flags(comm, C_BUFFERED_WRITE);
+
+        if (comm_get_flags(comm) & C_SOCKET_CLOSING) {
+            socket_fd_t fd = INVALID_SOCKET_FD;
+            if (comm->wbio && BIO_get_fd(comm->wbio, reinterpret_cast<int*>(&fd)) > 0 && fd != INVALID_SOCKET_FD) {
+                SPDLOG_DEBUG ("comm slot has C_SOCKET_CLOSING flag set, sending shutdown signal to peer");
+                BIO_shutdown_wr(comm->wbio); // shutdown write side of the socket and expect the peer to close the connection
+            }
+        }
+    }
 }
 
 void comm_flush_all_outbound (async_runtime_t* runtime) {
     int max_slot = comm_max_slot();
     for (int slot = 0; slot < max_slot; ++slot) {
         auto* comm = comm_abstract_get(slot);
-        if (comm && comm->flags & C_BUFFERED_WRITE) {
-            comm_flush (comm, runtime);
-        }
+        if (comm && (comm->flags & C_BUFFERED_WRITE))
+            comm_flush (runtime, slot);
     }
+}
+
+bool comm_close (async_runtime_t* runtime, int slot) {
+    auto comm = comm_abstract_get(slot);
+    if (!comm)
+        return true; // already removed
+
+    if (!runtime)
+        runtime = async_get_current_runtime();
+
+    if (!(comm_get_flags(comm) & C_SOCKET_CLOSING)) {
+        // let logic layer handle disconnect (e.g., cleanup, logging, etc.)
+        comm_set_flags(comm, C_SOCKET_CLOSING);
+        comm_invoke_disconnect(runtime, slot);
+    }
+
+    if (comm_get_flags(comm) & C_BUFFERED_WRITE) {
+        SPDLOG_DEBUG("comm slot {} has buffered data, will flush before disconnecting", slot);
+        return false;
+    }
+
+    socket_fd_t fd = INVALID_SOCKET_FD;
+    if (comm->rbio && BIO_get_fd(comm->rbio, reinterpret_cast<int*>(&fd)) > 0 && fd != INVALID_SOCKET_FD)
+        async_runtime_remove (runtime, fd);
+    if (comm->wbio && BIO_get_fd(comm->wbio, reinterpret_cast<int*>(&fd)) > 0 && fd != INVALID_SOCKET_FD)
+        async_runtime_remove (runtime, fd);
+
+    if (slot == COMM_SLOT_CONSOLE) {
+        comm_signal_console_eof(runtime); // let console_process_console_input() handle the disconnect
+        SPDLOG_DEBUG("comm slot {} is console, signaling EOF to console worker", slot);
+        return false;
+    }
+
+    comm_abstract_remove(slot);
+    return true;
+}
+
+int comm_invoke_disconnect (async_runtime_t* runtime, int slot) {
+    return mudmux_invoke_hook (MUDMUX_HOOK_DISCONNECT,
+        async_runtime_get_context(runtime),
+        slot,
+        nullptr,
+        0
+    );
 }

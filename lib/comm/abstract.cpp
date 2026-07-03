@@ -73,8 +73,10 @@ int comm_abstract_add_bio (BIO* rbio, BIO* wbio, int slot, uint32_t flags) {
     if (slot < 0 || slot >= static_cast<int>(max_comms)) {
         slot = comm_abstract_find_slot();
     } 
-    else
+    else if (comm_abstract_get(slot)) {
+        SPDLOG_WARN ("slot {} is already in use; removing existing comm", slot);
         comm_abstract_remove (slot); // clear existing comm at this slot
+    }
     all_comms[slot].rbio = rbio;
     all_comms[slot].wbio = wbio;
     all_comms[slot].flags = flags;
@@ -103,6 +105,19 @@ int comm_abstract_add_file (const char* fn_in, const char* fn_out, int slot, uin
     return ret;
 }
 
+int comm_abstract_disconnect (int slot) {
+    comm_abstract_t* comm = comm_abstract_get (slot);
+    if (!comm) {
+        SPDLOG_WARN ("invalid slot {} in comm_abstract_disconnect()", slot);
+        return -1;
+    }
+    if (comm->rbio)
+        BIO_reset (comm->rbio);
+    if (comm->wbio && comm->wbio != comm->rbio)
+        BIO_reset (comm->wbio);
+    return 0;
+}
+
 int comm_abstract_remove (int slot) {
     comm_abstract_t* comm = comm_abstract_get (slot);
     if (!comm) {
@@ -115,19 +130,25 @@ int comm_abstract_remove (int slot) {
         BIO_free_all (comm->wbio);
     comm->rbio = comm->wbio = nullptr;
     comm->flags = 0;
+    SPDLOG_DEBUG ("removed comm slot {}", slot);
     return 0;
 }
 
 comm_abstract_t* comm_abstract_get (int slot) {
-    if (!all_comms || slot < 0 || slot >= static_cast<int>(max_comms)) {
+    if (!all_comms || slot < 0 || slot >= static_cast<int>(max_comms))
         return nullptr;
-    }
-    return &all_comms[slot];
+    comm_abstract_t* comm = &all_comms[slot];
+    return (comm->rbio || comm->wbio) ? comm : nullptr;
 }
 
 BIO* comm_abstract_get_rbio (int slot) {
     comm_abstract_t* comm = comm_abstract_get(slot);
     return comm ? comm->rbio : nullptr;
+}
+
+BIO* comm_abstract_get_wbio (int slot) {
+    comm_abstract_t* comm = comm_abstract_get(slot);
+    return comm ? comm->wbio : nullptr;
 }
 
 uint32_t comm_get_flags (comm_abstract_t *comm) {

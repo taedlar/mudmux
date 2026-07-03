@@ -75,7 +75,7 @@ int comm_accept (async_runtime_t* runtime, const char* accept_name) {
 		return -1;
 	}
 
-	if (comm_abstract_get(slot))
+	if (comm_abstract_get_rbio (slot))
 		SPDLOG_INFO ("listening transport {} registered (slot={}, fd={})", accept_name, slot, listen_fd);
 
 	return 0;

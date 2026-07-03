@@ -11,9 +11,21 @@ extern "C" {
 
 void comm_buffered_write (comm_abstract_t *comm, const void *buf, size_t len);
 
-void comm_flush (comm_abstract_t *comm, async_runtime_t* runtime);
+void comm_flush (async_runtime_t* runtime, int slot);
 
 void comm_flush_all_outbound (async_runtime_t* runtime);
+
+/**
+ * @brief Close a communication slot, removing it from the async runtime and invoking
+ * the disconnect hook if necessary.
+ * @param runtime The async runtime instance.
+ * @param slot The communication slot to close.
+ * @return true if the slot was successfully closed or already removed, false if it
+ * has buffered data and needs to be flushed first.
+ */
+bool comm_close(async_runtime_t* runtime, int slot);
+
+int comm_invoke_disconnect (async_runtime_t* runtime, int slot);
 
 #ifdef __cplusplus
 }

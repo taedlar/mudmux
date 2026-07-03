@@ -8,6 +8,7 @@ extern "C" {
 #endif
 
 bool comm_init_console (async_runtime_t *runtime);
+void comm_signal_console_eof (async_runtime_t *runtime);
 void comm_shutdown_console (async_runtime_t *runtime);
 
 int comm_process_console_input (async_runtime_t *runtime, bool allow_reconnect = false);

@@ -38,7 +38,7 @@ static int restore_desired_console_input_mode (console_worker_context_t* ctx) {
 #include <errno.h>
 #endif
 
-static void console_worker_set_eof(console_worker_context_t* ctx) {
+void console_worker_set_eof(console_worker_context_t* ctx) {
     if (!ctx)
         return;
 

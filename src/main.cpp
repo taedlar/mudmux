@@ -23,14 +23,27 @@ static void process_command_line (int argc, char* argv[]);
 
 static int on_connect (void*, int slot, void*, size_t) {
     auto comm = comm_abstract_get(slot);
-    *comm << "Welcome to mudmux!\r\n";
+    if (comm)
+        *comm << "Welcome to mudmux!\n\r";
     return 0;
 }
 
 static int on_message_inbound (void*, int slot, void* data, size_t size) {
     std::string message(static_cast<char*>(data), size);
+    while (message.back() == '\n' || message.back() == '\r')
+        message.pop_back(); // remove trailing newline characters
     auto comm = comm_abstract_get(slot);
-    *comm << "Received message: " << message << "\r\n";
+    if (comm)
+        *comm << "Received message: [" << message << "]\n\r";
+    if (message == "quit" || message == "exit")
+        comm_close(nullptr, slot); // close the connection on "quit" or "exit"
+    return 0;
+}
+
+static int on_disconnect (void*, int slot, void*, size_t) {
+    auto comm = comm_abstract_get(slot);
+    if (comm)
+        *comm << "Bye!" << "\n\r";
     return 0;
 }
 
@@ -53,7 +66,7 @@ int main (int argc, char* argv[]) {
     // register hooks
     mudmux_register_hook (MUDMUX_HOOK_CONNECT, on_connect);
     mudmux_register_hook (MUDMUX_HOOK_MESSAGE_INBOUND, on_message_inbound);
-
+    mudmux_register_hook (MUDMUX_HOOK_DISCONNECT, on_disconnect);
     // [optional] connect any additional transports (e.g., listening sockets, etc.) here
 
     // run infinite event loop until shutdown is requested

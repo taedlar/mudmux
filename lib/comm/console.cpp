@@ -40,15 +40,20 @@ extern "C" bool comm_init_console (async_runtime_t *runtime) {
         return false;
     }
 
-    // Register stdin/stdout communication at slot #0
-    if (comm_abstract_add_file (nullptr, nullptr, COMM_SLOT_CONSOLE, 0) < 0) {
-        SPDLOG_ERROR ("failed to connect console communication");
-        console_worker_destroy (console_ctx);
-        console_ctx = nullptr;
-        async_queue_destroy (console_queue);
-        console_queue = nullptr;
-        return false;
+    // if COMM_SLOT_CONSOLE already exists, it could be setup to pipe/file input, we'll leave it
+    // alone and only initialize the console worker to read from stdin (whatever it is) and
+    // enqueue lines into console_queue.
+    if (!comm_abstract_get(COMM_SLOT_CONSOLE)) {
+        if (comm_abstract_add_file (nullptr, nullptr, COMM_SLOT_CONSOLE, 0) < 0) { // unlike adding BIOs, null file names will use stdin/stdout
+            SPDLOG_ERROR ("failed to connect console communication");
+            console_worker_destroy (console_ctx);
+            console_ctx = nullptr;
+            async_queue_destroy (console_queue);
+            console_queue = nullptr;
+            return false;
+        }
     }
+
     // invoke connect hook for console user
     if (console_ctx->console_type == CONSOLE_TYPE_REAL) {
         SPDLOG_INFO ("----- connecting console user");
@@ -56,6 +61,14 @@ extern "C" bool comm_init_console (async_runtime_t *runtime) {
     mudmux_invoke_hook (MUDMUX_HOOK_CONNECT,
         async_runtime_get_context(runtime), COMM_SLOT_CONSOLE, nullptr, 0); // invoke connect hook for console user
     return true;
+}
+
+extern "C" void comm_signal_console_eof (async_runtime_t *runtime) {
+    std::lock_guard<std::mutex> lock(console_mutex);
+    (void)runtime; // unused parameter
+    if (console_ctx) {
+        console_worker_set_eof(console_ctx);
+    }
 }
 
 extern "C" void comm_shutdown_console (async_runtime_t *runtime) {
@@ -77,48 +90,54 @@ extern "C" void comm_shutdown_console (async_runtime_t *runtime) {
 }
 
 extern "C" int comm_process_console_input (async_runtime_t *runtime, bool allow_reconnect) {
-    std::lock_guard<std::mutex> lock(console_mutex);
-    
-    // Handle worker thread input (stdin/console)
-    if (console_ctx) {
-        if (console_worker_take_eof (console_ctx)) {
+    bool disconnected = false;
+    // check EOF on console worker and handle disconnect/re-connect if needed
+    {
+        std::lock_guard<std::mutex> lock(console_mutex);    
+        if (console_ctx && console_worker_take_eof (console_ctx)) {
+            disconnected = true;
             auto console_type = console_ctx->console_type;
             console_worker_destroy (console_ctx);
             console_ctx = nullptr;
-            comm_abstract_remove (COMM_SLOT_CONSOLE); // remove console from comm_abstract
             if (console_type == CONSOLE_TYPE_REAL && allow_reconnect) {
                 // re-arm console worker for next console input (e.g., after Ctrl+D EOF)
                 SPDLOG_INFO ("----- console user disconnected (press ENTER to reconnect)");
                 console_ctx = console_worker_init (runtime, console_queue, CONSOLE_COMPLETION_KEY);
-                return 0;
-            }
-            else {
-                // stdin is either a pipe or a file, so EOF means the end of input; shut down the server
-                SPDLOG_INFO ("EOF detected, shutting down server");
-                mudmux_shutdown();
-                return 0;
             }
         }
 
-        // check if console communication needs re-connection (e.g., after Ctrl+D EOF on a real console)
-        if (!comm_abstract_get_rbio(COMM_SLOT_CONSOLE) && allow_reconnect) {
-            SPDLOG_INFO ("----- recconnecting console communication");
-            if (comm_abstract_add_file (nullptr, nullptr, COMM_SLOT_CONSOLE, 0) < 0) {
-                SPDLOG_ERROR ("failed to re-connect console communication");
-                return -1;
+        if (console_ctx) {
+            // console worker still active, check if communication slot is still connected
+            if (!comm_abstract_get(COMM_SLOT_CONSOLE) && allow_reconnect) {
+                SPDLOG_INFO ("----- recconnecting console communication");
+                if (comm_abstract_add_file (nullptr, nullptr, COMM_SLOT_CONSOLE, 0) < 0) {
+                    SPDLOG_ERROR ("failed to re-connect console communication");
+                    return -1;
+                }
+                async_queue_clear (console_queue); // clear any pending lines in the queue
+                mudmux_invoke_hook (MUDMUX_HOOK_CONNECT,
+                    async_runtime_get_context(runtime), COMM_SLOT_CONSOLE, nullptr, 0); // invoke connect hook for console user
+                return 0;
             }
-            async_queue_clear (console_queue); // clear any pending lines in the queue
-            mudmux_invoke_hook (MUDMUX_HOOK_CONNECT,
-                async_runtime_get_context(runtime), COMM_SLOT_CONSOLE, nullptr, 0); // invoke connect hook for console user
-            return 1;
         }
-
-        // drain completed lines from the console queue and invoke the shared inbound hook path
-        char console_line_buffer[4096];
-        while (async_queue_dequeue (console_queue, console_line_buffer, sizeof(console_line_buffer), nullptr)) {
-            comm_invoke_inbound_message(runtime, COMM_SLOT_CONSOLE, console_line_buffer, strlen(console_line_buffer));
-        }
-        return 1;
     }
-    return -1; // no console input available
+
+    // drain completed lines from the console queue and invoke the shared inbound hook path
+    char console_line_buffer[4096];
+    while (async_queue_dequeue (console_queue, console_line_buffer, sizeof(console_line_buffer), nullptr)) {
+        comm_invoke_inbound_message(runtime, COMM_SLOT_CONSOLE, console_line_buffer, strlen(console_line_buffer));
+    }
+
+    if (disconnected) {
+        auto comm = comm_abstract_get(COMM_SLOT_CONSOLE);
+        if (!(comm_get_flags(comm) & C_SOCKET_CLOSING))
+            comm_invoke_disconnect (runtime, COMM_SLOT_CONSOLE); // invoke disconnect hook for console user
+        comm_abstract_remove (COMM_SLOT_CONSOLE); // remove console from comm_abstract
+        if (!allow_reconnect) {
+            // stdin is either a pipe or a file, so EOF means the end of input; shut down the server
+            SPDLOG_INFO ("EOF detected, shutting down server");
+            mudmux_shutdown();
+        }
+    }
+    return 0;
 }
