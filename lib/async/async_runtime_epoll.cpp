@@ -86,6 +86,7 @@ extern "C" async_runtime_t* async_runtime_init(void* context) {
         return NULL;
     }
     
+    current_runtime.store(runtime, std::memory_order_release);  /* Set current runtime */
     return runtime;
 }
 
