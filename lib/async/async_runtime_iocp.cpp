@@ -247,6 +247,7 @@ extern "C" async_runtime_t* async_runtime_init(void* context) {
     runtime->console_enabled = 0;
     runtime->console_read_ctx = NULL;
 
+    current_runtime.store(runtime, std::memory_order_release);  /* Set current runtime */
     return runtime;
 }
 
