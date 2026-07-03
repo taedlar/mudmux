@@ -29,7 +29,7 @@ static int restore_desired_console_input_mode (console_worker_context_t* ctx) {
     if (mode & ENABLE_LINE_INPUT)
         return set_console_input_line_mode(ctx, (mode & ENABLE_ECHO_INPUT) != 0);
 
-    return set_console_input_single_char(ctx, 1);
+    return set_console_input_single_char(ctx);
 }
 #else
 #include <unistd.h>
@@ -416,8 +416,10 @@ extern "C" console_worker_context_t* console_worker_init(async_runtime_t* runtim
 extern "C" bool console_worker_shutdown(console_worker_context_t* ctx, int timeout_ms) {
     if (ctx && ctx->worker) {
         async_worker_signal_stop (ctx->worker); /* signal the stop event first */
-        set_console_input_single_char (ctx, 1); /* interrupt line mode console read */
-        set_console_input_echo (ctx, true); /* re-enable echo to avoid leaving console in a bad state */
+        set_console_input_line_mode (ctx, true); /* re-enable echo to avoid leaving console in a bad state */
+#ifdef _WIN32
+        set_console_input_single_char (ctx); /* interrupt line mode console read */
+#endif
     }
     else
         return true; /* No worker to shutdown */

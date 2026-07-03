@@ -75,14 +75,14 @@ static int set_console_input_mode(console_worker_context_t *ctx,
 /**
  * @brief Switch to line (cooked) input mode, optionally enabling echo.
  */
-int set_console_input_line_mode(console_worker_context_t *ctx, int echo) {
+int set_console_input_line_mode(console_worker_context_t *ctx, bool echo) {
   DWORD set_bits = ENABLE_LINE_INPUT | ENABLE_PROCESSED_INPUT
                    | (echo ? ENABLE_ECHO_INPUT : 0);
   DWORD clear_bits = (echo ? 0 : ENABLE_ECHO_INPUT) | ENABLE_VIRTUAL_TERMINAL_INPUT;
   return set_console_input_mode(ctx, set_bits, clear_bits);
 }
 
-int set_console_input_echo(console_worker_context_t *ctx, int echo) {
+int set_console_input_echo (console_worker_context_t *ctx, bool echo) {
   DWORD set_bits = echo ? ENABLE_ECHO_INPUT : 0;
   DWORD clear_bits = echo ? 0 : ENABLE_ECHO_INPUT;
   return set_console_input_mode(ctx, set_bits, clear_bits);
@@ -94,10 +94,7 @@ int set_console_input_echo(console_worker_context_t *ctx, int echo) {
  * Also enables Windows 10 ANSI processing to allow reading of virtual terminal sequences for special keys.
  * @see https://learn.microsoft.com/en-us/windows/console/console-virtual-terminal-sequences
  */
-int set_console_input_single_char (console_worker_context_t *ctx, int single) {
-  if (!single)
-    return set_console_input_line_mode(ctx, 1);
-
+int set_console_input_single_char (console_worker_context_t *ctx) {
   return set_console_input_mode (ctx,
     /* set */ ENABLE_PROCESSED_INPUT | ENABLE_VIRTUAL_TERMINAL_INPUT,
     /* clear */ ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT
@@ -142,13 +139,34 @@ static void posix_tcsetattr(int fd, struct termios *tio) {
 }
 #endif /* HAVE_TERMIOS_H */
 
-int set_console_input_line_mode(console_worker_context_t *ctx, int echo) {
+int set_console_input_line_mode(console_worker_context_t *ctx, bool line_input) {
   (void)ctx;
 #ifdef HAVE_TERMIOS_H
   struct termios tio;
   if (tcgetattr(STDIN_FILENO, &tio) != 0)
     return 0;
-  tio.c_lflag |= ICANON;
+  if (line_input)
+    tio.c_lflag |= ICANON;
+  else
+    tio.c_lflag &= ~ICANON;
+  if (line_input)
+    tio.c_lflag |= ECHO;
+  else
+    tio.c_lflag &= ~ECHO;
+  posix_tcsetattr(STDIN_FILENO, &tio);
+  return 1;
+#else
+  (void)line_input;
+  return 0;
+#endif
+}
+
+int set_console_input_echo(console_worker_context_t *ctx, bool echo) {
+  (void)ctx;
+#ifdef HAVE_TERMIOS_H
+  struct termios tio;
+  if (tcgetattr(STDIN_FILENO, &tio) != 0)
+    return 0;
   if (echo)
     tio.c_lflag |= ECHO;
   else
@@ -161,28 +179,8 @@ int set_console_input_line_mode(console_worker_context_t *ctx, int echo) {
 #endif
 }
 
-int set_console_input_echo(console_worker_context_t *ctx, int echo) {
+int set_console_input_single_char(console_worker_context_t *ctx) {
   (void)ctx;
-#ifdef HAVE_TERMIOS_H
-  struct termios tio;
-  if (tcgetattr(STDIN_FILENO, &tio) != 0)
-    return 0;
-  if (echo)
-    tio.c_lflag |= ECHO;
-  else
-    tio.c_lflag &= ~ECHO;
-  posix_tcsetattr(STDIN_FILENO, &tio);
-  return 1;
-#else
-  (void)echo;
-  return 0;
-#endif
-}
-
-int set_console_input_single_char(console_worker_context_t *ctx, int single) {
-  (void)ctx;
-  if (!single)
-    return set_console_input_line_mode(ctx, 1);
 #ifdef HAVE_TERMIOS_H
   {
     struct termios tio;
