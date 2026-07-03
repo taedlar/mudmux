@@ -97,6 +97,10 @@ extern "C" int comm_process_console_input (async_runtime_t *runtime, bool allow_
         if (console_ctx && console_worker_take_eof (console_ctx)) {
             disconnected = true;
             auto console_type = console_ctx->console_type;
+            bool stopped = console_worker_shutdown (console_ctx, 5000);
+            if (!stopped) {
+                SPDLOG_WARN ("console worker did not stop within timeout during reconnect");
+            }
             console_worker_destroy (console_ctx);
             console_ctx = nullptr;
             if (console_type == CONSOLE_TYPE_REAL && allow_reconnect) {
@@ -109,7 +113,7 @@ extern "C" int comm_process_console_input (async_runtime_t *runtime, bool allow_
         if (console_ctx) {
             // console worker still active, check if communication slot is still connected
             if (!comm_abstract_get(COMM_SLOT_CONSOLE) && allow_reconnect) {
-                SPDLOG_INFO ("----- recconnecting console communication");
+                SPDLOG_INFO ("----- reconnecting console communication");
                 if (comm_abstract_add_file (nullptr, nullptr, COMM_SLOT_CONSOLE, 0) < 0) {
                     SPDLOG_ERROR ("failed to re-connect console communication");
                     return -1;
@@ -130,9 +134,12 @@ extern "C" int comm_process_console_input (async_runtime_t *runtime, bool allow_
 
     if (disconnected) {
         auto comm = comm_abstract_get(COMM_SLOT_CONSOLE);
-        if (!(comm_get_flags(comm) & C_SOCKET_CLOSING))
-            comm_invoke_disconnect (runtime, COMM_SLOT_CONSOLE); // invoke disconnect hook for console user
-        comm_abstract_remove (COMM_SLOT_CONSOLE); // remove console from comm_abstract
+        if (comm) {
+            if (!(comm_get_flags(comm) & C_SOCKET_CLOSING))
+                comm_invoke_disconnect (runtime, COMM_SLOT_CONSOLE); // invoke disconnect hook for console user
+            comm_abstract_remove (COMM_SLOT_CONSOLE); // remove console from comm_abstract
+        }
+        async_queue_clear (console_queue); // clear any pending lines in the queue
         if (!allow_reconnect) {
             // stdin is either a pipe or a file, so EOF means the end of input; shut down the server
             SPDLOG_INFO ("EOF detected, shutting down server");

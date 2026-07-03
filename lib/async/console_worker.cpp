@@ -116,6 +116,11 @@ static void* console_worker_proc_win32(void* ctx) {
     console_worker_context_t* cctx = (console_worker_context_t*)ctx;
     HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE);
     platform_event_t* stop_event = async_worker_get_stop_event(async_worker_current());
+
+    if (!hStdin || hStdin == INVALID_HANDLE_VALUE) {
+        SPDLOG_ERROR("invalid STD_INPUT_HANDLE for console worker");
+        return NULL;
+    }
     
     if (!stop_event) {
         SPDLOG_ERROR("failed to get stop event");
@@ -170,7 +175,11 @@ static void* console_worker_proc_win32(void* ctx) {
                     /* Convert UTF-16 → UTF-8 into line_buffer */
                     int nb = WideCharToMultiByte (CP_UTF8, 0, wide_buffer, (int)wchars_read,
                                                  line_buffer, CONSOLE_MAX_LINE - 1, NULL, NULL);
-                    chars_read = (nb > 0) ? (DWORD)nb : 0;
+                    if (nb <= 0) {
+                        SPDLOG_ERROR ("WideCharToMultiByte() failed: {}", GetLastError());
+                        continue;
+                    }
+                    chars_read = (DWORD)nb;
                 }
                 else if (result) {
                     /* ReadConsoleW returned TRUE with 0 chars: spurious wakeup from an
