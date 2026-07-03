@@ -29,7 +29,7 @@ struct async_runtime_s {
     console_type_t console_type;  /* Detected console type */
 };
 
-std::atomic<async_runtime_t*> current_runtime(nullptr);  /* Global pointer to current runtime for signal handling */
+std::atomic<async_runtime_t*> current_runtime(nullptr);  /* Global pointer to current runtime */
 
 /* Helper functions */
 
@@ -103,8 +103,9 @@ extern "C" void async_runtime_deinit(async_runtime_t* runtime) {
     if (runtime->epoll_fd >= 0) {
         close(runtime->epoll_fd);
     }
-    
-    free(runtime);
+
+    current_runtime.compare_exchange_strong(runtime, nullptr); // read-modify-write to clear current_runtime if it matches this runtime
+    free (runtime);
 }
 
 extern "C" int async_runtime_add(async_runtime_t* runtime, socket_fd_t fd, uint32_t events, void* context) {
@@ -155,9 +156,8 @@ extern "C" int async_runtime_wait(async_runtime_t* runtime, io_event_t* events,
     struct epoll_event epoll_events[MAX_EVENTS];
     int max_epoll_events = (max_events < MAX_EVENTS) ? max_events : MAX_EVENTS;
 
-    current_runtime.store(runtime, std::memory_order_release);  /* Set current runtime for signal handling */
+    current_runtime.store(runtime, std::memory_order_release);  /* Set current runtime */
     int result = epoll_wait(runtime->epoll_fd, epoll_events, max_epoll_events, timeout_ms);
-    current_runtime.store(nullptr, std::memory_order_release);  /* Clear current runtime after wait */
     if (result < 0) {
         /* EINTR (signal interruption) is used to wake up the event loop.
          * Treat it as timeout so backend can check heartbeat/shutdown flags. */

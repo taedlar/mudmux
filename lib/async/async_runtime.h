@@ -71,7 +71,7 @@ typedef enum console_type_e {
 typedef struct async_runtime_s async_runtime_t;
 
 /**
- * Get the current async runtime being waited on, or NULL if not set.
+ * Get the current async runtime (recently created or awaited on, or NULL if none)
  * 
  * @returns Current async_runtime_t pointer, or NULL if not in wait context
  */
@@ -96,7 +96,8 @@ async_runtime_t* async_runtime_init(void* context);
 void* async_runtime_get_context(async_runtime_t* runtime);
 
 /**
- * Destroy the async runtime and release all resources
+ * Destroy the async runtime and release all resources.
+ * If it was current runtime, clears the current_runtime pointer.
  * 
  * @param runtime Runtime to destroy
  */
