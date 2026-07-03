@@ -217,10 +217,10 @@ extern "C" int mudmux_run (void* context) {
     SPDLOG_INFO ("===== exited event loop =====");
 
     // cleanup communications and teardown subsystems
-    comm_abstract_cleanup();
     comm_shutdown_console (runtime);
     async_runtime_deinit (runtime);
     is_running.store(false);
+    comm_abstract_cleanup(); // do this after async_runtime_deinit() to avoid accept worker error on invalid socket hanndles
     return EXIT_SUCCESS;
 }
 
