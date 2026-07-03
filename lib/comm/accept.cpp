@@ -2,10 +2,14 @@
 #include "config.h"
 #endif
 
-#include "mudmux/mudmux.h"
-#include "mudmux/comm.h"
+#include "accept.h"
+
 #include <cstdint>
 #include <openssl/bio.h>
+
+#include "abstract.h"
+#include "mudmux/hooks.h"
+#include "mudmux/comm.h"
 
 static void* slot_to_context (int slot) {
 	return reinterpret_cast<void*>(static_cast<intptr_t>(slot));

@@ -2,12 +2,16 @@
 #include "config.h"
 #endif
 
-#include "mudmux/mudmux.h"
-#include "mudmux/comm.h"
-#include "async/async_queue.h"
+#include "file_input.h"
 
-#include <openssl/bio.h>
 #include <mutex>
+#include <openssl/bio.h>
+
+#include "abstract.h"
+#include "inbound.h"
+#include "async/async_queue.h"
+#include "mudmux/hooks.h"
+#include "mudmux/mudmux.h"
 
 static std::mutex file_input_mutex;
 static async_queue_t* file_input_queue{nullptr};

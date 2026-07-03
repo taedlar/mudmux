@@ -10,6 +10,7 @@ The communication layer (`lib/comm/`) provides the transport-agnostic infrastruc
 3. **Console processing** (`console.cpp`): Interactive stdin/console input with mode switching
 4. **File input** (`file_input.cpp`): Async file reading via dedicated thread
 5. **Socket handling** (`accept.cpp`): Listen, accept, and inbound message routing
+6. **Outbound buffering** (`outbound.cpp`): Non-blocking buffered writes + coordinated flush
 
 ## Architecture: Slot Abstraction Layer
 
@@ -65,15 +66,27 @@ void comm_clear_flags (comm_abstract_t *comm, uint32_t flags);
 // Read/write operations
 int comm_read(comm_abstract_t *comm, void *buf, size_t len);
 int comm_write(comm_abstract_t *comm, const void *buf, size_t len);
-void comm_flush(comm_abstract_t *comm);
 
-// Non-blcoking (buffer) writer C++ helper for operator<<
+// Non-blocking (buffered) write path
 void comm_buffered_write (comm_abstract_t *comm, const void *buf, size_t len);
+void comm_flush(comm_abstract_t *comm, async_runtime_t *runtime);
+void comm_flush_all_outbound(async_runtime_t *runtime);
 
 // Lifecycle
 int comm_abstract_remove(int slot);
 void comm_abstract_cleanup(void);
 ```
+
+### C++ Convenience Writer (`mudmux/comm.h`)
+
+`example_server` uses the slot stream-style writer:
+
+```cpp
+auto comm = comm_abstract_get(slot);
+*comm << "Welcome to mudmux!\r\n";
+```
+
+`operator<<` appends to the per-slot outbound buffer via `comm_buffered_write()`. It does **not** perform immediate blocking socket writes.
 
 ## Architecture: Hook Dispatch System
 
@@ -104,6 +117,44 @@ int comm_process_input(async_runtime_t* runtime, const io_event_t* event, int sl
 
 - `comm_invoke_inbound_message()`: Invokes `MUDMUX_HOOK_MESSAGE_INBOUND` for data received on a slot
 - `comm_process_input()`: Route a transport event (socket, etc.) to message processing
+
+## Architecture: Outbound Buffering and Flush
+
+Outbound writes are intentionally staged and flushed after hook execution.
+
+### Buffering Model (`outbound.cpp`)
+
+- Each `comm_abstract_t` has an `outbound` linked-list chain of fixed-size chunks (4096 bytes per chunk).
+- Writes append to the tail chunk; if needed, additional chunks are allocated.
+- The pool is reused to reduce allocation churn.
+- Per-slot safety cap: `MAX_OUTBOUND_BUFFERS_PER_SLOT = 16` (about 64 KB max buffered payload per slot).
+
+### Flush Triggers
+
+- `comm_buffered_write()` sets `C_BUFFERED_WRITE` to mark pending outbound data.
+- `mudmux_invoke_hook()` calls `comm_flush_all_outbound(async_get_current_runtime())` after each hook callback returns.
+- `comm_flush_all_outbound()` iterates all slots and flushes those with `C_BUFFERED_WRITE`.
+
+### Partial Write Handling
+
+- `comm_flush()` writes from `start..end` for each chunk.
+- If the write BIO cannot fully drain:
+  - `C_SOCKET_WRITABLE` is set.
+  - `EVENT_WRITE` interest is requested for the slot fd.
+  - Remaining bytes stay queued in the outbound chain.
+- Once all chunks drain:
+  - `C_BUFFERED_WRITE` is cleared.
+  - `C_SOCKET_WRITABLE` is cleared and write interest is removed.
+
+### Runtime Binding
+
+`mudmux_init()` exposes outbound buffering through the runtime API table:
+
+```c
+mudmux_comm_api->buffered_write = comm_buffered_write;
+```
+
+This keeps plugin/client code using the public header while the core implementation remains internal.
 
 ## Key Architecture
 
@@ -228,9 +279,15 @@ Input Sources:
                                          ├→ comm_process_*_input()
                                          └→ comm_invoke_inbound_message()
                                               ↓
-                                           [Hook dispatch]
+                                           [Hook dispatch to logic layer]
                                               ↓
-                                           [Logic layer]
+                                           [Hook code writes with operator<<]
+                                              ↓
+                                            comm_buffered_write()
+                                              ↓
+                                         comm_flush_all_outbound()
+                                              ↓
+                                          BIO/socket/file write path
 ```
 
 ## Main Loop Integration
@@ -347,6 +404,12 @@ telnet localhost 4000
 - Check: Slot extracted correctly? (FILE_INPUT_SLOT_FROM_KEY)
 - Check: Context_to_slot() mapping valid for socket events?
 
+**"Outbound text not sent"**
+- Check: Is hook code writing via `*comm << ...` or `comm_buffered_write()`?
+- Check: Is `mudmux_invoke_hook()` being called (flush happens after hook callback)?
+- Check: Is slot capped at max outbound buffers (look for "Exceeded maximum outbound buffers per slot")?
+- Check: BIO errors from flush (`BIO_write failed during flush`, `BIO_get_fd failed during flush`)?
+
 ### Debug Log Points
 
 ```
@@ -357,6 +420,8 @@ telnet localhost 4000
 [file_input.cpp]  "file EOF detected for slot X"
 [accept.cpp]      "listening transport *:XXXX registered (slot=X)"
 [inbound.cpp]     "invoking hook MESSAGE_INBOUND for slot X"
+[outbound.cpp]    "Exceeded maximum outbound buffers per slot"
+[outbound.cpp]    "BIO_write failed during flush"
 ```
 
 ## Performance Characteristics

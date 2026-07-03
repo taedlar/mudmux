@@ -1,6 +1,4 @@
 // main.cpp
-#include "mudmux/mudmux.h"
-#include "mudmux/comm.h"
 
 #include <atomic>
 #include <csignal>
@@ -14,6 +12,10 @@
 #include <winsock2.h>
 #pragma comment(lib, "ws2_32.lib")
 #endif
+
+#include "mudmux/comm.h"
+#include "mudmux/hooks.h"
+#include "mudmux/mudmux.h"
 
 static void sigint_handler (int signal);
 

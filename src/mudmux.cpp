@@ -3,9 +3,6 @@
 #endif
 
 #include "mudmux/mudmux.h"
-#include "mudmux/comm.h"
-#include "async/async_runtime.h"
-#include "async/console_worker.h"
 
 #include <atomic>
 #include <cstdint>
@@ -13,6 +10,10 @@
 #include <string>
 #include <vector>
 #include <yaml-cpp/yaml.h>
+
+#include "async/console_worker.h"
+#include "mudmux/comm.h"
+#include "mudmux/hooks.h"
 
 extern "C" {
     mudmux_comm_api_t* mudmux_comm_api {nullptr}; // global pointer to comm API struct, initialized by mudmux_init()
@@ -25,8 +26,12 @@ static bool enable_standard_input{false};
 static bool enable_console{false};
 static std::vector<std::string> accept_names; // array of names for BIO_set_accept_name()
 
+/**
+ * @brief Initialize the mudmux_comm_api struct with function pointers to the communication API.
+ */
 static void init_comm_api (void) {
     static mudmux_comm_api_t comm_api;
+    comm_api.max_slot = comm_max_slot;
     comm_api.add_bio = comm_abstract_add_bio;
     comm_api.add_file = comm_abstract_add_file;
     comm_api.get = comm_abstract_get;

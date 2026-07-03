@@ -2,14 +2,18 @@
 #include "config.h"
 #endif
 
-#include "mudmux/mudmux.h"
-#include "mudmux/comm.h"
-#include "async/console_worker.h"
+#include "console.h"
 
-#include <openssl/bio.h>
 #include <cstring>
 #include <mutex>
 #include <thread>
+#include <openssl/bio.h>
+
+#include "abstract.h"
+#include "async/console_worker.h"
+#include "mudmux/hooks.h"
+#include "mudmux/comm.h"
+#include "mudmux/mudmux.h"
 
 static std::mutex console_mutex;
 static async_queue_t* console_queue{nullptr};
