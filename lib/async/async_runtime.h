@@ -261,21 +261,9 @@ int async_runtime_post_write(async_runtime_t* runtime, socket_fd_t fd, void* buf
  */
 
 /**
- * Register console input for event monitoring
- * 
- * On Windows: Detects console type (REAL/PIPE/FILE) via GetConsoleMode/GetFileType
- * On POSIX: Detects console type using isatty() and fstat()
- * 
- * @param runtime Runtime instance
- * @param context User context pointer
- * @returns 0 on success, -1 on failure
- */
-int async_runtime_add_console(async_runtime_t* runtime, void* context);
-
-/**
  * Get console type
  * 
- * Returns console type detected during async_runtime_add_console().
+ * Returns console type detected during async_runtime_init().
  * On POSIX, distinguishes between TTY (uses termios) vs pipe/file.
  * 
  * @param runtime Runtime instance
@@ -283,34 +271,7 @@ int async_runtime_add_console(async_runtime_t* runtime, void* context);
  */
 console_type_t async_runtime_get_console_type(async_runtime_t* runtime);
 
-#ifdef _WIN32
-
-/**
- * Get console event handle for piped stdin
- * 
- * @param runtime Runtime instance
- * @returns Event handle or NULL
- */
-HANDLE async_runtime_get_console_event(async_runtime_t* runtime);
-
-/**
- * Get console IOCP context for piped stdin
- * 
- * @param runtime Runtime instance
- * @returns IOCP context pointer or NULL
- */
-void* async_runtime_get_console_ctx(async_runtime_t* runtime);
-
-/**
- * Expose IOCP handle for worker integration
- * 
- * Allows workers to call PostQueuedCompletionStatus() directly.
- * 
- * @param runtime Runtime instance
- * @returns IOCP handle
- */
-HANDLE async_runtime_get_iocp(async_runtime_t* runtime);
-#else
+#ifndef _WIN32
 /**
  * Get eventfd/pipe handle for worker notification (POSIX)
  * 

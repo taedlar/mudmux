@@ -153,7 +153,9 @@ extern "C" async_runtime_t* async_runtime_init(void* context) {
     runtime->mappings[0].context = NULL;
     runtime->mappings[0].events = EVENT_READ;
     runtime->count = 1;
-    
+
+    runtime->console_type = console_detect_type();
+
     current_runtime.store(runtime, std::memory_order_release);  /* Set current runtime */
     return runtime;
 }
@@ -309,32 +311,6 @@ extern "C" int async_runtime_post_write(async_runtime_t* runtime, socket_fd_t fd
 
 extern "C" int async_runtime_get_event_loop_handle(async_runtime_t* runtime) {
     return runtime ? runtime->notify_pipe[0] : -1;
-}
-
-extern "C" int async_runtime_add_console(async_runtime_t* runtime, void* context) {
-    if (!runtime) return -1;
-    
-    (void)context;  /* Console context not used on POSIX */
-    
-    /* Detect console type using isatty() and fstat() */
-    if (isatty(STDIN_FILENO)) {
-        runtime->console_type = CONSOLE_TYPE_REAL;
-    } else {
-        struct stat st;
-        if (fstat(STDIN_FILENO, &st) == 0) {
-            if (S_ISFIFO(st.st_mode)) {
-                runtime->console_type = CONSOLE_TYPE_PIPE;
-            } else if (S_ISREG(st.st_mode)) {
-                runtime->console_type = CONSOLE_TYPE_FILE;
-            } else {
-                runtime->console_type = CONSOLE_TYPE_NONE;
-            }
-        } else {
-            runtime->console_type = CONSOLE_TYPE_NONE;
-        }
-    }
-    
-    return 0;
 }
 
 extern "C" console_type_t async_runtime_get_console_type(async_runtime_t* runtime) {
