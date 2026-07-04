@@ -10,6 +10,7 @@
 #include <openssl/bio.h>
 
 #include "abstract.h"
+#include "input_mode.h"
 #include "async/console_worker.h"
 #include "mudmux/hooks.h"
 #include "mudmux/comm.h"
@@ -78,13 +79,18 @@ extern "C" void comm_shutdown_console (async_runtime_t *runtime) {
     std::lock_guard<std::mutex> lock(console_mutex);
     
     if (console_ctx) {
+#ifdef _WIN32
+        comm_set_console_char_input (); /* interrupt line mode console read */
+#endif
         bool stopped = console_worker_shutdown (console_ctx, 5000);
         if (!stopped) {
             SPDLOG_WARN ("console worker did not stop within timeout");
-            console_worker_destroy (console_ctx);
         }
+        console_worker_destroy (console_ctx);
         console_ctx = nullptr;
+        comm_set_console_line_input (true); /* re-enable echo to avoid leaving console in a bad state */
     }
+
     if (console_queue) {
         async_queue_destroy (console_queue);
         console_queue = nullptr;
@@ -98,12 +104,18 @@ extern "C" int comm_process_console_input (async_runtime_t *runtime, bool allow_
         std::lock_guard<std::mutex> lock(console_mutex);    
         if (console_ctx && console_worker_take_eof (console_ctx)) {
             auto console_type = async_runtime_get_console_type (runtime);
+            if (console_type == CONSOLE_TYPE_REAL) {
+#ifdef _WIN32
+                comm_set_console_char_input (); /* interrupt line mode console read */
+#endif
+            }
             bool stopped = console_worker_shutdown (console_ctx, 5000);
             if (!stopped) {
                 SPDLOG_WARN ("console worker did not stop within timeout during reconnect");
             }
             console_worker_destroy (console_ctx);
             console_ctx = nullptr;
+            comm_set_console_line_input (true); /* re-enable echo to avoid leaving console in a bad state */
             if (console_type == CONSOLE_TYPE_REAL && allow_reconnect) {
                 // re-arm console worker for next console input (e.g., after Ctrl+D EOF)
                 SPDLOG_INFO ("----- console user disconnected (press ENTER to reconnect)");

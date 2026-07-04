@@ -1,12 +1,5 @@
-/**
- * @file console_mode.h
- * @brief Shared console mode helpers.
- */
-
-#ifndef CONSOLE_MODE_H
-#define CONSOLE_MODE_H
-
-typedef struct console_worker_context_s console_worker_context_t;
+#ifndef COMM_INPUT_MODE_H
+#define COMM_INPUT_MODE_H
 
 /**
  * @brief Enable cooked line-input mode for the process console stdin.
@@ -14,7 +7,7 @@ typedef struct console_worker_context_s console_worker_context_t;
  * @param echo true to enable local echo, false to disable it.
  * @returns 1 if stdin is a real console and the mode was updated, otherwise 0.
  */
-int set_console_input_line_mode(console_worker_context_t* ctx, bool echo);
+int comm_set_console_line_input(bool echo);
 
 /**
  * @brief Toggle local echo for the current console stdin mode.
@@ -22,7 +15,7 @@ int set_console_input_line_mode(console_worker_context_t* ctx, bool echo);
  * @param echo true to enable local echo, false to disable it.
  * @returns 1 if stdin is a real console and the mode was updated, otherwise 0.
  */
-int set_console_input_echo(console_worker_context_t* ctx, bool echo);
+int comm_set_console_echo (bool echo);
 
 /**
  * @brief Toggle single-character mode for the process console stdin.
@@ -30,12 +23,12 @@ int set_console_input_echo(console_worker_context_t* ctx, bool echo);
  * @param single true to enable single-character mode, false to restore line mode.
  * @returns 1 if stdin is a real console and the mode was updated, otherwise 0.
  */
-int set_console_input_single_char(console_worker_context_t* ctx);
+int comm_set_console_char_input (void);
 
 /**
  * @brief Enable ANSI virtual terminal processing for the process console stdout.
  * @returns 1 if stdout is a real console and the mode was updated, otherwise 0.
  */
-int enable_console_output_ansi(void);
+int comm_enable_console_virtual_terminal(void);
 
-#endif /* CONSOLE_MODE_H */
+#endif /* COMM_INPUT_MODE_H */

@@ -8,7 +8,6 @@
 #include <config.h>
 #endif /* HAVE_CONFIG_H */
 #include "console_worker.h"
-#include "console_mode.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -393,9 +392,6 @@ extern "C" console_worker_context_t* console_worker_init(async_runtime_t* runtim
 extern "C" bool console_worker_shutdown(console_worker_context_t* ctx, int timeout_ms) {
     if (ctx && ctx->worker) {
         async_worker_signal_stop (ctx->worker); /* signal the stop event first */
-#ifdef _WIN32
-        set_console_input_single_char (ctx); /* interrupt line mode console read */
-#endif
     }
     else
         return true; /* No worker to shutdown */
@@ -412,7 +408,6 @@ extern "C" bool console_worker_shutdown(console_worker_context_t* ctx, int timeo
 #endif
 
     bool result = async_worker_join(ctx->worker, timeout_ms);
-    set_console_input_line_mode (ctx, true); /* re-enable echo to avoid leaving console in a bad state */
     return result;
 }
 
