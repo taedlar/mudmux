@@ -466,7 +466,6 @@ telnet localhost 4000
 **Protected by console_mutex:**
 - console_queue
 - console_ctx
-- console_type
 
 **Async-safe completion posting:**
 - `async_runtime_post_completion()` thread-safe

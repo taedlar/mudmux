@@ -22,6 +22,8 @@ static console_worker_context_t* console_ctx{nullptr};
 extern "C" bool comm_init_console (async_runtime_t *runtime) {
 
     std::lock_guard<std::mutex> lock(console_mutex);
+    auto console_type = async_runtime_get_console_type (runtime);
+
     // create console queue if it doesn't exist
     if (!console_queue) {
         console_queue = async_queue_create (100, 4096, ASYNC_QUEUE_DROP_OLDEST);
@@ -55,7 +57,7 @@ extern "C" bool comm_init_console (async_runtime_t *runtime) {
     }
 
     // invoke connect hook for console user
-    if (console_ctx->console_type == CONSOLE_TYPE_REAL) {
+    if (console_type == CONSOLE_TYPE_REAL) {
         SPDLOG_INFO ("----- connecting console user");
     }
     mudmux_invoke_hook (MUDMUX_HOOK_CONNECT,
@@ -95,8 +97,7 @@ extern "C" int comm_process_console_input (async_runtime_t *runtime, bool allow_
     {
         std::lock_guard<std::mutex> lock(console_mutex);    
         if (console_ctx && console_worker_take_eof (console_ctx)) {
-            disconnected = true;
-            auto console_type = console_ctx->console_type;
+            auto console_type = async_runtime_get_console_type (runtime);
             bool stopped = console_worker_shutdown (console_ctx, 5000);
             if (!stopped) {
                 SPDLOG_WARN ("console worker did not stop within timeout during reconnect");
@@ -108,6 +109,7 @@ extern "C" int comm_process_console_input (async_runtime_t *runtime, bool allow_
                 SPDLOG_INFO ("----- console user disconnected (press ENTER to reconnect)");
                 console_ctx = console_worker_init (runtime, console_queue, CONSOLE_COMPLETION_KEY);
             }
+            disconnected = true;
         }
 
         if (console_ctx) {

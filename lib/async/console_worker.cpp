@@ -13,25 +13,20 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef _WIN32
-#include <fcntl.h>
+struct console_worker_context_s {
+    async_queue_t* line_queue;     /**< Queue for completed lines */
+    async_runtime_t* runtime;      /**< Runtime for posting completions */
+    async_worker_t* worker;        /**< Worker thread handle */
+    console_type_t console_type;   /**< Detected console type */
+    uintptr_t completion_key;      /**< Completion key for runtime */
+    platform_mutex_t state_mutex;  /**< Guards worker state flags */
+    bool eof_detected;             /**< Set true when stdin EOF is observed */
+#ifndef _WIN32
+    int stop_pipe_fds[2];          /**< Self-pipe for POSIX stop signaling: [0]=read, [1]=write */
+#endif
+};
 
-static int restore_desired_console_input_mode (console_worker_context_t* ctx) {
-    DWORD mode;
-
-    if (!ctx)
-        return 0;
-
-    platform_mutex_lock(&ctx->state_mutex);
-    mode = (DWORD)ctx->desired_console_mode;
-    platform_mutex_unlock(&ctx->state_mutex);
-
-    if (mode & ENABLE_LINE_INPUT)
-        return set_console_input_line_mode(ctx, (mode & ENABLE_ECHO_INPUT) != 0);
-
-    return set_console_input_single_char(ctx);
-}
-#else
+#ifndef _WIN32
 #include <unistd.h>
 #include <sys/select.h>
 #include <sys/stat.h>
@@ -136,9 +131,6 @@ static void* console_worker_proc_win32(void* ctx) {
     /* Set UTF-8 code page */
     SetConsoleCP(CP_UTF8);
 
-    /* If standard input is a console, enable cooked line input with echo. */
-    restore_desired_console_input_mode(cctx);
-
     char line_buffer[CONSOLE_MAX_LINE];
     WCHAR wide_buffer[CONSOLE_MAX_LINE];
     DWORD chars_read = 0;
@@ -203,15 +195,6 @@ static void* console_worker_proc_win32(void* ctx) {
                     SPDLOG_INFO ("EOF detected (pipe)");
                     console_worker_set_eof(cctx);
                     break;
-                }
-                
-                if (cctx->console_type == CONSOLE_TYPE_REAL) {
-                    /* SetConsoleMode changing ENABLE_LINE_INPUT while ReadConsoleW is blocking
-                     * can return errors such as ERROR_INVALID_FUNCTION; treat these as
-                     * non-fatal mode-switch interruptions rather than killing the thread. */
-                    SPDLOG_DEBUG ("ReadConsoleW() interrupted (err={}), restoring mode and continuing", err);
-                    restore_desired_console_input_mode (cctx);
-                    continue;
                 }
                 SPDLOG_ERROR ("console read failed: {}", err);
                 break;
@@ -361,13 +344,6 @@ extern "C" console_worker_context_t* console_worker_init(async_runtime_t* runtim
     ctx->completion_key = completion_key;
     ctx->console_type = console_detect_type();
     ctx->eof_detected = false;
-#ifdef _WIN32
-    ctx->desired_console_mode = ENABLE_EXTENDED_FLAGS
-                                | ENABLE_QUICK_EDIT_MODE
-                                | ENABLE_PROCESSED_INPUT
-                                | ENABLE_LINE_INPUT
-                                | ENABLE_ECHO_INPUT;
-#endif
 
     if (!platform_mutex_init(&ctx->state_mutex)) {
         free(ctx);
@@ -416,7 +392,6 @@ extern "C" console_worker_context_t* console_worker_init(async_runtime_t* runtim
 extern "C" bool console_worker_shutdown(console_worker_context_t* ctx, int timeout_ms) {
     if (ctx && ctx->worker) {
         async_worker_signal_stop (ctx->worker); /* signal the stop event first */
-        set_console_input_line_mode (ctx, true); /* re-enable echo to avoid leaving console in a bad state */
 #ifdef _WIN32
         set_console_input_single_char (ctx); /* interrupt line mode console read */
 #endif
@@ -435,7 +410,9 @@ extern "C" bool console_worker_shutdown(console_worker_context_t* ctx, int timeo
     }
 #endif
 
-    return async_worker_join(ctx->worker, timeout_ms);
+    bool result = async_worker_join(ctx->worker, timeout_ms);
+    set_console_input_line_mode (ctx, true); /* re-enable echo to avoid leaving console in a bad state */
+    return result;
 }
 
 /**

@@ -40,13 +40,6 @@ static int set_console_input_mode(console_worker_context_t *ctx,
 
   new_mode = (current_mode | set_bits) & ~clear_bits;
 
-  if (ctx)
-    {
-      platform_mutex_lock(&ctx->state_mutex);
-      ctx->desired_console_mode = new_mode;
-      platform_mutex_unlock(&ctx->state_mutex);
-    }
-
   if (!SetConsoleMode (handle, new_mode))
     {
       SPDLOG_WARN ("SetConsoleMode() failed for console stdin: {}", GetLastError());
