@@ -12,13 +12,16 @@
 #endif /* HAVE_CONFIG_H */
 
 #include "async_runtime.h"
+
 #include <poll.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <errno.h>
 #include <unistd.h>
-
 #include <atomic>
+
+#include "console_worker.h"
+
 
 #define INITIAL_CAPACITY 64
 #define MAX_FD_COUNT 4096
