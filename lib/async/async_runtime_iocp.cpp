@@ -75,10 +75,6 @@ struct async_runtime_s {
     
     /* Console support */
     console_type_t console_type;
-    HANDLE console_handle;
-    void* console_context;
-    int console_enabled;
-    iocp_context_t* console_read_ctx;
 };
 
 static std::atomic<async_runtime_t*> current_runtime(nullptr);
@@ -244,9 +240,6 @@ extern "C" async_runtime_t* async_runtime_init(void* context) {
     
     /* Initialize console support */
     runtime->console_type = console_detect_type();
-    runtime->console_handle = INVALID_HANDLE_VALUE;
-    runtime->console_enabled = 0;
-    runtime->console_read_ctx = NULL;
 
     current_runtime.store(runtime, std::memory_order_release);  /* Set current runtime */
     return runtime;
@@ -274,10 +267,6 @@ extern "C" void async_runtime_deinit(async_runtime_t* runtime) {
         free(runtime->context_pool[i]);
     }
     free(runtime->context_pool);
-    
-    if (runtime->console_read_ctx) {
-        free(runtime->console_read_ctx);
-    }
     
     if (runtime->iocp_handle && runtime->iocp_handle != INVALID_HANDLE_VALUE) {
         CloseHandle(runtime->iocp_handle);
