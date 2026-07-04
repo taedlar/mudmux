@@ -75,10 +75,6 @@ struct async_runtime_s {
     
     /* Console support */
     console_type_t console_type;
-    HANDLE console_handle;
-    void* console_context;
-    int console_enabled;
-    iocp_context_t* console_read_ctx;
 };
 
 static std::atomic<async_runtime_t*> current_runtime(nullptr);
@@ -243,9 +239,7 @@ extern "C" async_runtime_t* async_runtime_init(void* context) {
     }
     
     /* Initialize console support */
-    runtime->console_handle = INVALID_HANDLE_VALUE;
-    runtime->console_enabled = 0;
-    runtime->console_read_ctx = NULL;
+    runtime->console_type = console_detect_type();
 
     current_runtime.store(runtime, std::memory_order_release);  /* Set current runtime */
     return runtime;
@@ -273,10 +267,6 @@ extern "C" void async_runtime_deinit(async_runtime_t* runtime) {
         free(runtime->context_pool[i]);
     }
     free(runtime->context_pool);
-    
-    if (runtime->console_read_ctx) {
-        free(runtime->console_read_ctx);
-    }
     
     if (runtime->iocp_handle && runtime->iocp_handle != INVALID_HANDLE_VALUE) {
         CloseHandle(runtime->iocp_handle);
@@ -509,33 +499,6 @@ extern "C" int async_runtime_post_write(async_runtime_t* runtime, socket_fd_t fd
 
 /* Console support */
 
-extern "C" int async_runtime_add_console(async_runtime_t* runtime, void* context) {
-    if (!runtime) return -1;
-    
-    runtime->console_handle = GetStdHandle(STD_INPUT_HANDLE);
-    if (runtime->console_handle == INVALID_HANDLE_VALUE) return -1;
-    
-    runtime->console_context = context;
-    runtime->console_enabled = 1;
-    
-    /* Use console_detect_type() to avoid code duplication */
-    runtime->console_type = console_detect_type();
-    
-    return 0;
-}
-
 extern "C" console_type_t async_runtime_get_console_type(async_runtime_t* runtime) {
     return runtime ? runtime->console_type : CONSOLE_TYPE_NONE;
-}
-
-extern "C" HANDLE async_runtime_get_console_event(async_runtime_t* runtime) {
-    return (runtime && runtime->console_read_ctx) ? runtime->console_read_ctx->overlapped.hEvent : NULL;
-}
-
-extern "C" void* async_runtime_get_console_ctx(async_runtime_t* runtime) {
-    return runtime ? runtime->console_read_ctx : NULL;
-}
-
-extern "C" HANDLE async_runtime_get_iocp(async_runtime_t* runtime) {
-    return runtime ? runtime->iocp_handle : NULL;
 }

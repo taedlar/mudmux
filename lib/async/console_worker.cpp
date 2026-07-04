@@ -13,25 +13,19 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef _WIN32
-#include <fcntl.h>
+struct console_worker_context_s {
+    async_queue_t* line_queue;     /**< Queue for completed lines */
+    async_runtime_t* runtime;      /**< Runtime for posting completions */
+    async_worker_t* worker;        /**< Worker thread handle */
+    uintptr_t completion_key;      /**< Completion key for runtime */
+    platform_mutex_t state_mutex;  /**< Guards worker state flags */
+    bool eof_detected;             /**< Set true when stdin EOF is observed */
+#ifndef _WIN32
+    int stop_pipe_fds[2];          /**< Self-pipe for POSIX stop signaling: [0]=read, [1]=write */
+#endif
+};
 
-static int restore_desired_console_input_mode (console_worker_context_t* ctx) {
-    DWORD mode;
-
-    if (!ctx)
-        return 0;
-
-    platform_mutex_lock(&ctx->state_mutex);
-    mode = (DWORD)ctx->desired_console_mode;
-    platform_mutex_unlock(&ctx->state_mutex);
-
-    if (mode & ENABLE_LINE_INPUT)
-        return set_console_input_line_mode(ctx, (mode & ENABLE_ECHO_INPUT) != 0);
-
-    return set_console_input_single_char(ctx);
-}
-#else
+#ifndef _WIN32
 #include <unistd.h>
 #include <sys/select.h>
 #include <sys/stat.h>
@@ -113,15 +107,16 @@ extern "C" console_type_t console_detect_type(void) {
  * Windows console worker thread procedure
  */
 static void* console_worker_proc_win32(void* ctx) {
-    console_worker_context_t* cctx = (console_worker_context_t*)ctx;
-    HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE);
-    platform_event_t* stop_event = async_worker_get_stop_event(async_worker_current());
+    console_worker_context_t* cctx = static_cast<console_worker_context_t*>(ctx);
+    console_type_t console_type = async_runtime_get_console_type(cctx->runtime);
 
+    HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE);
     if (!hStdin || hStdin == INVALID_HANDLE_VALUE) {
         SPDLOG_ERROR("invalid STD_INPUT_HANDLE for console worker");
         return NULL;
     }
     
+    platform_event_t* stop_event = async_worker_get_stop_event(async_worker_current());
     if (!stop_event) {
         SPDLOG_ERROR("failed to get stop event");
         return NULL;
@@ -136,14 +131,11 @@ static void* console_worker_proc_win32(void* ctx) {
     /* Set UTF-8 code page */
     SetConsoleCP(CP_UTF8);
 
-    /* If standard input is a console, enable cooked line input with echo. */
-    restore_desired_console_input_mode(cctx);
-
     char line_buffer[CONSOLE_MAX_LINE];
     WCHAR wide_buffer[CONSOLE_MAX_LINE];
     DWORD chars_read = 0;
 
-    SPDLOG_INFO ("console worker started (type: {})", console_type_str(cctx->console_type));
+    SPDLOG_INFO ("console worker started (type: {})", console_type_str (console_type));
 
     while (!async_worker_should_stop (async_worker_current())) {
         /* Wait for stdin to be signaled OR stop event */
@@ -154,7 +146,7 @@ static void* console_worker_proc_win32(void* ctx) {
             /* stdin is signaled - data available, read it synchronously */
             BOOL result;
             DWORD err {ERROR_SUCCESS};
-            if (cctx->console_type == CONSOLE_TYPE_REAL) {
+            if (console_type == CONSOLE_TYPE_REAL) {
                 /* Real console: ReadConsoleW (Unicode).
                  * dwCtrlWakeupMask is only honored by ReadConsoleW, not ReadConsoleA.
                  * Bit 27 (ESC = 0x1B) lets ESCAPE unblock ReadConsole in cooked mode.
@@ -203,15 +195,6 @@ static void* console_worker_proc_win32(void* ctx) {
                     SPDLOG_INFO ("EOF detected (pipe)");
                     console_worker_set_eof(cctx);
                     break;
-                }
-                
-                if (cctx->console_type == CONSOLE_TYPE_REAL) {
-                    /* SetConsoleMode changing ENABLE_LINE_INPUT while ReadConsoleW is blocking
-                     * can return errors such as ERROR_INVALID_FUNCTION; treat these as
-                     * non-fatal mode-switch interruptions rather than killing the thread. */
-                    SPDLOG_DEBUG ("ReadConsoleW() interrupted (err={}), restoring mode and continuing", err);
-                    restore_desired_console_input_mode (cctx);
-                    continue;
                 }
                 SPDLOG_ERROR ("console read failed: {}", err);
                 break;
@@ -263,11 +246,12 @@ static void* console_worker_proc_win32(void* ctx) {
  * POSIX console worker thread procedure
  */
 static void* console_worker_proc_posix(void* ctx) {
-    console_worker_context_t* cctx = (console_worker_context_t*)ctx;
+    console_worker_context_t* cctx = static_cast<console_worker_context_t*>(ctx);
     char line_buffer[CONSOLE_MAX_LINE];
     int stop_fd = cctx->stop_pipe_fds[0];
 
-    SPDLOG_INFO ("console worker started (type: {})", console_type_str(cctx->console_type));
+    console_type_t console_type = async_runtime_get_console_type(cctx->runtime);
+    SPDLOG_INFO ("console worker started (type: {})", console_type_str (console_type));
 
     while (!async_worker_should_stop(async_worker_current())) {
         /* Block in select() on stdin and the stop-pipe read end.
@@ -350,7 +334,7 @@ extern "C" console_worker_context_t* console_worker_init(async_runtime_t* runtim
         return NULL;
     }
 
-    console_worker_context_t* ctx = (console_worker_context_t*)calloc(1, sizeof(*ctx));
+    console_worker_context_t* ctx = static_cast<console_worker_context_t*>(calloc(1, sizeof(*ctx)));
     if (!ctx) {
         SPDLOG_ERROR ("console_worker_init: out of memory");
         return NULL;
@@ -359,15 +343,7 @@ extern "C" console_worker_context_t* console_worker_init(async_runtime_t* runtim
     ctx->line_queue = queue;
     ctx->runtime = runtime;
     ctx->completion_key = completion_key;
-    ctx->console_type = console_detect_type();
     ctx->eof_detected = false;
-#ifdef _WIN32
-    ctx->desired_console_mode = ENABLE_EXTENDED_FLAGS
-                                | ENABLE_QUICK_EDIT_MODE
-                                | ENABLE_PROCESSED_INPUT
-                                | ENABLE_LINE_INPUT
-                                | ENABLE_ECHO_INPUT;
-#endif
 
     if (!platform_mutex_init(&ctx->state_mutex)) {
         free(ctx);
@@ -384,7 +360,8 @@ extern "C" console_worker_context_t* console_worker_init(async_runtime_t* runtim
     }
 #endif
 
-    if (ctx->console_type == CONSOLE_TYPE_NONE) {
+    console_type_t console_type = async_runtime_get_console_type(ctx->runtime);
+    if (console_type == CONSOLE_TYPE_NONE) {
         SPDLOG_WARN ("no console detected, worker will not start");
         /* Don't treat as fatal - allow mudlib to run without console */
         return ctx;
@@ -416,7 +393,6 @@ extern "C" console_worker_context_t* console_worker_init(async_runtime_t* runtim
 extern "C" bool console_worker_shutdown(console_worker_context_t* ctx, int timeout_ms) {
     if (ctx && ctx->worker) {
         async_worker_signal_stop (ctx->worker); /* signal the stop event first */
-        set_console_input_line_mode (ctx, true); /* re-enable echo to avoid leaving console in a bad state */
 #ifdef _WIN32
         set_console_input_single_char (ctx); /* interrupt line mode console read */
 #endif
@@ -435,7 +411,9 @@ extern "C" bool console_worker_shutdown(console_worker_context_t* ctx, int timeo
     }
 #endif
 
-    return async_worker_join(ctx->worker, timeout_ms);
+    bool result = async_worker_join(ctx->worker, timeout_ms);
+    set_console_input_line_mode (ctx, true); /* re-enable echo to avoid leaving console in a bad state */
+    return result;
 }
 
 /**
