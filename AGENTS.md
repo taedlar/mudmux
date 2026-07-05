@@ -60,7 +60,7 @@ System deps: **OpenSSL** (required), **Boost.JSON** (optional, via `find_boost`)
 
 - **C++17**, `-Wall -Wextra -Wpedantic` (GCC/Clang); `/W3 /permissive- /utf-8` (MSVC).
 - Public API is plain **C** (`extern "C"`) with `MUDMUX_EXPORT` visibility. Internal C++ code uses default-hidden visibility (`CMAKE_CXX_VISIBILITY_PRESET hidden`).
-- Platform-specific files are named with a suffix: `_epoll`, `_iocp`, `_poll` (async), `_pthread`, `_win32` (workers). Add new platform variants with the same naming.
+- Platform-specific async runtime files are named with a suffix: `_epoll`, `_iocp`, `_poll`. Keep this naming for new runtime backends.
 - Logging: `SPDLOG_*` macros. In Debug builds `SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE` is set at compile time.
 - Configuration is YAML, passed as a string to `mudmux_init()`; see `src/mud.conf` for an example.
 

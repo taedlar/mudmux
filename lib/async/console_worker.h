@@ -16,7 +16,6 @@
 
 #include "async_queue.h"
 #include "async_runtime.h"
-#include "async_worker.h"
 
 #include <stdbool.h>
 
