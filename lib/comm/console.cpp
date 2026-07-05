@@ -101,7 +101,7 @@ extern "C" int comm_process_console_input (async_runtime_t *runtime, bool allow_
     bool disconnected = false;
     // check EOF on console worker and handle disconnect/re-connect if needed
     {
-        std::lock_guard<std::mutex> lock(console_mutex);    
+        std::lock_guard<std::mutex> lock(console_mutex);
         if (console_ctx && console_worker_take_eof (console_ctx)) {
             auto console_type = async_runtime_get_console_type (runtime);
             if (console_type == CONSOLE_TYPE_REAL) {
@@ -124,9 +124,8 @@ extern "C" int comm_process_console_input (async_runtime_t *runtime, bool allow_
             disconnected = true;
         }
 
-        if (console_ctx) {
-            // console worker still active, check if communication slot is still connected
-            if (!comm_abstract_get(COMM_SLOT_CONSOLE) && allow_reconnect) {
+        if (!comm_abstract_get(COMM_SLOT_CONSOLE) && allow_reconnect && console_ctx) {
+            if (!async_queue_is_empty(console_queue)) {
                 SPDLOG_INFO ("----- reconnecting console communication");
                 if (comm_abstract_add_file (nullptr, nullptr, COMM_SLOT_CONSOLE, 0) < 0) {
                     SPDLOG_ERROR ("failed to re-connect console communication");
