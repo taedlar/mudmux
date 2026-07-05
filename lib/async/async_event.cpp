@@ -1,27 +1,22 @@
 /**
- * @file sync.cpp
+ * @file async_event.cpp
  * @brief C++11 implementation of platform-agnostic synchronization primitives
  */
 #ifdef HAVE_CONFIG_H
 #include <config.h>
 #endif /* HAVE_CONFIG_H */
 
-#include "sync.h"
-#include <mutex>
+#include "async_event.h"
 #include <new>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #else
+#include <mutex>
 #include <condition_variable>
 #include <chrono>
 #endif
-
-/* Internal C++ wrapper types */
-struct MutexImpl {
-    std::mutex mtx;
-};
 
 #ifdef _WIN32
 /* Windows: Use native event for WaitForMultipleObjects compatibility */
@@ -39,60 +34,17 @@ struct EventImpl {
 #endif
 
 /* Static assertions to ensure opaque storage is large enough */
-static_assert(sizeof(MutexImpl) <= sizeof(platform_mutex_t), 
-              "platform_mutex_t storage too small for std::mutex");
-static_assert(sizeof(EventImpl) <= sizeof(platform_event_t),
-              "platform_event_t storage too small for EventImpl");
-
-/* Helper to get MutexImpl pointer from opaque storage */
-static inline MutexImpl* get_mutex(platform_mutex_t* mutex) {
-    return reinterpret_cast<MutexImpl*>(mutex);
-}
+static_assert(sizeof(EventImpl) <= sizeof(async_event_t),
+              "async_event_t storage too small for EventImpl");
 
 /* Helper to get EventImpl pointer from opaque storage */
-static inline EventImpl* get_event(platform_event_t* event) {
+static inline EventImpl* get_event(async_event_t* event) {
     return reinterpret_cast<EventImpl*>(event);
-}
-
-/* Mutex API */
-
-bool platform_mutex_init(platform_mutex_t* mutex) {
-    if (!mutex) return false;
-    
-    try {
-        new (mutex) MutexImpl{};
-        return true;
-    } catch (...) {
-        return false;
-    }
-}
-
-void platform_mutex_destroy(platform_mutex_t* mutex) {
-    if (mutex) {
-        get_mutex(mutex)->~MutexImpl();
-    }
-}
-
-void platform_mutex_lock(platform_mutex_t* mutex) {
-    if (mutex) {
-        get_mutex(mutex)->mtx.lock();
-    }
-}
-
-bool platform_mutex_trylock(platform_mutex_t* mutex) {
-    if (!mutex) return false;
-    return get_mutex(mutex)->mtx.try_lock();
-}
-
-void platform_mutex_unlock(platform_mutex_t* mutex) {
-    if (mutex) {
-        get_mutex(mutex)->mtx.unlock();
-    }
 }
 
 /* Event API */
 
-bool platform_event_init(platform_event_t* event, bool manual_reset, bool initial_state) {
+bool async_event_init(async_event_t* event, bool manual_reset, bool initial_state) {
     if (!event) return false;
     
     try {
@@ -121,7 +73,7 @@ bool platform_event_init(platform_event_t* event, bool manual_reset, bool initia
     }
 }
 
-void platform_event_destroy(platform_event_t* event) {
+void async_event_destroy(async_event_t* event) {
     if (event) {
 #ifdef _WIN32
         EventImpl* impl = get_event(event);
@@ -133,7 +85,7 @@ void platform_event_destroy(platform_event_t* event) {
     }
 }
 
-void platform_event_set(platform_event_t* event) {
+void async_event_set(async_event_t* event) {
     if (!event) return;
     
 #ifdef _WIN32
@@ -154,7 +106,7 @@ void platform_event_set(platform_event_t* event) {
 #endif
 }
 
-void platform_event_reset(platform_event_t* event) {
+void async_event_reset(async_event_t* event) {
     if (!event) return;
     
 #ifdef _WIN32
@@ -169,7 +121,7 @@ void platform_event_reset(platform_event_t* event) {
 #endif
 }
 
-bool platform_event_wait(platform_event_t* event, int timeout_ms) {
+bool async_event_wait(async_event_t* event, int timeout_ms) {
     if (!event) return false;
     
     EventImpl* impl = get_event(event);
@@ -220,7 +172,7 @@ bool platform_event_wait(platform_event_t* event, int timeout_ms) {
 }
 
 #ifdef _WIN32
-void* platform_event_get_native_handle(platform_event_t* event) {
+void* async_event_get_native_handle(async_event_t* event) {
     if (!event) return NULL;
     return get_event(event)->event;
 }
