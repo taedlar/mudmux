@@ -4,7 +4,7 @@
  * 
  * C++11-based implementation providing C-compatible API.
  * Internal use only - encapsulated within async library implementations.
- * Main thread code should use async_queue/async_worker APIs instead.
+ * Main thread code should use the higher-level async APIs instead.
  */
 #ifndef ASYNC_SYNC_H
 #define ASYNC_SYNC_H

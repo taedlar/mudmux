@@ -10,7 +10,6 @@ target_sources(async INTERFACE
     FILES
         sync.h
         async_queue.h
-        async_worker.h
         async_runtime.h
         console_worker.h
         socket_intf.h
@@ -25,17 +24,14 @@ target_sources(async PRIVATE
 
 if (WIN32)
     target_sources(async PRIVATE
-        async_worker_win32.cpp
         async_runtime_iocp.cpp
     )
 elseif (LINUX)
     target_sources(async PRIVATE
-        async_worker_pthread.cpp
         async_runtime_epoll.cpp
     )
 elseif(APPLE)
     target_sources(async PRIVATE
-        async_worker_pthread.cpp
         async_runtime_poll.cpp
     )
 endif()
