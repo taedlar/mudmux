@@ -8,6 +8,7 @@
 #include <spdlog/spdlog.h>
 
 #cmakedefine HAVE_STDBOOL_H
+#cmakedefine HAVE_TERMIOS_H
 #cmakedefine HAVE_UNISTD_H
 
 #cmakedefine HAVE_GETTIMEOFDAY

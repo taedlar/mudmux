@@ -48,6 +48,7 @@ add_compile_definitions($<$<CONFIG:Debug>:SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE
 include(CheckIncludeFiles)
 include(CheckSymbolExists)
 check_include_files(stdbool.h HAVE_STDBOOL_H)
+check_include_files(termios.h HAVE_TERMIOS_H)
 check_include_files(unistd.h HAVE_UNISTD_H)
 check_symbol_exists(gettimeofday sys/time.h HAVE_GETTIMEOFDAY)
 

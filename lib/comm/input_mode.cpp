@@ -1,12 +1,10 @@
-/**
- * @file console_mode.c
- * @brief Shared console mode helpers.
- */
 #ifdef HAVE_CONFIG_H
 #include <config.h>
 #endif /* HAVE_CONFIG_H */
-#include "console_mode.h"
-#include "console_worker.h"
+
+#include "input_mode.h"
+
+#include "async/console_worker.h"
 
 #ifdef _WIN32
 
@@ -29,8 +27,7 @@ static int get_console_input_mode(HANDLE *handle, DWORD *mode) {
  * touched, so unrelated flags set by the terminal (e.g. ENABLE_QUICK_EDIT_MODE
  * under Windows Terminal / ConPTY) are preserved, avoiding ERROR_INVALID_PARAMETER.
  */
-static int set_console_input_mode(console_worker_context_t *ctx,
-                                  DWORD set_bits, DWORD clear_bits) {
+static int set_console_input_mode(DWORD set_bits, DWORD clear_bits) {
   HANDLE handle;
   DWORD current_mode;
   DWORD new_mode;
@@ -68,17 +65,17 @@ static int set_console_input_mode(console_worker_context_t *ctx,
 /**
  * @brief Switch to line (cooked) input mode, optionally enabling echo.
  */
-int set_console_input_line_mode(console_worker_context_t *ctx, bool echo) {
+int comm_set_console_line_input (bool echo) {
   DWORD set_bits = ENABLE_LINE_INPUT | ENABLE_PROCESSED_INPUT
                    | (echo ? ENABLE_ECHO_INPUT : 0);
   DWORD clear_bits = (echo ? 0 : ENABLE_ECHO_INPUT) | ENABLE_VIRTUAL_TERMINAL_INPUT;
-  return set_console_input_mode(ctx, set_bits, clear_bits);
+  return set_console_input_mode(set_bits, clear_bits);
 }
 
-int set_console_input_echo (console_worker_context_t *ctx, bool echo) {
+int comm_set_console_echo (bool echo) {
   DWORD set_bits = echo ? ENABLE_ECHO_INPUT : 0;
   DWORD clear_bits = echo ? 0 : ENABLE_ECHO_INPUT;
-  return set_console_input_mode(ctx, set_bits, clear_bits);
+  return set_console_input_mode(set_bits, clear_bits);
 }
 
 /**
@@ -87,14 +84,14 @@ int set_console_input_echo (console_worker_context_t *ctx, bool echo) {
  * Also enables Windows 10 ANSI processing to allow reading of virtual terminal sequences for special keys.
  * @see https://learn.microsoft.com/en-us/windows/console/console-virtual-terminal-sequences
  */
-int set_console_input_single_char (console_worker_context_t *ctx) {
-  return set_console_input_mode (ctx,
+int comm_set_console_char_input () {
+  return set_console_input_mode (
     /* set */ ENABLE_PROCESSED_INPUT | ENABLE_VIRTUAL_TERMINAL_INPUT,
     /* clear */ ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT
   );
 }
 
-int enable_console_output_ansi(void) {
+int comm_enable_console_virtual_terminal(void) {
   HANDLE handle;
   DWORD mode;
 
@@ -132,30 +129,28 @@ static void posix_tcsetattr(int fd, struct termios *tio) {
 }
 #endif /* HAVE_TERMIOS_H */
 
-int set_console_input_line_mode(console_worker_context_t *ctx, bool line_input) {
-  (void)ctx;
+int comm_set_console_line_input (bool echo) {
 #ifdef HAVE_TERMIOS_H
   struct termios tio;
   if (tcgetattr(STDIN_FILENO, &tio) != 0)
     return 0;
-  if (line_input)
+  if (echo)
     tio.c_lflag |= ICANON;
   else
     tio.c_lflag &= ~ICANON;
-  if (line_input)
+  if (echo)
     tio.c_lflag |= ECHO;
   else
     tio.c_lflag &= ~ECHO;
   posix_tcsetattr(STDIN_FILENO, &tio);
   return 1;
 #else
-  (void)line_input;
+  (void)echo;
   return 0;
 #endif
 }
 
-int set_console_input_echo(console_worker_context_t *ctx, bool echo) {
-  (void)ctx;
+int comm_set_console_echo (bool echo) {
 #ifdef HAVE_TERMIOS_H
   struct termios tio;
   if (tcgetattr(STDIN_FILENO, &tio) != 0)
@@ -172,8 +167,7 @@ int set_console_input_echo(console_worker_context_t *ctx, bool echo) {
 #endif
 }
 
-int set_console_input_single_char(console_worker_context_t *ctx) {
-  (void)ctx;
+int comm_set_console_char_input() {
 #ifdef HAVE_TERMIOS_H
   {
     struct termios tio;
@@ -191,7 +185,7 @@ int set_console_input_single_char(console_worker_context_t *ctx) {
 #endif
 }
 
-int enable_console_output_ansi(void) {
+int comm_enable_console_virtual_terminal(void) {
   return 0;
 }
 #endif

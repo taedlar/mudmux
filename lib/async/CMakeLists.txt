@@ -12,7 +12,6 @@ target_sources(async INTERFACE
         async_queue.h
         async_worker.h
         async_runtime.h
-        console_mode.h
         console_worker.h
         socket_intf.h
 )
@@ -21,7 +20,6 @@ target_sources(async PRIVATE
     socket_intf.cpp
     sync.cpp
     async_queue.cpp
-    console_mode.cpp
     console_worker.cpp
 )
 

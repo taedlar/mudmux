@@ -5,6 +5,7 @@ add_library(comm OBJECT
     accept.cpp
     console.cpp
     file_input.cpp
+    input_mode.cpp
     inbound.cpp
     outbound.cpp
 )
@@ -17,6 +18,7 @@ target_sources(comm INTERFACE
         accept.h
         console.h
         file_input.h
+        input_mode.h
         inbound.h
 )
 target_compile_definitions(comm PRIVATE mudmux_EXPORTS)
