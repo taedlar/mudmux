@@ -8,20 +8,21 @@
 #include <config.h>
 #endif /* HAVE_CONFIG_H */
 #include "console_worker.h"
-#include "sync.h"
+#include "async_event.h"
 
 #include <string.h>
 #include <new>
+#include <mutex>
 #include <thread>
 
 struct console_worker_context_s {
     async_queue_t* line_queue;     /**< Queue for completed lines */
     async_runtime_t* runtime;      /**< Runtime for posting completions */
     uintptr_t completion_key;      /**< Completion key for runtime */
-    platform_mutex_t state_mutex;  /**< Guards worker state flags */
+    std::mutex state_mutex;        /**< Guards worker state flags */
     bool eof_detected;             /**< Set true when stdin EOF is observed */
-    platform_event_t stop_event;   /**< Signals worker thread stop */
-    platform_event_t done_event;   /**< Signals worker thread exit */
+    async_event_t stop_event;      /**< Signals worker thread stop */
+    async_event_t done_event;      /**< Signals worker thread exit */
     std::thread worker;            /**< Native C++17 worker thread */
     bool worker_started;           /**< True once worker thread has started */
 #ifndef _WIN32
@@ -44,7 +45,7 @@ static void console_worker_signal_stop(console_worker_context_t* ctx) {
         return;
     }
 
-    platform_event_set(&ctx->stop_event);
+    async_event_set(&ctx->stop_event);
 
 #ifndef _WIN32
     if (ctx->stop_pipe_fds[1] >= 0) {
@@ -61,9 +62,8 @@ void console_worker_set_eof(console_worker_context_t* ctx) {
     if (!ctx)
         return;
 
-    platform_mutex_lock(&ctx->state_mutex);
+    std::lock_guard<std::mutex> lock(ctx->state_mutex);
     ctx->eof_detected = true;
-    platform_mutex_unlock(&ctx->state_mutex);
 
     /* Wake the main loop so EOF can be handled on the main thread. */
     async_runtime_post_completion(ctx->runtime, ctx->completion_key, 0);
@@ -137,14 +137,14 @@ static void console_worker_proc_win32(console_worker_context_t* cctx) {
     HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE);
     if (!hStdin || hStdin == INVALID_HANDLE_VALUE) {
         SPDLOG_ERROR("invalid STD_INPUT_HANDLE for console worker");
-        platform_event_set(&cctx->done_event);
+        async_event_set(&cctx->done_event);
         return;
     }
 
-    HANDLE hStopEvent = (HANDLE)platform_event_get_native_handle(&cctx->stop_event);
+    HANDLE hStopEvent = (HANDLE)async_event_get_native_handle(&cctx->stop_event);
     if (!hStopEvent) {
         SPDLOG_ERROR("failed to get native event handle");
-        platform_event_set(&cctx->done_event);
+        async_event_set(&cctx->done_event);
         return;
     }
 
@@ -157,7 +157,7 @@ static void console_worker_proc_win32(console_worker_context_t* cctx) {
 
     SPDLOG_INFO ("console worker started (type: {})", console_type_str (console_type));
 
-    while (!platform_event_wait(&cctx->stop_event, 0)) {
+    while (!async_event_wait(&cctx->stop_event, 0)) {
         /* Wait for stdin to be signaled OR stop event */
         HANDLE events[2] = { hStdin, hStopEvent };
         DWORD wait_result = WaitForMultipleObjects(2, events, FALSE, INFINITE);
@@ -259,7 +259,7 @@ static void console_worker_proc_win32(console_worker_context_t* cctx) {
     }
 
     SPDLOG_INFO ("console worker stopped");
-    platform_event_set(&cctx->done_event);
+    async_event_set(&cctx->done_event);
 }
 #else
 /**
@@ -272,7 +272,7 @@ static void console_worker_proc_posix(console_worker_context_t* cctx) {
     console_type_t console_type = async_runtime_get_console_type(cctx->runtime);
     SPDLOG_INFO ("console worker started (type: {})", console_type_str (console_type));
 
-    while (!platform_event_wait(&cctx->stop_event, 0)) {
+    while (!async_event_wait(&cctx->stop_event, 0)) {
         /* Block in select() on stdin and the stop-pipe read end.
          * NULL timeout means infinite wait - no polling needed. */
         fd_set readfds;
@@ -340,7 +340,7 @@ static void console_worker_proc_posix(console_worker_context_t* cctx) {
     }
 
     SPDLOG_INFO ("console worker stopped");
-    platform_event_set(&cctx->done_event);
+    async_event_set(&cctx->done_event);
 }
 #endif
 
@@ -365,20 +365,13 @@ extern "C" console_worker_context_t* console_worker_init(async_runtime_t* runtim
     ctx->eof_detected = false;
     ctx->worker_started = false;
 
-    if (!platform_mutex_init(&ctx->state_mutex)) {
+    if (!async_event_init(&ctx->stop_event, true, false)) {
         delete ctx;
         return NULL;
     }
 
-    if (!platform_event_init(&ctx->stop_event, true, false)) {
-        platform_mutex_destroy(&ctx->state_mutex);
-        delete ctx;
-        return NULL;
-    }
-
-    if (!platform_event_init(&ctx->done_event, true, false)) {
-        platform_event_destroy(&ctx->stop_event);
-        platform_mutex_destroy(&ctx->state_mutex);
+    if (!async_event_init(&ctx->done_event, true, false)) {
+        async_event_destroy(&ctx->stop_event);
         delete ctx;
         return NULL;
     }
@@ -422,9 +415,8 @@ extern "C" console_worker_context_t* console_worker_init(async_runtime_t* runtim
         if (ctx->stop_pipe_fds[0] >= 0) close(ctx->stop_pipe_fds[0]);
         if (ctx->stop_pipe_fds[1] >= 0) close(ctx->stop_pipe_fds[1]);
 #endif
-        platform_event_destroy(&ctx->done_event);
-        platform_event_destroy(&ctx->stop_event);
-        platform_mutex_destroy(&ctx->state_mutex);
+        async_event_destroy(&ctx->done_event);
+        async_event_destroy(&ctx->stop_event);
         delete ctx;
         return NULL;
     }
@@ -447,7 +439,7 @@ extern "C" bool console_worker_shutdown(console_worker_context_t* ctx, int timeo
         wait_timeout = -1;
     }
 
-    bool stopped = platform_event_wait(&ctx->done_event, wait_timeout);
+    bool stopped = async_event_wait(&ctx->done_event, wait_timeout);
     if (stopped && ctx->worker.joinable()) {
         ctx->worker.join();
         ctx->worker_started = false;
@@ -466,7 +458,7 @@ extern "C" void console_worker_destroy(console_worker_context_t* ctx) {
 
     if (ctx->worker_started) {
         console_worker_signal_stop(ctx);
-        (void)platform_event_wait(&ctx->done_event, -1);
+        (void)async_event_wait(&ctx->done_event, -1);
         if (ctx->worker.joinable()) {
             ctx->worker.join();
         }
@@ -484,9 +476,8 @@ extern "C" void console_worker_destroy(console_worker_context_t* ctx) {
     }
 #endif
 
-    platform_event_destroy(&ctx->done_event);
-    platform_event_destroy(&ctx->stop_event);
-    platform_mutex_destroy(&ctx->state_mutex);
+    async_event_destroy(&ctx->done_event);
+    async_event_destroy(&ctx->stop_event);
 
     delete ctx;
 }
@@ -497,10 +488,9 @@ extern "C" bool console_worker_take_eof(console_worker_context_t* ctx) {
     if (!ctx)
         return false;
 
-    platform_mutex_lock(&ctx->state_mutex);
+    std::lock_guard<std::mutex> lock(ctx->state_mutex);
     saw_eof = ctx->eof_detected;
     ctx->eof_detected = false;
-    platform_mutex_unlock(&ctx->state_mutex);
 
     return saw_eof;
 }

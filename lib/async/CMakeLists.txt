@@ -8,7 +8,7 @@ target_sources(async INTERFACE
     FILE_SET HEADERS
     BASE_DIRS ${CMAKE_SOURCE_DIR}/lib
     FILES
-        sync.h
+        async_event.h
         async_queue.h
         async_runtime.h
         console_worker.h
@@ -17,7 +17,7 @@ target_sources(async INTERFACE
 
 target_sources(async PRIVATE
     socket_intf.cpp
-    sync.cpp
+    async_event.cpp
     async_queue.cpp
     console_worker.cpp
 )
