@@ -141,7 +141,7 @@ Outbound writes are intentionally staged and flushed after hook execution.
 ### Proactive Close Path (`comm_close`)
 
 - Hooks may request close directly (for example in `MUDMUX_HOOK_MESSAGE_INBOUND` after receiving `quit`).
-- `comm_close()` marks `C_SOCKET_CLOSING` and invokes `MUDMUX_HOOK_DISCONNECT` once on first close request.
+- `comm_close()` marks `C_CLOSING` and invokes `MUDMUX_HOOK_DISCONNECT` once on first close request.
 - If buffered outbound bytes exist, close is deferred until flush drains; function returns `false` in this state.
 - After flush drains and no buffered data remains, runtime fd registrations are removed and the slot is removed.
 - For `COMM_SLOT_CONSOLE`, close is coordinated through console EOF signaling and may return `false` until console shutdown completes.
@@ -298,7 +298,7 @@ Input Sources:
                               ↓                                           ↓
                           comm_buffered_write()                     comm_close()
                               ↓                                           ↓
-                         comm_flush_all_outbound()        [set C_SOCKET_CLOSING, invoke
+                         comm_flush_all_outbound()        [set C_CLOSING, invoke
                               ↓                         disconnect, defer if buffered]
                           BIO/socket/file write path                     ↓
                                                   [final slot removal]

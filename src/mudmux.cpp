@@ -12,6 +12,11 @@
 #include <yaml-cpp/yaml.h>
 
 #include "async/console_worker.h"
+#include "comm/accept.h"
+#include "comm/console.h"
+#include "comm/file_input.h"
+#include "comm/inbound.h"
+#include "comm/input_mode.h"
 #include "mudmux/comm.h"
 #include "mudmux/hooks.h"
 
@@ -42,6 +47,9 @@ static void init_comm_api (void) {
     comm_api.clear_flags = comm_clear_flags;
     comm_api.buffered_write = comm_buffered_write;
     comm_api.close = comm_close;
+    comm_api.set_line_input = comm_set_line_input;
+    comm_api.set_char_input = comm_set_char_input;
+    comm_api.enable_virtual_terminal = comm_enable_virtual_terminal;
 
     mudmux_comm_api = &comm_api; // set global pointer to initialized struct
 }
@@ -207,9 +215,9 @@ extern "C" int mudmux_run (void* context) {
                 continue;
             }
 
-            if (comm_get_flags(comm) & C_SOCKET_CLOSING) {
-                SPDLOG_DEBUG ("comm slot {} has C_SOCKET_CLOSING flag set, proceeding with graceful close", slot);
-                (void) comm_close(runtime, slot); // proceed pending graceful close if C_SOCKET_CLOSING flag is set
+            if (comm_get_flags(comm) & C_CLOSING) {
+                SPDLOG_DEBUG ("comm slot {} has C_CLOSING flag set, proceeding with graceful close", slot);
+                (void) comm_close(runtime, slot); // proceed pending graceful close if C_CLOSING flag is set
                 continue;
             }
         }

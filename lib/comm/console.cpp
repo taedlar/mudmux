@@ -10,6 +10,7 @@
 #include <openssl/bio.h>
 
 #include "abstract.h"
+#include "inbound.h"
 #include "input_mode.h"
 #include "async/console_worker.h"
 #include "mudmux/hooks.h"
@@ -80,7 +81,7 @@ extern "C" void comm_shutdown_console (async_runtime_t *runtime) {
     
     if (console_ctx) {
 #ifdef _WIN32
-        comm_set_console_char_input (); /* interrupt line mode console read */
+        comm_set_char_input (COMM_SLOT_CONSOLE); /* interrupt line mode console read */
 #endif
         bool stopped = console_worker_shutdown (console_ctx, 5000);
         if (!stopped) {
@@ -88,7 +89,7 @@ extern "C" void comm_shutdown_console (async_runtime_t *runtime) {
         }
         console_worker_destroy (console_ctx);
         console_ctx = nullptr;
-        comm_set_console_line_input (true); /* re-enable echo to avoid leaving console in a bad state */
+        comm_set_line_input (COMM_SLOT_CONSOLE, true); /* re-enable echo to avoid leaving console in a bad state */
     }
 
     if (console_queue) {
@@ -106,7 +107,7 @@ extern "C" int comm_process_console_input (async_runtime_t *runtime, bool allow_
             auto console_type = async_runtime_get_console_type (runtime);
             if (console_type == CONSOLE_TYPE_REAL) {
 #ifdef _WIN32
-                comm_set_console_char_input (); /* interrupt line mode console read */
+                comm_set_char_input (COMM_SLOT_CONSOLE); /* interrupt line mode console read */
 #endif
             }
             bool stopped = console_worker_shutdown (console_ctx, 5000);
@@ -115,7 +116,7 @@ extern "C" int comm_process_console_input (async_runtime_t *runtime, bool allow_
             }
             console_worker_destroy (console_ctx);
             console_ctx = nullptr;
-            comm_set_console_line_input (true); /* re-enable echo to avoid leaving console in a bad state */
+            comm_set_line_input (COMM_SLOT_CONSOLE, true); /* re-enable echo to avoid leaving console in a bad state */
             if (console_type == CONSOLE_TYPE_REAL && allow_reconnect) {
                 // re-arm console worker for next console input (e.g., after Ctrl+D EOF)
                 SPDLOG_INFO ("----- console user disconnected (press ENTER to reconnect)");
@@ -148,7 +149,7 @@ extern "C" int comm_process_console_input (async_runtime_t *runtime, bool allow_
     if (disconnected) {
         auto comm = comm_abstract_get(COMM_SLOT_CONSOLE);
         if (comm) {
-            if (!(comm_get_flags(comm) & C_SOCKET_CLOSING))
+            if (!(comm_get_flags(comm) & C_CLOSING))
                 comm_invoke_disconnect (runtime, COMM_SLOT_CONSOLE); // invoke disconnect hook for console user
             comm_abstract_remove (COMM_SLOT_CONSOLE); // remove console from comm_abstract
         }

@@ -84,7 +84,7 @@ Logic-layer hooks can proactively close a communication slot via `comm_close(run
 
 - Typical usage: call from `MUDMUX_HOOK_MESSAGE_INBOUND` when processing a command like `quit`/`exit` (see `src/main.cpp`).
 - `runtime` may be `nullptr`; `comm_close()` resolves the current runtime internally.
-- First close request sets `C_SOCKET_CLOSING` and invokes `MUDMUX_HOOK_DISCONNECT` once, so logic code can run disconnect cleanup.
+- First close request sets `C_CLOSING` and invokes `MUDMUX_HOOK_DISCONNECT` once, so logic code can run disconnect cleanup.
 - If outbound data is still buffered (`C_BUFFERED_WRITE`), close is deferred until flush completes; in this case `comm_close()` returns `false`.
 - For console slot (`COMM_SLOT_CONSOLE`), close is coordinated through console EOF signaling and may also return `false` until final teardown finishes.
 - When the slot is already gone or fully removed, `comm_close()` returns `true`.

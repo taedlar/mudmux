@@ -2,33 +2,39 @@
 #define COMM_INPUT_MODE_H
 
 /**
- * @brief Enable cooked line-input mode for the process console stdin.
- * @param ctx Optional console worker context for desired-mode tracking.
+ * @brief Enable (TELNET line mode, termios ICANON or Windows cooked) line-input mode for the
+ *      communication slot.
+ * @param slot Communication slot to set line input mode. Supports special slots
+ *      such as COMM_SLOT_CONSOLE for the process console stdin.
  * @param echo true to enable local echo, false to disable it.
- * @returns 1 if stdin is a real console and the mode was updated, otherwise 0.
+ * @returns true if success, false otherwise.
  */
-int comm_set_console_line_input(bool echo);
+bool comm_set_line_input (int slot, bool echo);
 
 /**
- * @brief Toggle local echo for the current console stdin mode.
- * @param ctx Optional console worker context for desired-mode tracking.
- * @param echo true to enable local echo, false to disable it.
- * @returns 1 if stdin is a real console and the mode was updated, otherwise 0.
- */
-int comm_set_console_echo (bool echo);
-
-/**
- * @brief Toggle single-character mode for the process console stdin.
- * @param ctx Optional console worker context for desired-mode tracking.
+ * @brief Enable single-character mode for the communication slot.
+ * @param slot Communication slot to enable character input mode. Supports special slots
+ *      such as COMM_SLOT_CONSOLE for the process console stdin.
  * @param single true to enable single-character mode, false to restore line mode.
- * @returns 1 if stdin is a real console and the mode was updated, otherwise 0.
+ * @returns true if success, false otherwise.
  */
-int comm_set_console_char_input (void);
+bool comm_set_char_input (int slot);
 
 /**
- * @brief Enable ANSI virtual terminal processing for the process console stdout.
- * @returns 1 if stdout is a real console and the mode was updated, otherwise 0.
+ * @brief Set or negotiate client echo for the communication slot.
+ * @param slot Communication slot to set echo mode. Supports special slots such as
+ *      COMM_SLOT_CONSOLE for the process console stdin.
+ * @param echo true to enable local echo, false to disable it.
+ * @returns true if success, false otherwise.
  */
-int comm_enable_console_virtual_terminal(void);
+bool comm_set_echo (int slot, bool echo);
+
+/**
+ * @brief Enables virtual terminal (tty or ANSI/VT100) processing for the communication slot.
+ * @param slot Communication slot to enable virtual terminal processing. Supports special slots such as
+ *      COMM_SLOT_CONSOLE for the process console stdout.
+ * @returns true if stdout is a real console and the mode was updated, otherwise false.
+ */
+bool comm_enable_virtual_terminal (int slot);
 
 #endif /* COMM_INPUT_MODE_H */

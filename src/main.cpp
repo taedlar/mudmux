@@ -23,8 +23,10 @@ static void process_command_line (int argc, char* argv[]);
 
 static int on_connect (void*, int slot, void*, size_t) {
     auto comm = comm_abstract_get(slot);
-    if (comm)
+    if (comm) {
+        comm_set_line_input (slot, true); // enable line input mode for console user
         *comm << "Welcome to mudmux!\n\r";
+    }
     return 0;
 }
 

@@ -113,7 +113,7 @@ void comm_flush (async_runtime_t* runtime, int slot) {
                 if (!BIO_should_retry(comm->wbio)) {
                     SPDLOG_ERROR ("BIO_write failed during flush: {}", ERR_error_string(ERR_get_error(), nullptr));
                     // invoke disconnect hook (if not already closing), drop any buffered outbound data
-                    if (!(comm_get_flags(comm) & C_SOCKET_CLOSING))
+                    if (!(comm_get_flags(comm) & C_CLOSING))
                         comm_invoke_disconnect(runtime, slot); // invoke disconnect hook for this comm slot
                     while (comm->outbound) {
                         outbound_buffer_t* next_buffer = comm->outbound->next;
@@ -162,10 +162,10 @@ void comm_flush (async_runtime_t* runtime, int slot) {
         // clear buffered-write flag, it will be set again when new data is written
         comm_clear_flags(comm, C_BUFFERED_WRITE);
 
-        if (comm_get_flags(comm) & C_SOCKET_CLOSING) {
+        if (comm_get_flags(comm) & C_CLOSING) {
             socket_fd_t fd = INVALID_SOCKET_FD;
             if (comm->wbio && BIO_get_fd(comm->wbio, reinterpret_cast<int*>(&fd)) > 0 && fd != INVALID_SOCKET_FD) {
-                SPDLOG_DEBUG ("comm slot has C_SOCKET_CLOSING flag set, sending shutdown signal to peer");
+                SPDLOG_DEBUG ("comm slot has C_CLOSING flag set, sending shutdown signal to peer");
                 BIO_shutdown_wr(comm->wbio); // shutdown write side of the socket and expect the peer to close the connection
             }
         }
@@ -189,9 +189,9 @@ bool comm_close (async_runtime_t* runtime, int slot) {
     if (!runtime)
         runtime = async_get_current_runtime();
 
-    if (!(comm_get_flags(comm) & C_SOCKET_CLOSING)) {
+    if (!(comm_get_flags(comm) & C_CLOSING)) {
         // let logic layer handle disconnect (e.g., cleanup, logging, etc.)
-        comm_set_flags(comm, C_SOCKET_CLOSING);
+        comm_set_flags(comm, C_CLOSING);
         comm_invoke_disconnect(runtime, slot);
     }
 
