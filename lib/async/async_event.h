@@ -16,7 +16,7 @@
  * Opaque storage - actual C++ objects constructed via placement new
  */
 typedef struct async_event_s {
-    /* Opaque storage sized for std::mutex + std::condition_variable + flags */
+    /* Opaque storage sized for the platform-specific implementation */
     uint64_t _opaque[20];
 } async_event_t;
 
@@ -49,6 +49,15 @@ void async_event_reset(async_event_t* event);
  * @returns true if event signaled, false if timeout
  */
 bool async_event_wait(async_event_t* event, int timeout_ms);
+
+#if defined(__linux__)
+/**
+ * Get native Linux eventfd for integration with epoll/poll/select.
+ * @param event Event to query
+ * @returns eventfd, or -1 if invalid
+ */
+int async_event_get_fd(async_event_t* event);
+#endif
 
 #ifdef _WIN32
 /**
