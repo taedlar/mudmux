@@ -11,12 +11,17 @@
 
 #include <stdint.h>
 
+#include "mudmux/async.h"
+
 /**
- * Platform-agnostic event
- * Opaque storage - actual C++ objects constructed via placement new
+ * Platform-agnostic pollable event object for thread synchronization, multiplexing, and signaling.
+ * Opaque type; use async_event_* functions to operate on it.
+ *
+ * Use this to synchronize main threads and worker threads. The waitable handle can be integrated
+ * with I/O multiplexing APIs (poll, select, epoll, kqueue) for event-driven programming.
  */
 typedef struct async_event_s {
-    /* Opaque storage sized for std::mutex + std::condition_variable + flags */
+    /* Opaque storage sized for the platform-specific implementation */
     uint64_t _opaque[20];
 } async_event_t;
 
@@ -50,13 +55,15 @@ void async_event_reset(async_event_t* event);
  */
 bool async_event_wait(async_event_t* event, int timeout_ms);
 
-#ifdef _WIN32
 /**
- * Get native Windows HANDLE for event (for WaitForMultipleObjects usage)
+ * Get native pollable/waitable OS handle for event loop integration.
+ *
+ * - Windows: HANDLE for WaitForMultipleObjects-style waits.
+ * - POSIX: readable fd for poll/select/epoll/kqueue integration.
+ *
  * @param event Event to query
- * @returns Windows HANDLE, or NULL if invalid
+ * @returns OS wait handle, or ASYNC_INVALID_WAIT_HANDLE if invalid
  */
-void* async_event_get_native_handle(async_event_t* event);
-#endif
+async_wait_handle_t async_event_get_wait_handle(async_event_t* event);
 
 #endif /* !ASYNC_SYNC_H */

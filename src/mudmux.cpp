@@ -11,16 +11,19 @@
 #include <vector>
 #include <yaml-cpp/yaml.h>
 
+#include "async/async_event.h"
 #include "async/console_worker.h"
 #include "comm/accept.h"
 #include "comm/console.h"
 #include "comm/file_input.h"
 #include "comm/inbound.h"
 #include "comm/input_mode.h"
+#include "mudmux/async.h"
 #include "mudmux/comm.h"
 #include "mudmux/hooks.h"
 
 extern "C" {
+    mudmux_async_api_t* mudmux_async_api {nullptr}; // global pointer to async API struct, initialized by mudmux_init()
     mudmux_comm_api_t* mudmux_comm_api {nullptr}; // global pointer to comm API struct, initialized by mudmux_init()
 }
 
@@ -30,6 +33,18 @@ static std::atomic<bool> is_shutting_down{false};
 static bool enable_standard_input{false};
 static bool enable_console{false};
 static std::vector<std::string> accept_names; // array of names for BIO_set_accept_name()
+
+static void init_async_api (void) {
+    static mudmux_async_api_t async_api;
+    async_api.event_init = async_event_init;
+    async_api.event_destroy = async_event_destroy;
+    async_api.event_set = async_event_set;
+    async_api.event_reset = async_event_reset;
+    async_api.event_wait = async_event_wait;
+    async_api.event_get_wait_handle = async_event_get_wait_handle;
+
+    mudmux_async_api = &async_api; // set global pointer to initialized struct
+}
 
 /**
  * @brief Initialize the mudmux_comm_api struct with function pointers to the communication API.
@@ -76,6 +91,7 @@ extern "C" bool mudmux_init (const char* config_yaml) {
         SPDLOG_ERROR ("mudmux_init() called while already running");
         return false;
     }
+    init_async_api();
     init_comm_api();
     try {
         YAML::Node config = YAML::Load (config_yaml ? config_yaml : "{\"transport\":{\"console\":false}}");
@@ -104,6 +120,7 @@ extern "C" void mudmux_deinit (void) {
     enable_console = false;
     accept_names.clear();
     memset(mudmux_comm_api, 0, sizeof(mudmux_comm_api_t));
+    memset(mudmux_async_api, 0, sizeof(mudmux_async_api_t));
 }
 
 extern "C" int mudmux_run (void* context) {

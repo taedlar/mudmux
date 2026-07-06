@@ -8,17 +8,16 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <condition_variable>
 #include <mutex>
 #include "async_queue.h"
-#include "async_event.h"
 
 /**
  * Queue implementation using circular buffer
  */
 struct async_queue_s {
     mutable std::mutex mutex;      /* Protects queue state */
-    async_event_t not_full;        /* Signaled when space available (for BLOCK_WRITER) */
-    async_event_t not_empty;       /* Signaled when data available (for SIGNAL_ON_DATA) */
+    std::condition_variable not_full; /* Signaled when space available (for BLOCK_WRITER) */
     
     void* buffer;              /* Circular buffer storage */
     size_t capacity;           /* Maximum number of messages */
@@ -52,34 +51,10 @@ extern "C" async_queue_t* async_queue_create (size_t capacity, size_t max_msg_si
         return NULL;
     }
     
-    /* Initialize events if needed */
-    if (flags & ASYNC_QUEUE_BLOCK_WRITER) {
-        if (!async_event_init(&queue->not_full, false, true)) {
-            free(queue);
-            return NULL;
-        }
-    }
-    
-    if (flags & ASYNC_QUEUE_SIGNAL_ON_DATA) {
-        if (!async_event_init(&queue->not_empty, false, false)) {
-            if (flags & ASYNC_QUEUE_BLOCK_WRITER) {
-                async_event_destroy(&queue->not_full);
-            }
-            free(queue);
-            return NULL;
-        }
-    }
-    
     /* Allocate circular buffer (each slot: size_t for length + message data) */
     queue->msg_slot_size = sizeof(size_t) + max_msg_size;
     queue->buffer = calloc(capacity, queue->msg_slot_size);
     if (!queue->buffer) {
-        if (flags & ASYNC_QUEUE_SIGNAL_ON_DATA) {
-            async_event_destroy(&queue->not_empty);
-        }
-        if (flags & ASYNC_QUEUE_BLOCK_WRITER) {
-            async_event_destroy(&queue->not_full);
-        }
         free(queue);
         return NULL;
     }
@@ -104,14 +79,6 @@ extern "C" void async_queue_destroy(async_queue_t* queue) {
         free(queue->buffer);
     }
     
-    if (queue->flags & ASYNC_QUEUE_SIGNAL_ON_DATA) {
-        async_event_destroy(&queue->not_empty);
-    }
-    
-    if (queue->flags & ASYNC_QUEUE_BLOCK_WRITER) {
-        async_event_destroy(&queue->not_full);
-    }
-
     free(queue);
 }
 
@@ -131,9 +98,7 @@ extern "C" bool async_queue_enqueue(async_queue_t* queue, const void* data, size
             queue->dropped_count++;
         } else if (queue->flags & ASYNC_QUEUE_BLOCK_WRITER) {
             /* Wait for space (release mutex while waiting) */
-            lock.unlock();
-            async_event_wait(&queue->not_full, -1);
-            lock.lock();
+            queue->not_full.wait(lock, [queue] { return queue->count < queue->capacity; });
             /* Re-check after waking up */
             continue;
         } else {
@@ -150,11 +115,6 @@ extern "C" bool async_queue_enqueue(async_queue_t* queue, const void* data, size
     queue->head = (queue->head + 1) % queue->capacity;
     queue->count++;
     queue->enqueue_count++;
-    
-    /* Signal not_empty if configured */
-    if (queue->flags & ASYNC_QUEUE_SIGNAL_ON_DATA) {
-        async_event_set(&queue->not_empty);
-    }
     
     return true;
 }
@@ -191,7 +151,7 @@ extern "C" bool async_queue_dequeue(async_queue_t* queue, void* buffer, size_t b
     
     /* Signal not_full if configured */
     if (queue->flags & ASYNC_QUEUE_BLOCK_WRITER) {
-        async_event_set(&queue->not_full);
+        queue->not_full.notify_one();
     }
     
     return true;
@@ -222,6 +182,10 @@ extern "C" void async_queue_clear(async_queue_t* queue) {
     queue->head = 0;
     queue->tail = 0;
     queue->count = 0;
+
+    if (queue->flags & ASYNC_QUEUE_BLOCK_WRITER) {
+        queue->not_full.notify_all();
+    }
 }
 
 extern "C" void async_queue_get_stats(const async_queue_t* queue, async_queue_stats_t* stats) {

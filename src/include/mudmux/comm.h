@@ -53,9 +53,7 @@ typedef struct mudmux_comm_api_s {
     bool (*enable_virtual_terminal)(int slot);
 } mudmux_comm_api_t;
 
-#ifdef mudmux_EXPORTS
-#include "comm/outbound.h"
-#else
+#if !defined(MUDMUX_STATIC_DEFINE) && !defined(mudmux_EXPORTS)
 /* public interface */
 #define comm_max_slot                   mudmux_comm_api->max_slot
 #define comm_abstract_add_bio           mudmux_comm_api->add_bio
@@ -83,6 +81,10 @@ MUDMUX_EXPORT extern mudmux_comm_api_t* mudmux_comm_api;
 }
 
 #include <string>
+
+#ifndef comm_buffered_write
+#include "comm/outbound.h"
+#endif
 
 // communication slot writer
 inline comm_abstract_t& operator<< (comm_abstract_t& comm, const std::string& str) {

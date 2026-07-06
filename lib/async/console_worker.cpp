@@ -10,6 +10,8 @@
 #include "console_worker.h"
 #include "async_event.h"
 
+#include <chrono>
+#include <condition_variable>
 #include <string.h>
 #include <new>
 #include <mutex>
@@ -20,19 +22,23 @@ struct console_worker_context_s {
     async_runtime_t* runtime;      /**< Runtime for posting completions */
     uintptr_t completion_key;      /**< Completion key for runtime */
     std::mutex state_mutex;        /**< Guards worker state flags */
+    std::mutex lifecycle_mutex;    /**< Guards stop/done lifecycle state */
+    std::condition_variable done_cv; /**< Signaled when worker thread exits */
     bool eof_detected;             /**< Set true when stdin EOF is observed */
-    async_event_t stop_event;      /**< Signals worker thread stop */
-    async_event_t done_event;      /**< Signals worker thread exit */
+    bool stop_requested;           /**< Signals worker thread stop */
+    bool worker_finished;          /**< Signals worker thread exit */
     std::thread worker;            /**< Native C++17 worker thread */
     bool worker_started;           /**< True once worker thread has started */
 #ifndef _WIN32
-    int stop_pipe_fds[2];          /**< Self-pipe for POSIX stop signaling: [0]=read, [1]=write */
+    async_event_t stop_event;      /**< Pollable POSIX stop signal */
+#else
+    HANDLE stop_event;             /**< Native stop event for WaitForMultipleObjects */
 #endif
 };
 
 #ifndef _WIN32
+#include <poll.h>
 #include <unistd.h>
-#include <sys/select.h>
 #include <sys/stat.h>
 #include <errno.h>
 #else
@@ -40,21 +46,50 @@ struct console_worker_context_s {
 #include <windows.h>
 #endif
 
+static bool console_worker_is_stop_requested(console_worker_context_t* ctx) {
+    std::lock_guard<std::mutex> lock(ctx->lifecycle_mutex);
+    return ctx->stop_requested;
+}
+
+static void console_worker_mark_done(console_worker_context_t* ctx) {
+    {
+        std::lock_guard<std::mutex> lock(ctx->lifecycle_mutex);
+        ctx->worker_finished = true;
+    }
+    ctx->done_cv.notify_all();
+}
+
+static bool console_worker_wait_done(console_worker_context_t* ctx, int timeout_ms) {
+    std::unique_lock<std::mutex> lock(ctx->lifecycle_mutex);
+
+    if (timeout_ms < 0) {
+        ctx->done_cv.wait(lock, [ctx] { return ctx->worker_finished; });
+        return true;
+    }
+
+    return ctx->done_cv.wait_for(
+        lock,
+        std::chrono::milliseconds(timeout_ms),
+        [ctx] { return ctx->worker_finished; }
+    );
+}
+
 static void console_worker_signal_stop(console_worker_context_t* ctx) {
     if (!ctx) {
         return;
     }
 
-    async_event_set(&ctx->stop_event);
-
-#ifndef _WIN32
-    if (ctx->stop_pipe_fds[1] >= 0) {
-        char byte = 1;
-        ssize_t written;
-        do {
-            written = write(ctx->stop_pipe_fds[1], &byte, 1);
-        } while (written < 0 && errno == EINTR);
+    {
+        std::lock_guard<std::mutex> lock(ctx->lifecycle_mutex);
+        ctx->stop_requested = true;
     }
+
+#ifdef _WIN32
+    if (ctx->stop_event) {
+        SetEvent(ctx->stop_event);
+    }
+#else
+    async_event_set(&ctx->stop_event);
 #endif
 }
 
@@ -137,14 +172,14 @@ static void console_worker_proc_win32(console_worker_context_t* cctx) {
     HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE);
     if (!hStdin || hStdin == INVALID_HANDLE_VALUE) {
         SPDLOG_ERROR("invalid STD_INPUT_HANDLE for console worker");
-        async_event_set(&cctx->done_event);
+        console_worker_mark_done(cctx);
         return;
     }
 
-    HANDLE hStopEvent = (HANDLE)async_event_get_native_handle(&cctx->stop_event);
+    HANDLE hStopEvent = cctx->stop_event;
     if (!hStopEvent) {
         SPDLOG_ERROR("failed to get native event handle");
-        async_event_set(&cctx->done_event);
+        console_worker_mark_done(cctx);
         return;
     }
 
@@ -157,7 +192,7 @@ static void console_worker_proc_win32(console_worker_context_t* cctx) {
 
     SPDLOG_INFO ("console worker started (type: {})", console_type_str (console_type));
 
-    while (!async_event_wait(&cctx->stop_event, 0)) {
+    while (!console_worker_is_stop_requested(cctx)) {
         /* Wait for stdin to be signaled OR stop event */
         HANDLE events[2] = { hStdin, hStopEvent };
         DWORD wait_result = WaitForMultipleObjects(2, events, FALSE, INFINITE);
@@ -259,7 +294,7 @@ static void console_worker_proc_win32(console_worker_context_t* cctx) {
     }
 
     SPDLOG_INFO ("console worker stopped");
-    async_event_set(&cctx->done_event);
+    console_worker_mark_done(cctx);
 }
 #else
 /**
@@ -267,48 +302,40 @@ static void console_worker_proc_win32(console_worker_context_t* cctx) {
  */
 static void console_worker_proc_posix(console_worker_context_t* cctx) {
     char line_buffer[CONSOLE_MAX_LINE];
-    int stop_fd = cctx->stop_pipe_fds[0];
+    async_wait_handle_t stop_fd = async_event_get_wait_handle(&cctx->stop_event);
 
     console_type_t console_type = async_runtime_get_console_type(cctx->runtime);
     SPDLOG_INFO ("console worker started (type: {})", console_type_str (console_type));
 
-    while (!async_event_wait(&cctx->stop_event, 0)) {
-        /* Block in select() on stdin and the stop-pipe read end.
-         * NULL timeout means infinite wait - no polling needed. */
-        fd_set readfds;
-        FD_ZERO (&readfds);
-        FD_SET (STDIN_FILENO, &readfds);
+    if (stop_fd < 0) {
+        SPDLOG_ERROR ("console worker missing stop event fd");
+        console_worker_mark_done(cctx);
+        return;
+    }
 
-        int nfds = STDIN_FILENO + 1;
-        struct timeval poll_timeout;
-        struct timeval* timeout_ptr = NULL; /* NULL = infinite, used when pipe is available */
-        if (stop_fd >= 0) {
-            FD_SET (stop_fd, &readfds);
-            if (stop_fd >= nfds)
-                nfds = stop_fd + 1;
-        } else {
-            /* Pipe unavailable (creation failed at init): fall back to 10ms polling
-             * so the should_stop flag check at the top of the loop is eventually reached. */
-            poll_timeout.tv_sec = 0;
-            poll_timeout.tv_usec = 10000;
-            timeout_ptr = &poll_timeout;
-        }
+    while (!console_worker_is_stop_requested(cctx)) {
+        struct pollfd pollfds[2];
+        pollfds[0].fd = STDIN_FILENO;
+        pollfds[0].events = POLLIN;
+        pollfds[0].revents = 0;
+        pollfds[1].fd = stop_fd;
+        pollfds[1].events = POLLIN;
+        pollfds[1].revents = 0;
 
-        int ret = select (nfds, &readfds, NULL, NULL, timeout_ptr);
+        int ret = poll (pollfds, 2, -1);
         if (ret < 0) {
             if (errno == EINTR) {
                 continue; /* Interrupted by signal, retry */
             }
-            SPDLOG_ERROR ("select() failed: {}", strerror(errno));
+            SPDLOG_ERROR ("poll() failed: {}", strerror(errno));
             break;
         }
 
-        /* Stop pipe signaled - exit cleanly */
-        if (stop_fd >= 0 && FD_ISSET(stop_fd, &readfds)) {
+        if (pollfds[1].revents & POLLIN) {
             break;
         }
 
-        if (!FD_ISSET (STDIN_FILENO, &readfds)) {
+        if (!(pollfds[0].revents & POLLIN)) {
             continue;
         }
 
@@ -340,7 +367,7 @@ static void console_worker_proc_posix(console_worker_context_t* cctx) {
     }
 
     SPDLOG_INFO ("console worker stopped");
-    async_event_set(&cctx->done_event);
+    console_worker_mark_done(cctx);
 }
 #endif
 
@@ -363,26 +390,20 @@ extern "C" console_worker_context_t* console_worker_init(async_runtime_t* runtim
     ctx->runtime = runtime;
     ctx->completion_key = completion_key;
     ctx->eof_detected = false;
+    ctx->stop_requested = false;
+    ctx->worker_finished = false;
     ctx->worker_started = false;
 
+#ifdef _WIN32
+    ctx->stop_event = CreateEvent(NULL, TRUE, FALSE, NULL);
+    if (!ctx->stop_event) {
+        delete ctx;
+        return NULL;
+    }
+#else
     if (!async_event_init(&ctx->stop_event, true, false)) {
         delete ctx;
         return NULL;
-    }
-
-    if (!async_event_init(&ctx->done_event, true, false)) {
-        async_event_destroy(&ctx->stop_event);
-        delete ctx;
-        return NULL;
-    }
-
-#ifndef _WIN32
-    /* Create self-pipe for stop signaling so the worker can block in select() indefinitely
-     * and be woken by either stdin becoming readable or a stop signal. */
-    ctx->stop_pipe_fds[0] = ctx->stop_pipe_fds[1] = -1;
-    if (pipe(ctx->stop_pipe_fds) != 0) {
-        SPDLOG_WARN ("console_worker_init: failed to create stop pipe: {}", strerror(errno));
-        /* Non-fatal: worker falls back to polling with timeout */
     }
 #endif
 
@@ -412,11 +433,10 @@ extern "C" console_worker_context_t* console_worker_init(async_runtime_t* runtim
     if (!ctx->worker_started) {
         SPDLOG_ERROR ("failed to create console worker thread");
 #ifndef _WIN32
-        if (ctx->stop_pipe_fds[0] >= 0) close(ctx->stop_pipe_fds[0]);
-        if (ctx->stop_pipe_fds[1] >= 0) close(ctx->stop_pipe_fds[1]);
-#endif
-        async_event_destroy(&ctx->done_event);
         async_event_destroy(&ctx->stop_event);
+    #else
+        if (ctx->stop_event) CloseHandle(ctx->stop_event);
+#endif
         delete ctx;
         return NULL;
     }
@@ -439,7 +459,7 @@ extern "C" bool console_worker_shutdown(console_worker_context_t* ctx, int timeo
         wait_timeout = -1;
     }
 
-    bool stopped = async_event_wait(&ctx->done_event, wait_timeout);
+    bool stopped = console_worker_wait_done(ctx, wait_timeout);
     if (stopped && ctx->worker.joinable()) {
         ctx->worker.join();
         ctx->worker_started = false;
@@ -458,7 +478,7 @@ extern "C" void console_worker_destroy(console_worker_context_t* ctx) {
 
     if (ctx->worker_started) {
         console_worker_signal_stop(ctx);
-        (void)async_event_wait(&ctx->done_event, -1);
+        (void)console_worker_wait_done(ctx, -1);
         if (ctx->worker.joinable()) {
             ctx->worker.join();
         }
@@ -466,18 +486,13 @@ extern "C" void console_worker_destroy(console_worker_context_t* ctx) {
     }
 
 #ifndef _WIN32
-    if (ctx->stop_pipe_fds[0] >= 0) {
-        close(ctx->stop_pipe_fds[0]);
-        ctx->stop_pipe_fds[0] = -1;
-    }
-    if (ctx->stop_pipe_fds[1] >= 0) {
-        close(ctx->stop_pipe_fds[1]);
-        ctx->stop_pipe_fds[1] = -1;
+    async_event_destroy(&ctx->stop_event);
+#else
+    if (ctx->stop_event) {
+        CloseHandle(ctx->stop_event);
+        ctx->stop_event = NULL;
     }
 #endif
-
-    async_event_destroy(&ctx->done_event);
-    async_event_destroy(&ctx->stop_event);
 
     delete ctx;
 }
