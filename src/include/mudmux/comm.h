@@ -8,10 +8,12 @@
 #include "mudmux_export.h"
 #include "async.h"
 
-#define C_SOCKET_CLOSING    0x80000000
+#define C_CLOSING           0x80000000
 #define C_SOCKET_LISTENING  0x40000000
 #define C_SOCKET_READABLE   0x20000000
 #define C_SOCKET_WRITABLE   0x10000000
+#define C_LINE_INPUT        0x08000000
+#define C_CLIENT_ECHO       0x04000000
 #define C_BUFFERED_WRITE    0x00000001
 
 typedef struct comm_abstract_s comm_abstract_t;
@@ -45,29 +47,30 @@ typedef struct mudmux_comm_api_s {
     void (*clear_flags)(comm_abstract_t *comm, uint32_t flags);
     void (*buffered_write)(comm_abstract_t *comm, const void *buf, size_t len);
     bool (*close)(async_runtime_t* runtime, int slot);
+    bool (*set_line_input)(int slot, bool echo);
+    bool (*set_char_input)(int slot);
+    bool (*set_echo)(int slot, bool echo);
+    bool (*enable_virtual_terminal)(int slot);
 } mudmux_comm_api_t;
 
 #ifdef mudmux_EXPORTS
-/* internal linkage */
-#include "comm/abstract.h"
-#include "comm/accept.h"
-#include "comm/console.h"
-#include "comm/file_input.h"
-#include "comm/inbound.h"
 #include "comm/outbound.h"
 #else
 /* public interface */
-#define comm_max_slot              mudmux_comm_api->max_slot
-#define comm_abstract_add_bio      mudmux_comm_api->add_bio
-#define comm_abstract_add_file     mudmux_comm_api->add_file
-#define comm_abstract_get          mudmux_comm_api->get
-#define comm_abstract_remove       mudmux_comm_api->remove
-#define comm_abstract_cleanup      mudmux_comm_api->cleanup
-#define comm_get_flags             mudmux_comm_api->get_flags
-#define comm_set_flags             mudmux_comm_api->set_flags
-#define comm_clear_flags           mudmux_comm_api->clear_flags
-#define comm_buffered_write        mudmux_comm_api->buffered_write
-#define comm_close                 mudmux_comm_api->close
+#define comm_max_slot                   mudmux_comm_api->max_slot
+#define comm_abstract_add_bio           mudmux_comm_api->add_bio
+#define comm_abstract_add_file          mudmux_comm_api->add_file
+#define comm_abstract_get               mudmux_comm_api->get
+#define comm_abstract_remove            mudmux_comm_api->remove
+#define comm_abstract_cleanup           mudmux_comm_api->cleanup
+#define comm_get_flags                  mudmux_comm_api->get_flags
+#define comm_set_flags                  mudmux_comm_api->set_flags
+#define comm_clear_flags                mudmux_comm_api->clear_flags
+#define comm_buffered_write             mudmux_comm_api->buffered_write
+#define comm_close                      mudmux_comm_api->close
+#define comm_set_line_input             mudmux_comm_api->set_line_input
+#define comm_set_char_input             mudmux_comm_api->set_char_input
+#define comm_enable_virtual_terminal    mudmux_comm_api->enable_virtual_terminal
 #endif
 
 #ifdef __cplusplus

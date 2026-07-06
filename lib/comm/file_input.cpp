@@ -94,8 +94,7 @@ extern "C" bool comm_init_async_file_input (async_runtime_t *runtime, int slot) 
     }
     
     // invoke connect hook for file input user
-    mudmux_invoke_hook (MUDMUX_HOOK_CONNECT,
-        async_runtime_get_context(runtime), slot, nullptr, 0);
+    comm_invoke_connect (runtime, slot);
     
     return true;
 }

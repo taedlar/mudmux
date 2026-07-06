@@ -84,7 +84,27 @@ Logic-layer hooks can proactively close a communication slot via `comm_close(run
 
 - Typical usage: call from `MUDMUX_HOOK_MESSAGE_INBOUND` when processing a command like `quit`/`exit` (see `src/main.cpp`).
 - `runtime` may be `nullptr`; `comm_close()` resolves the current runtime internally.
-- First close request sets `C_SOCKET_CLOSING` and invokes `MUDMUX_HOOK_DISCONNECT` once, so logic code can run disconnect cleanup.
+- First close request sets `C_CLOSING` and invokes `MUDMUX_HOOK_DISCONNECT` once, so logic code can run disconnect cleanup.
 - If outbound data is still buffered (`C_BUFFERED_WRITE`), close is deferred until flush completes; in this case `comm_close()` returns `false`.
 - For console slot (`COMM_SLOT_CONSOLE`), close is coordinated through console EOF signaling and may also return `false` until final teardown finishes.
 - When the slot is already gone or fully removed, `comm_close()` returns `true`.
+
+### Input Mode Control
+
+Logic-layer hooks can switch the input mode and echo behaviour of a slot using three functions from `mudmux/comm.h`:
+
+| Function | Description |
+|----------|-------------|
+| `comm_set_line_input(slot, echo)` | Switch to cooked/line-input mode (TELNET line mode, `termios` `ICANON`, Windows cooked). `echo` controls local character echo. |
+| `comm_set_char_input(slot)` | Switch to single-character (raw) input mode. Echo is always disabled; call `comm_set_echo()` to re-enable it. On Windows, `ENABLE_VIRTUAL_TERMINAL_INPUT` is set so ANSI escape sequences for special keys are delivered. |
+| `comm_set_echo(slot, echo)` | Enable or disable client echo without changing the current input mode. |
+
+All three functions support `COMM_SLOT_CONSOLE` as well as network slots and return `true` on success.
+
+### Virtual Terminal Output (`comm_enable_virtual_terminal`)
+
+Logic-layer hooks can enable ANSI/VT100 output processing on a slot via `comm_enable_virtual_terminal(slot)` from `mudmux/comm.h`.
+
+- No-op on Linux/POSIX where VT processing is always active.
+- On Windows, sets `ENABLE_VIRTUAL_TERMINAL_PROCESSING` (plus `ENABLE_PROCESSED_OUTPUT` and `ENABLE_WRAP_AT_EOL_OUTPUT`) on the console stdout so that ANSI escape sequences in outbound data are rendered correctly.
+- Supports `COMM_SLOT_CONSOLE` as well as network slots; returns `true` on success.

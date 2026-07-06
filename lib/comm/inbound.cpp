@@ -7,11 +7,21 @@
 #include "abstract.h"
 #include "mudmux/hooks.h"
 
-int comm_invoke_inbound_message (
-    async_runtime_t* runtime,
-    int slot,
-    const void* data,
-    size_t size) {
+int comm_invoke_connect (async_runtime_t* runtime, int slot) {
+    if (!runtime || slot < 0) {
+        return -1;
+    }
+
+    return mudmux_invoke_hook (
+        MUDMUX_HOOK_CONNECT,
+        async_runtime_get_context(runtime),
+        slot,
+        nullptr,
+        0
+	);
+}
+
+int comm_invoke_inbound_message (async_runtime_t* runtime, int slot, const void* data, size_t size) {
     if (!runtime || !data || size == 0) {
         return -1;
     }
