@@ -18,7 +18,19 @@
 #ifndef ASYNC_RUNTIME_H
 #define ASYNC_RUNTIME_H
 
-#include "socket_intf.h"
+#ifdef _WIN32
+    /* winsock */
+    #include <winsock2.h>
+    typedef SOCKET socket_fd_t;
+    #define INVALID_SOCKET_FD           INVALID_SOCKET
+#else
+    /* POSIX */
+    #include <sys/socket.h>
+    #include <netinet/in.h>
+    #include <arpa/inet.h>
+    typedef int socket_fd_t;
+    #define INVALID_SOCKET_FD           -1
+#endif
 
 #ifdef __cplusplus
 extern "C" {

@@ -11,12 +11,10 @@ target_sources(async INTERFACE
         async_queue.h
         async_runtime.h
         console_worker.h
-        socket_intf.h
 )
 target_compile_definitions(async PRIVATE mudmux_EXPORTS)
 
 target_sources(async PRIVATE
-    socket_intf.cpp
     async_event.cpp
     async_queue.cpp
     console_worker.cpp

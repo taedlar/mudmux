@@ -135,8 +135,8 @@ void comm_flush (async_runtime_t* runtime, int slot) {
         obb = next_buffer;
     }
 
-    socket_fd_t fd = INVALID_SOCKET_FD;
-    if (BIO_get_fd(comm->wbio, reinterpret_cast<int*>(&fd)) <= 0 || fd == INVALID_SOCKET_FD) {
+    socket_fd_t fd {INVALID_SOCKET_FD};
+    if (!comm_bio_get_socket_fd(comm->wbio, &fd)) {
         // This can happen on console user because the wbio is a FILE* (stdout) and BIO does not
         // support BIO_get_fd for FILE* BIOs. In this case, we cannot modify the async runtime
         // events, but we can still flush the data.
@@ -163,8 +163,8 @@ void comm_flush (async_runtime_t* runtime, int slot) {
         comm_clear_flags(comm, C_BUFFERED_WRITE);
 
         if (comm_get_flags(comm) & C_CLOSING) {
-            socket_fd_t fd = INVALID_SOCKET_FD;
-            if (comm->wbio && BIO_get_fd(comm->wbio, reinterpret_cast<int*>(&fd)) > 0 && fd != INVALID_SOCKET_FD) {
+            socket_fd_t fd {INVALID_SOCKET_FD};
+            if (comm->wbio && comm_bio_get_socket_fd(comm->wbio, &fd)) {
                 SPDLOG_DEBUG ("comm slot has C_CLOSING flag set, sending shutdown signal to peer");
                 BIO_shutdown_wr(comm->wbio); // shutdown write side of the socket and expect the peer to close the connection
             }
@@ -200,10 +200,10 @@ bool comm_close (async_runtime_t* runtime, int slot) {
         return false;
     }
 
-    socket_fd_t fd = INVALID_SOCKET_FD;
-    if (comm->rbio && BIO_get_fd(comm->rbio, reinterpret_cast<int*>(&fd)) > 0 && fd != INVALID_SOCKET_FD)
+    socket_fd_t fd {INVALID_SOCKET_FD};
+    if (comm->rbio && comm_bio_get_socket_fd(comm->rbio, &fd))
         async_runtime_remove (runtime, fd);
-    if (comm->wbio && BIO_get_fd(comm->wbio, reinterpret_cast<int*>(&fd)) > 0 && fd != INVALID_SOCKET_FD)
+    if (comm->wbio && comm_bio_get_socket_fd(comm->wbio, &fd))
         async_runtime_remove (runtime, fd);
 
     if (slot == COMM_SLOT_CONSOLE) {

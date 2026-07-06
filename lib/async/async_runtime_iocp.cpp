@@ -10,8 +10,11 @@
 #endif /* HAVE_CONFIG_H */
 
 #include "async_runtime.h"
-#include "console_worker.h"
+
 #include <atomic>
+#pragma comment(lib, "ws2_32.lib")
+
+#include "console_worker.h"
 
 /* Maximum text buffer size */
 #ifndef MAX_TEXT
