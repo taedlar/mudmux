@@ -8,6 +8,10 @@
 #include <mutex>
 #include <thread>
 #include <openssl/bio.h>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
 
 #include "abstract.h"
 #include "inbound.h"
@@ -97,6 +101,7 @@ extern "C" void comm_shutdown_console (async_runtime_t *runtime) {
     }
 }
 
+#ifdef _WIN32
 bool comm_enable_virtual_terminal (int slot) {
     HANDLE handle = GetStdHandle (STD_OUTPUT_HANDLE);
     if (handle == INVALID_HANDLE_VALUE || handle == NULL)
@@ -114,6 +119,12 @@ bool comm_enable_virtual_terminal (int slot) {
     }
     return true;
 }
+#else
+bool comm_enable_virtual_terminal (int slot) {
+    (void)slot;
+    return true; // no-op on Linux/Unix, ANSI escape sequences are always supported
+}
+#endif
 
 extern "C" int comm_process_console_input (async_runtime_t *runtime, bool allow_reconnect) {
     bool disconnected = false;

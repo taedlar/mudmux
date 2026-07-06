@@ -251,8 +251,4 @@ bool comm_set_echo (int slot, bool echo) {
     return true;
 }
 
-bool comm_enable_virtual_terminal (int slot) {
-    (void)slot;
-    return true; // no-op on Linux/Unix, ANSI escape sequences are always supported
-}
 #endif
