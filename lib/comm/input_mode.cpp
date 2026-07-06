@@ -14,6 +14,10 @@
 #include <termios.h>
 #endif
 
+#ifdef HAVE_UNISTD_H
+#include <unistd.h>
+#endif
+
 #include "abstract.h"
 #include "async/console_worker.h"
 #include "mudmux/comm.h"
