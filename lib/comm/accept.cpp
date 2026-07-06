@@ -8,6 +8,7 @@
 #include <openssl/bio.h>
 
 #include "abstract.h"
+#include "inbound.h"
 #include "mudmux/hooks.h"
 #include "mudmux/comm.h"
 
@@ -202,14 +203,7 @@ int comm_process_listener_event (async_runtime_t* runtime, int listener_slot, so
 	}
 #endif
 
-	// invoke connect hook for the new connection
-	mudmux_invoke_hook (
-		MUDMUX_HOOK_CONNECT,
-		async_runtime_get_context (runtime),
-		accepted_slot,
-		nullptr,
-		0);
+	comm_invoke_connect (runtime, accepted_slot);
 
 	return accepted_slot;
 }
-

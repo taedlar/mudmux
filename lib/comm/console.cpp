@@ -62,8 +62,7 @@ extern "C" bool comm_init_console (async_runtime_t *runtime) {
     if (console_type == CONSOLE_TYPE_REAL) {
         SPDLOG_INFO ("----- connecting console user");
     }
-    mudmux_invoke_hook (MUDMUX_HOOK_CONNECT,
-        async_runtime_get_context(runtime), COMM_SLOT_CONSOLE, nullptr, 0); // invoke connect hook for console user
+    comm_invoke_connect (runtime, COMM_SLOT_CONSOLE);
     return true;
 }
 
@@ -133,8 +132,7 @@ extern "C" int comm_process_console_input (async_runtime_t *runtime, bool allow_
                     return -1;
                 }
                 async_queue_clear (console_queue); // clear any pending lines in the queue
-                mudmux_invoke_hook (MUDMUX_HOOK_CONNECT,
-                    async_runtime_get_context(runtime), COMM_SLOT_CONSOLE, nullptr, 0); // invoke connect hook for console user
+                comm_invoke_connect (runtime, COMM_SLOT_CONSOLE);
                 return 0;
             }
         }

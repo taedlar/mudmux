@@ -4,6 +4,15 @@
 
 #include "input_mode.h"
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
+
+#ifdef HAVE_TERMIOS_H
+#include <termios.h>
+#endif
+
 #include "abstract.h"
 #include "async/console_worker.h"
 #include "mudmux/comm.h"
@@ -121,8 +130,6 @@ bool comm_enable_virtual_terminal (int slot) {
 /* Non-Windows (POSIX) */
 
 #ifdef HAVE_TERMIOS_H
-#include <termios.h>
-
 /**
  * @brief Apply terminal settings without data loss for pipes.
  *
@@ -166,40 +173,60 @@ bool comm_set_line_input (int slot, bool echo) {
     return true;
 }
 
-bool comm_set_echo (int slot, bool echo) {
-#ifdef HAVE_TERMIOS_H
-    struct termios tio;
-    if (tcgetattr(STDIN_FILENO, &tio) != 0)
-        return false;
-    if (echo)
-        tio.c_lflag |= ECHO;
-    else
-        tio.c_lflag &= ~ECHO;
-    posix_tcsetattr(STDIN_FILENO, &tio);
-    return true;
-#else
-    (void)echo;
-    return false;
-#endif
-}
-
 bool comm_set_char_input(int slot) {
+    auto comm = comm_abstract_get(slot);
+    switch (slot) {
+    case COMM_SLOT_CONSOLE:
 #ifdef HAVE_TERMIOS_H
-    struct termios tio;
-    if (tcgetattr(STDIN_FILENO, &tio) != 0)
-        return false;
-    /* disable canonical mode and echo: input character is immediately available for read() */
-    tio.c_lflag &= ~(ICANON | ECHO);
-    tio.c_cc[VMIN] = 0;  /* use polling as like O_NONBLOCK was set */
-    tio.c_cc[VTIME] = 0; /* no timeout */
-    posix_tcsetattr(STDIN_FILENO, &tio);
-    return true;
+        struct termios tio;
+        if (tcgetattr (STDIN_FILENO, &tio) != 0)
+            return false;
+        /* disable canonical mode and echo: input character is immediately available for read() */
+        tio.c_lflag &= ~(ICANON | ECHO);
+        tio.c_cc[VMIN] = 0;  /* use polling as like O_NONBLOCK was set */
+        tio.c_cc[VTIME] = 0; /* no timeout */
+        posix_tcsetattr (STDIN_FILENO, &tio);
+        break;
 #else
-    return false;
+        (void)slot;
+        return false;
 #endif
+    default:
+        return false;
+    }
+    if (comm)
+        comm_clear_flags (comm, C_LINE_INPUT); // for query with comm_get_flags() & C_LINE_INPUT
+    return true;
 }
 
-bool comm_enable_virtual_terminal(int slot) {
-    return false;
+bool comm_set_echo (int slot, bool echo) {
+    auto comm = comm_abstract_get (slot);
+    switch (slot) {
+    case COMM_SLOT_CONSOLE:
+#ifdef HAVE_TERMIOS_H
+        struct termios tio;
+        if (tcgetattr(STDIN_FILENO, &tio) != 0)
+            return false;
+        if (echo)
+            tio.c_lflag |= ECHO;
+        else
+            tio.c_lflag &= ~ECHO;
+        posix_tcsetattr(STDIN_FILENO, &tio);
+        break;
+#else
+        (void)echo;
+        return false;
+#endif
+    default:
+        return false;
+    }
+    if (comm)
+        comm_set_flags (comm, echo ? C_CLIENT_ECHO : 0); // for query with comm_get_flags() & C_CLIENT_ECHO
+    return true;
+}
+
+bool comm_enable_virtual_terminal (int slot) {
+    (void)slot;
+    return true; // no-op on Linux/Unix, ANSI escape sequences are always supported
 }
 #endif

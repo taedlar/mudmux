@@ -13,6 +13,7 @@
 #define C_SOCKET_READABLE   0x20000000
 #define C_SOCKET_WRITABLE   0x10000000
 #define C_LINE_INPUT        0x08000000
+#define C_CLIENT_ECHO       0x04000000
 #define C_BUFFERED_WRITE    0x00000001
 
 typedef struct comm_abstract_s comm_abstract_t;
