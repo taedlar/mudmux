@@ -97,6 +97,24 @@ extern "C" void comm_shutdown_console (async_runtime_t *runtime) {
     }
 }
 
+bool comm_enable_virtual_terminal (int slot) {
+    HANDLE handle = GetStdHandle (STD_OUTPUT_HANDLE);
+    if (handle == INVALID_HANDLE_VALUE || handle == NULL)
+        return false;
+
+    DWORD mode;
+    if (!GetConsoleMode(handle, &mode))
+        return false;
+
+    SetConsoleOutputCP (CP_UTF8);
+    mode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING | ENABLE_PROCESSED_OUTPUT | ENABLE_WRAP_AT_EOL_OUTPUT;
+    if (!SetConsoleMode(handle, mode)) {
+        SPDLOG_WARN ("SetConsoleMode() failed for console stdout: {}", GetLastError());
+        return false;
+    }
+    return true;
+}
+
 extern "C" int comm_process_console_input (async_runtime_t *runtime, bool allow_reconnect) {
     bool disconnected = false;
     // check EOF on console worker and handle disconnect/re-connect if needed

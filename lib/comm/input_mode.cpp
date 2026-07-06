@@ -4,6 +4,7 @@
 
 #include "input_mode.h"
 
+#include <cstdlib>
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -75,11 +76,19 @@ bool comm_set_line_input (int slot, bool echo) {
     auto comm = comm_abstract_get(slot);
     switch (slot) {
     case COMM_SLOT_CONSOLE: {
+        /*
+         * On Windows we use cooked mode (ENABLE_LINE_INPUT + ENABLE_PROCESSED_INPUT + ENABLE_ECHO_INPUT)
+         * to get canonical line input with echo. This is the typical behavior a MUD server would expect
+         * from a terminal.
+         *
+         * See https://learn.microsoft.com/en-us/windows/console/high-level-console-modes 
+         */
         DWORD set_bits = ENABLE_LINE_INPUT | ENABLE_PROCESSED_INPUT | (echo ? ENABLE_ECHO_INPUT : 0);
         DWORD clear_bits = ENABLE_VIRTUAL_TERMINAL_INPUT | (echo ? 0 : ENABLE_ECHO_INPUT);
         if (!set_console_input_mode (set_bits, clear_bits))
             return false;
-        SPDLOG_DEBUG ("console input mode set: C_LINE_INPUT was {}, echo={}", (comm ? (comm_get_flags(comm) & C_LINE_INPUT) != 0 : false), echo);
+        SPDLOG_DEBUG ("console input mode set: C_LINE_INPUT was {}, echo={}",
+            (comm ? (comm_get_flags(comm) & C_LINE_INPUT) != 0 : false), echo);
         break;
     }
     default:
@@ -87,45 +96,58 @@ bool comm_set_line_input (int slot, bool echo) {
     }
 
     if (comm)
-        comm_set_flags (comm, C_LINE_INPUT); // for query with comm_get_flags() & C_LINE_INPUT
+        comm_set_flags (comm, C_LINE_INPUT);
     return true;
 }
 
 bool comm_set_char_input (int slot) {
-    // Also enables Windows 10 ANSI processing to allow reading of virtual terminal sequences for special keys.
-    // @see https://learn.microsoft.com/en-us/windows/console/console-virtual-terminal-sequences
-    return set_console_input_mode (
+    /*
+     * On Windows we use ENABLE_PROCESSED_INPUT + ENABLE_VIRTUAL_TERMINAL_INPUT
+     * to get character-at-a-time input without echo.
+     *
+     * - Ctrl-C still works as a signal to terminate the process (ENABLE_PROCESSED_INPUT)
+     * - ANSI escape sequences are recognized to support special keys (ENABLE_VIRTUAL_TERMINAL_INPUT)
+     * - Echo is disabled (clears ENABLE_ECHO_INPUT) to prevent ANSI escape sequences from being printed
+     *
+     * See https://learn.microsoft.com/en-us/windows/console/console-virtual-terminal-sequences
+     */
+    bool ret = set_console_input_mode (
         /* set */ ENABLE_PROCESSED_INPUT | ENABLE_VIRTUAL_TERMINAL_INPUT,
         /* clear */ ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT
     );
+    if (ret) {
+        auto comm = comm_abstract_get(slot);
+        if (comm)
+            comm_clear_flags (comm, C_LINE_INPUT | C_CLIENT_ECHO);
+    }
+    return ret;
 }
 
 bool comm_set_echo (int slot, bool echo) {
-    DWORD set_bits = echo ? ENABLE_ECHO_INPUT : 0;
-    DWORD clear_bits = echo ? 0 : ENABLE_ECHO_INPUT;
-    return set_console_input_mode (set_bits, clear_bits);
-}
-
-bool comm_enable_virtual_terminal (int slot) {
-    HANDLE handle;
-    DWORD mode;
-
-    handle = GetStdHandle(STD_OUTPUT_HANDLE);
-    if (handle == INVALID_HANDLE_VALUE || handle == NULL)
-        return false;
-
-    if (!GetConsoleMode(handle, &mode))
-        return false;
-
-    SetConsoleOutputCP (CP_UTF8);
-    mode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING | ENABLE_PROCESSED_OUTPUT | ENABLE_WRAP_AT_EOL_OUTPUT;
-    if (!SetConsoleMode(handle, mode)) {
-        SPDLOG_WARN ("SetConsoleMode() failed for console stdout: {}", GetLastError());
+    auto comm = comm_abstract_get(slot);
+    bool result = false;
+    switch (slot) {
+    case COMM_SLOT_CONSOLE:
+        if (echo)
+            result = set_console_input_mode (ENABLE_ECHO_INPUT, 0);
+        else
+            result = set_console_input_mode (0, ENABLE_ECHO_INPUT);
+        break;
+        if (!result)
+            return false;
+        break;
+    default:
         return false;
     }
-
-    return true;
+    if (comm) {
+        if (echo)
+            comm_set_flags (comm, C_CLIENT_ECHO);
+        else
+            comm_clear_flags (comm, C_CLIENT_ECHO);
+    }
+    return result;
 }
+
 #else
 /* Non-Windows (POSIX) */
 
@@ -169,7 +191,7 @@ bool comm_set_line_input (int slot, bool echo) {
     }
 
     if (comm)
-        comm_set_flags (comm, C_LINE_INPUT); // for query with comm_get_flags() & C_LINE_INPUT
+        comm_set_flags (comm, C_LINE_INPUT);
     return true;
 }
 
@@ -195,7 +217,7 @@ bool comm_set_char_input(int slot) {
         return false;
     }
     if (comm)
-        comm_clear_flags (comm, C_LINE_INPUT); // for query with comm_get_flags() & C_LINE_INPUT
+        comm_clear_flags (comm, C_LINE_INPUT | C_CLIENT_ECHO);
     return true;
 }
 
@@ -220,8 +242,12 @@ bool comm_set_echo (int slot, bool echo) {
     default:
         return false;
     }
-    if (comm)
-        comm_set_flags (comm, echo ? C_CLIENT_ECHO : 0); // for query with comm_get_flags() & C_CLIENT_ECHO
+    if (comm) {
+        if (echo)
+            comm_set_flags (comm, C_CLIENT_ECHO);
+        else
+            comm_clear_flags (comm, C_CLIENT_ECHO);
+    }
     return true;
 }
 

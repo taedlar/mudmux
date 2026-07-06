@@ -30,13 +30,4 @@ bool comm_set_char_input (int slot);
  */
 bool comm_set_echo (int slot, bool echo);
 
-/**
- * @brief Enables virtual terminal (tty or ANSI/VT100) processing for the communication slot.
- * @param slot Communication slot to enable virtual terminal processing. Supports special slots
- *      such as COMM_SLOT_CONSOLE for the process console stdout. This is usually a no-op on
- *      Linux/Unix, but on Windows it enables ANSI escape sequence processing for the console.
- * @returns true if success, false otherwise.
- */
-bool comm_enable_virtual_terminal (int slot);
-
 #endif /* COMM_INPUT_MODE_H */
