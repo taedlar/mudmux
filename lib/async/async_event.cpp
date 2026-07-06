@@ -7,42 +7,41 @@
 #endif /* HAVE_CONFIG_H */
 
 #include "async_event.h"
+
 #include <new>
 
 #ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#elif defined(__linux__)
-#include <chrono>
-#include <mutex>
-#include <poll.h>
-#include <sys/eventfd.h>
-#include <unistd.h>
-#include <errno.h>
+    #define WIN32_LEAN_AND_MEAN
+    #include <windows.h>
 #else
-#include <mutex>
-#include <condition_variable>
-#include <chrono>
+    #include <chrono>
+    #include <errno.h>
+    #include <fcntl.h>
+    #include <mutex>
+    #include <poll.h>
+    #include <unistd.h>
+    #if defined(__linux__)
+    #include <sys/eventfd.h>
+    #endif
 #endif
+
+#include "mudmux/async.h"
 
 #ifdef _WIN32
 /* Windows: Use native event for WaitForMultipleObjects compatibility */
 struct EventImpl {
     HANDLE event;
 };
-#elif defined(__linux__)
-/* Linux: Use eventfd for pollable signaling with userspace reset semantics. */
-struct EventImpl {
-    int event_fd;
-    std::mutex state_mutex;
-    bool signaled;
-    bool manual_reset;
-};
 #else
-/* POSIX: Use C++11 condition_variable */
+/* POSIX: Use a pollable kernel object with userspace reset semantics. */
 struct EventImpl {
-    std::mutex mtx;
-    std::condition_variable cv;
+#if defined(__linux__)
+    int event_fd;
+#else
+    int read_fd;
+    int write_fd;
+#endif
+    std::mutex state_mutex;
     bool signaled;
     bool manual_reset;
 };
@@ -57,31 +56,87 @@ static inline EventImpl* get_event(async_event_t* event) {
     return reinterpret_cast<EventImpl*>(event);
 }
 
+#ifndef _WIN32
+static int get_poll_fd(const EventImpl* impl) {
 #if defined(__linux__)
-static bool read_eventfd_once(int event_fd, uint64_t* value) {
-    ssize_t result;
-
-    do {
-        result = read(event_fd, value, sizeof(*value));
-    } while (result < 0 && errno == EINTR);
-
-    return result == static_cast<ssize_t>(sizeof(*value));
+    return impl->event_fd;
+#else
+    return impl->read_fd;
+#endif
 }
 
-static bool write_eventfd_once(int event_fd, uint64_t value) {
+#if !defined(__linux__)
+static bool set_fd_flags(int fd) {
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags < 0) {
+        return false;
+    }
+
+    if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+        return false;
+    }
+
+    flags = fcntl(fd, F_GETFD, 0);
+    if (flags < 0) {
+        return false;
+    }
+
+    return fcntl(fd, F_SETFD, flags | FD_CLOEXEC) == 0;
+}
+#endif
+
+static bool read_signal_once(const EventImpl* impl, uint64_t* value) {
     ssize_t result;
 
+#if defined(__linux__)
+    uint64_t local_value = 0;
     do {
-        result = write(event_fd, &value, sizeof(value));
+        result = read(impl->event_fd, &local_value, sizeof(local_value));
+    } while (result < 0 && errno == EINTR);
+
+    if (result == static_cast<ssize_t>(sizeof(local_value)) && value) {
+        *value = local_value;
+    }
+
+    return result == static_cast<ssize_t>(sizeof(local_value));
+#else
+    unsigned char byte = 0;
+    do {
+        result = read(impl->read_fd, &byte, sizeof(byte));
+    } while (result < 0 && errno == EINTR);
+
+    if (result == static_cast<ssize_t>(sizeof(byte)) && value) {
+        *value = byte;
+    }
+
+    return result == static_cast<ssize_t>(sizeof(byte));
+#endif
+}
+
+static bool write_signal_once(const EventImpl* impl) {
+    ssize_t result;
+
+#if defined(__linux__)
+    uint64_t value = 1;
+    do {
+        result = write(impl->event_fd, &value, sizeof(value));
     } while (result < 0 && errno == EINTR);
 
     return result == static_cast<ssize_t>(sizeof(value));
+#else
+    unsigned char byte = 1;
+    do {
+        result = write(impl->write_fd, &byte, sizeof(byte));
+    } while (result < 0 && errno == EINTR);
+
+    return result == static_cast<ssize_t>(sizeof(byte));
+#endif
 }
 
-static void drain_eventfd(int event_fd) {
+static void drain_signal(const EventImpl* impl) {
     uint64_t value;
 
-    while (read_eventfd_once(event_fd, &value)) {
+    while (read_signal_once(impl, &value)) {
     }
 }
 
@@ -92,7 +147,7 @@ static bool consume_event_signal(EventImpl* impl) {
         return false;
     }
 
-    if (!read_eventfd_once(impl->event_fd, &value)) {
+    if (!read_signal_once(impl, &value)) {
         return false;
     }
 
@@ -103,8 +158,9 @@ static bool consume_event_signal(EventImpl* impl) {
 
 /* Event API */
 
-bool async_event_init(async_event_t* event, bool manual_reset, bool initial_state) {
-    if (!event) return false;
+bool async_event_init (async_event_t* event, bool manual_reset, bool initial_state) {
+    if (!event)
+        return false;
     
     try {
 #ifdef _WIN32
@@ -131,7 +187,7 @@ bool async_event_init(async_event_t* event, bool manual_reset, bool initial_stat
             manual_reset
         };
 
-        if (initial_state && !write_eventfd_once(event_fd, 1)) {
+        if (initial_state && !write_signal_once(get_event(event))) {
             get_event(event)->~EventImpl();
             close(event_fd);
             return false;
@@ -139,12 +195,32 @@ bool async_event_init(async_event_t* event, bool manual_reset, bool initial_stat
 
         return true;
 #else
+        int pipe_fds[2] = {-1, -1};
+        if (pipe(pipe_fds) != 0) {
+            return false;
+        }
+
+        if (!set_fd_flags(pipe_fds[0]) || !set_fd_flags(pipe_fds[1])) {
+            close(pipe_fds[0]);
+            close(pipe_fds[1]);
+            return false;
+        }
+
         new (event) EventImpl{
+            pipe_fds[0],
+            pipe_fds[1],
             std::mutex{},
-            std::condition_variable{},
             initial_state,
             manual_reset
         };
+
+        if (initial_state && !write_signal_once(get_event(event))) {
+            get_event(event)->~EventImpl();
+            close(pipe_fds[0]);
+            close(pipe_fds[1]);
+            return false;
+        }
+
         return true;
 #endif
     } catch (...) {
@@ -152,25 +228,33 @@ bool async_event_init(async_event_t* event, bool manual_reset, bool initial_stat
     }
 }
 
-void async_event_destroy(async_event_t* event) {
+void async_event_destroy (async_event_t* event) {
     if (event) {
-#ifdef _WIN32
         EventImpl* impl = get_event(event);
+#ifdef _WIN32
         if (impl->event) {
             CloseHandle(impl->event);
         }
 #elif defined(__linux__)
-        EventImpl* impl = get_event(event);
         if (impl->event_fd >= 0) {
             close(impl->event_fd);
             impl->event_fd = -1;
+        }
+#else
+        if (impl->read_fd >= 0) {
+            close(impl->read_fd);
+            impl->read_fd = -1;
+        }
+        if (impl->write_fd >= 0) {
+            close(impl->write_fd);
+            impl->write_fd = -1;
         }
 #endif
         get_event(event)->~EventImpl();
     }
 }
 
-void async_event_set(async_event_t* event) {
+void async_event_set (async_event_t* event) {
     if (!event) return;
     
 #ifdef _WIN32
@@ -178,7 +262,7 @@ void async_event_set(async_event_t* event) {
     if (impl->event) {
         SetEvent(impl->event);
     }
-#elif defined(__linux__)
+#else
     EventImpl* impl = get_event(event);
     std::lock_guard<std::mutex> lock(impl->state_mutex);
 
@@ -186,23 +270,13 @@ void async_event_set(async_event_t* event) {
         return;
     }
 
-    if (write_eventfd_once(impl->event_fd, 1)) {
+    if (write_signal_once(impl)) {
         impl->signaled = true;
-    }
-#else
-    EventImpl* impl = get_event(event);
-    std::lock_guard<std::mutex> lock(impl->mtx);
-    impl->signaled = true;
-    
-    if (impl->manual_reset) {
-        impl->cv.notify_all();  /* Wake all waiters for manual-reset */
-    } else {
-        impl->cv.notify_one();  /* Wake one waiter for auto-reset */
     }
 #endif
 }
 
-void async_event_reset(async_event_t* event) {
+void async_event_reset (async_event_t* event) {
     if (!event) return;
     
 #ifdef _WIN32
@@ -210,7 +284,7 @@ void async_event_reset(async_event_t* event) {
     if (impl->event) {
         ResetEvent(impl->event);
     }
-#elif defined(__linux__)
+#else
     EventImpl* impl = get_event(event);
     std::lock_guard<std::mutex> lock(impl->state_mutex);
 
@@ -218,16 +292,12 @@ void async_event_reset(async_event_t* event) {
         return;
     }
 
-    drain_eventfd(impl->event_fd);
-    impl->signaled = false;
-#else
-    EventImpl* impl = get_event(event);
-    std::lock_guard<std::mutex> lock(impl->mtx);
+    drain_signal(impl);
     impl->signaled = false;
 #endif
 }
 
-bool async_event_wait(async_event_t* event, int timeout_ms) {
+bool async_event_wait (async_event_t* event, int timeout_ms) {
     if (!event) return false;
     
     EventImpl* impl = get_event(event);
@@ -239,7 +309,7 @@ bool async_event_wait(async_event_t* event, int timeout_ms) {
     DWORD result = WaitForSingleObject(impl->event, timeout);
     
     return result == WAIT_OBJECT_0;
-#elif defined(__linux__)
+#else
     auto deadline = std::chrono::steady_clock::time_point::max();
     if (timeout_ms >= 0) {
         deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
@@ -276,7 +346,7 @@ bool async_event_wait(async_event_t* event, int timeout_ms) {
         }
 
         struct pollfd pfd;
-        pfd.fd = impl->event_fd;
+        pfd.fd = get_poll_fd(impl);
         pfd.events = POLLIN;
         pfd.revents = 0;
 
@@ -289,54 +359,17 @@ bool async_event_wait(async_event_t* event, int timeout_ms) {
             return poll_result > 0;
         }
     }
-#else
-    std::unique_lock<std::mutex> lock(impl->mtx);
-    
-    bool result;
-    
-    if (impl->signaled) {
-        /* Already signaled */
-        result = true;
-        if (!impl->manual_reset) {
-            impl->signaled = false;  /* Auto-reset */
-        }
-    } else if (timeout_ms == 0) {
-        /* Non-blocking check */
-        result = false;
-    } else if (timeout_ms < 0) {
-        /* Infinite wait */
-        impl->cv.wait(lock, [impl] { return impl->signaled; });
-        result = true;
-        if (!impl->manual_reset) {
-            impl->signaled = false;  /* Auto-reset */
-        }
-    } else {
-        /* Timed wait with proper spurious wakeup handling */
-        result = impl->cv.wait_for(
-            lock,
-            std::chrono::milliseconds(timeout_ms),
-            [impl] { return impl->signaled; }
-        );
-        
-        if (result && !impl->manual_reset) {
-            impl->signaled = false;  /* Auto-reset */
-        }
-    }
-    
-    return result;
 #endif
 }
 
-#if defined(__linux__)
-int async_event_get_fd(async_event_t* event) {
-    if (!event) return -1;
-    return get_event(event)->event_fd;
-}
-#endif
+async_wait_handle_t async_event_get_wait_handle(async_event_t* event) {
+    if (!event) {
+        return ASYNC_INVALID_WAIT_HANDLE;
+    }
 
 #ifdef _WIN32
-void* async_event_get_native_handle(async_event_t* event) {
-    if (!event) return NULL;
     return get_event(event)->event;
-}
+#else
+    return get_poll_fd(get_event(event));
 #endif
+}

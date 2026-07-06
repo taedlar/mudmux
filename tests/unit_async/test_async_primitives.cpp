@@ -8,7 +8,7 @@
 #include <future>
 #include <thread>
 
-#ifdef __linux__
+#ifndef _WIN32
 #include <poll.h>
 #endif
 
@@ -17,7 +17,7 @@
 
 namespace {
 
-#ifdef __linux__
+#ifndef _WIN32
 bool is_fd_readable(int fd) {
     pollfd pfd;
     pfd.fd = fd;
@@ -29,31 +29,35 @@ bool is_fd_readable(int fd) {
 
 TEST(AsyncEventTest, ManualResetStaysReadableUntilReset) {
     async_event_t event;
+    async_wait_handle_t handle;
 
     ASSERT_TRUE(async_event_init(&event, true, false));
-    EXPECT_GE(async_event_get_fd(&event), 0);
-    EXPECT_FALSE(is_fd_readable(async_event_get_fd(&event)));
+    handle = async_event_get_wait_handle(&event);
+    EXPECT_NE(handle, ASYNC_INVALID_WAIT_HANDLE);
+    EXPECT_FALSE(is_fd_readable(handle));
 
     async_event_set(&event);
-    EXPECT_TRUE(is_fd_readable(async_event_get_fd(&event)));
+    EXPECT_TRUE(is_fd_readable(handle));
     EXPECT_TRUE(async_event_wait(&event, 0));
-    EXPECT_TRUE(is_fd_readable(async_event_get_fd(&event)));
+    EXPECT_TRUE(is_fd_readable(handle));
 
     async_event_reset(&event);
-    EXPECT_FALSE(is_fd_readable(async_event_get_fd(&event)));
+    EXPECT_FALSE(is_fd_readable(handle));
 
     async_event_destroy(&event);
 }
 
 TEST(AsyncEventTest, AutoResetConsumesReadableState) {
     async_event_t event;
+    async_wait_handle_t handle;
 
     ASSERT_TRUE(async_event_init(&event, false, false));
+    handle = async_event_get_wait_handle(&event);
     async_event_set(&event);
 
-    EXPECT_TRUE(is_fd_readable(async_event_get_fd(&event)));
+    EXPECT_TRUE(is_fd_readable(handle));
     EXPECT_TRUE(async_event_wait(&event, 0));
-    EXPECT_FALSE(is_fd_readable(async_event_get_fd(&event)));
+    EXPECT_FALSE(is_fd_readable(handle));
     EXPECT_FALSE(async_event_wait(&event, 0));
 
     async_event_destroy(&event);

@@ -3,7 +3,6 @@
 add_library(async OBJECT)
 add_library(mudmux::async ALIAS async)
 
-target_compile_definitions(async PRIVATE mudmux_EXPORTS)
 target_sources(async INTERFACE
     FILE_SET HEADERS
     BASE_DIRS ${CMAKE_SOURCE_DIR}/lib
@@ -14,6 +13,7 @@ target_sources(async INTERFACE
         console_worker.h
         socket_intf.h
 )
+target_compile_definitions(async PRIVATE mudmux_EXPORTS)
 
 target_sources(async PRIVATE
     socket_intf.cpp
@@ -36,7 +36,10 @@ elseif(APPLE)
     )
 endif()
 
-target_link_libraries(async PRIVATE spdlog::spdlog)
+target_link_libraries(async PRIVATE
+    spdlog::spdlog
+    mudmux::headers
+)
 
 # Platform-specific libraries
 if (UNIX)
