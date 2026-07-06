@@ -73,12 +73,44 @@ void comm_flush(async_runtime_t *runtime, int slot);
 void comm_flush_all_outbound(async_runtime_t *runtime);
 bool comm_close(async_runtime_t *runtime, int slot);
 
+// Input mode control
+bool comm_set_line_input(int slot, bool echo);
+bool comm_set_char_input(int slot);
+bool comm_set_echo(int slot, bool echo);
+bool comm_enable_virtual_terminal(int slot);
+
 // Lifecycle
 int comm_abstract_remove(int slot);
 void comm_abstract_cleanup(void);
 ```
 
 `comm_close()` is also exposed to logic-layer code through `mudmux/comm.h` (`#define comm_close mudmux_comm_api->close`), so hooks can proactively close slots.
+
+### Input Mode API (`input_mode.h`)
+
+Three functions control the input mode and echo behaviour for a slot. They are exposed to logic-layer code through `mudmux/comm.h`:
+
+| Macro | Binding |
+|-------|---------|
+| `comm_set_line_input(slot, echo)` | `mudmux_comm_api->set_line_input` |
+| `comm_set_char_input(slot)` | `mudmux_comm_api->set_char_input` |
+| `comm_set_echo(slot, echo)` | `mudmux_comm_api->set_echo` |
+
+**`comm_set_line_input(slot, echo)`** — switches a slot to cooked/line-input mode (TELNET line mode, `termios` `ICANON`, Windows cooked). The `echo` parameter enables or disables local character echo. Use this as the default or to restore a slot after char-mode use.
+
+**`comm_set_char_input(slot)`** — switches a slot to single-character (raw) input mode. Client echo is always disabled by this call; call `comm_set_echo()` afterwards to re-enable it if needed. On Windows, `ENABLE_VIRTUAL_TERMINAL_INPUT` is enabled so that ANSI escape sequences for special keys are delivered.
+
+**`comm_set_echo(slot, echo)`** — adjusts client echo for a slot without changing the current input mode. Works for both console (`COMM_SLOT_CONSOLE`) and network slots.
+
+All three functions support `COMM_SLOT_CONSOLE` as well as network slots and return `true` on success.
+
+### Virtual Terminal Output API (`console.h`)
+
+`comm_enable_virtual_terminal(slot)` enables ANSI/VT100 output processing for the slot's output side. Exposed via `mudmux_comm_api->enable_virtual_terminal`.
+
+- No-op on Linux/POSIX where VT output processing is always active.
+- On Windows, sets `ENABLE_VIRTUAL_TERMINAL_PROCESSING`, `ENABLE_PROCESSED_OUTPUT`, and `ENABLE_WRAP_AT_EOL_OUTPUT` on the console stdout so that ANSI escape sequences in outbound data are rendered correctly.
+- Supports `COMM_SLOT_CONSOLE` as well as network slots; returns `true` on success.
 
 ### C++ Convenience Writer (`mudmux/comm.h`)
 
