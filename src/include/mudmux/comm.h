@@ -49,6 +49,7 @@ typedef struct mudmux_comm_api_s {
     bool (*close)(async_runtime_t* runtime, int slot);
     bool (*set_line_input)(int slot, bool echo);
     bool (*set_char_input)(int slot);
+    bool (*set_echo)(int slot, bool echo);
     bool (*enable_virtual_terminal)(int slot);
 } mudmux_comm_api_t;
 

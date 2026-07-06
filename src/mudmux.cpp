@@ -49,6 +49,7 @@ static void init_comm_api (void) {
     comm_api.close = comm_close;
     comm_api.set_line_input = comm_set_line_input;
     comm_api.set_char_input = comm_set_char_input;
+    comm_api.set_echo = comm_set_echo;
     comm_api.enable_virtual_terminal = comm_enable_virtual_terminal;
 
     mudmux_comm_api = &comm_api; // set global pointer to initialized struct
