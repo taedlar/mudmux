@@ -46,18 +46,9 @@ int comm_accept (async_runtime_t* runtime, const char* accept_name) {
 		return -1;
 	}
 
-	socket_fd_t bio_fd = -1;
-	if (BIO_get_fd(listener_bio, static_cast<int*>(&bio_fd)) <= 0 || bio_fd < 0) {
+	socket_fd_t listen_fd {INVALID_SOCKET_FD};
+	if (!comm_bio_get_socket_fd(listener_bio, &listen_fd)) {
 		SPDLOG_ERROR ("BIO_get_fd failed for {}", accept_name);
-		BIO_free(listener_bio);
-		return -1;
-	}
-	// Cast through uint32_t first to suppress sign extension on 64-bit Windows
-	// where SOCKET is ULONG_PTR. A direct cast of a signed int would sign-extend
-	// any handle with bit 31 set into an invalid 64-bit value.
-	socket_fd_t listen_fd = static_cast<socket_fd_t>(static_cast<uint32_t>(bio_fd));
-	if (listen_fd == INVALID_SOCKET_FD) {
-		SPDLOG_ERROR ("BIO_get_fd returned invalid socket fd for {}", accept_name);
 		BIO_free(listener_bio);
 		return -1;
 	}
@@ -71,7 +62,7 @@ int comm_accept (async_runtime_t* runtime, const char* accept_name) {
 
 	void* runtime_context = reinterpret_cast<void*>(static_cast<intptr_t>(slot));
 	if (async_runtime_add(runtime, listen_fd, EVENT_READ, runtime_context) < 0) {
-		SPDLOG_ERROR ("async_runtime_add(fd={}) failed for {}", listen_fd, accept_name);
+		SPDLOG_ERROR ("async_runtime_add (socket={}) failed for {}", listen_fd, accept_name);
 		comm_abstract_remove (slot);
 		return -1;
 	}
@@ -93,8 +84,15 @@ static int _accept_new_comm (int slot, socket_fd_t event_fd) {
 #ifdef _WIN32
     // Windows IOCP delivers the accepted fd directly in the event (proactive).
     // Unix epoll/poll only signal readability; accept() must be called to extract fd (reactive).
-    if (event_fd != INVALID_SOCKET_FD) {
-        BIO* accepted_bio = BIO_new_socket (static_cast<int>(event_fd), BIO_CLOSE);
+	if (event_fd != INVALID_SOCKET_FD) {
+		int bio_fd = -1;
+		if (!comm_socket_fd_to_bio_fd(event_fd, &bio_fd)) {
+			SPDLOG_ERROR("accepted socket fd {} cannot be represented as BIO int fd", event_fd);
+			closesocket(event_fd);
+			return -1;
+		}
+
+		BIO* accepted_bio = BIO_new_socket (bio_fd, BIO_CLOSE);
         if (!accepted_bio) {
             SPDLOG_ERROR("failed to create BIO for accepted window socket {}", event_fd);
             return -1;
@@ -142,15 +140,8 @@ int _async_poll_read (async_runtime_t* runtime, int slot) {
 		SPDLOG_WARN ("invalid arguments to _async_poll_read");
 		return -1;
 	}
-	// BIO_get_fd writes through int* — use an int intermediary and cast through
-	// uint32_t to avoid sign extension into the upper 32 bits on Windows.
-	socket_fd_t raw_fd = -1;
-	if (BIO_get_fd(rbio, reinterpret_cast<int*>(&raw_fd)) <= 0 || raw_fd < 0) {
-		SPDLOG_WARN ("invalid fd for slot {}", slot);
-		return -1;
-	}
-	socket_fd_t fd = static_cast<socket_fd_t>(static_cast<uint32_t>(raw_fd));
-	if (fd == INVALID_SOCKET_FD) {
+	socket_fd_t fd {INVALID_SOCKET_FD};
+	if (!comm_bio_get_socket_fd(rbio, &fd)) {
 		SPDLOG_WARN ("invalid fd for slot {}", slot);
 		return -1;
 	}
@@ -188,13 +179,12 @@ int comm_process_listener_event (async_runtime_t* runtime, int listener_slot, so
 
 #ifdef _WIN32
 	// [IOCP] post an initial IOCP read for the accepted socket to trigger the first read event
-	socket_fd_t accepted_raw_fd = -1;
-	if (BIO_get_fd(comm_abstract_get_rbio(accepted_slot), reinterpret_cast<int*>(&accepted_raw_fd)) <= 0 || accepted_raw_fd < 0) {
+	socket_fd_t accepted_fd {INVALID_SOCKET_FD};
+	if (!comm_bio_get_socket_fd(comm_abstract_get_rbio(accepted_slot), &accepted_fd)) {
 		SPDLOG_ERROR ("BIO_get_fd failed for accepted slot {}", accepted_slot);
 		comm_abstract_remove (accepted_slot);
 		return -1;
 	}
-	socket_fd_t accepted_fd = static_cast<socket_fd_t>(static_cast<uint32_t>(accepted_raw_fd));
 	if (async_runtime_post_read (runtime, accepted_fd, nullptr, 0) < 0) {
 		SPDLOG_ERROR ("failed to post initial read for fd {}", accepted_fd);
 		async_runtime_remove (runtime, accepted_fd);

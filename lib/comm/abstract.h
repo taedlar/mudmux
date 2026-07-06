@@ -1,6 +1,12 @@
 #ifndef COMM_ABSTRACT_H
 #define COMM_ABSTRACT_H
 
+#include <cstdint>
+#include <limits>
+#include <type_traits>
+
+#include "async/async_runtime.h"
+
 #include <openssl/bio.h>
 
 typedef struct outbound_buffer_s outbound_buffer_t;
@@ -15,6 +21,47 @@ static_assert(std::is_trivially_default_constructible_v<comm_abstract_t>,
     "comm_abstract_t must be trivially default constructible"); // for std::calloc to work correctly
 static_assert(std::is_trivially_copyable_v<comm_abstract_t>,
     "comm_abstract_t must be trivially copyable"); // for std::realloc to work correctly
+
+#ifdef _WIN32
+static inline socket_fd_t comm_bio_fd_to_socket_fd (int bio_fd) {
+    return static_cast<socket_fd_t>(static_cast<unsigned int>(bio_fd));
+}
+
+static inline bool comm_socket_fd_to_bio_fd (socket_fd_t fd, int* out_bio_fd) {
+    if (!out_bio_fd || fd == INVALID_SOCKET_FD)
+        return false;
+
+    if (fd > static_cast<socket_fd_t>((std::numeric_limits<int>::max)()))
+        return false;
+
+    *out_bio_fd = static_cast<int>(fd);
+    return true;
+}
+#else
+static inline socket_fd_t comm_bio_fd_to_socket_fd (int bio_fd) {
+    return static_cast<socket_fd_t>(bio_fd);
+}
+
+static inline bool comm_socket_fd_to_bio_fd (socket_fd_t fd, int* out_bio_fd) {
+    if (!out_bio_fd || fd == INVALID_SOCKET_FD)
+        return false;
+
+    *out_bio_fd = static_cast<int>(fd);
+    return true;
+}
+#endif
+
+static inline bool comm_bio_get_socket_fd (BIO* bio, socket_fd_t* out_fd) {
+    if (!bio || !out_fd)
+        return false;
+
+    int bio_fd = -1;
+    if (BIO_get_fd(bio, &bio_fd) <= 0 || bio_fd < 0)
+        return false;
+
+    *out_fd = comm_bio_fd_to_socket_fd(bio_fd);
+    return *out_fd != INVALID_SOCKET_FD;
+}
 
 #ifdef __cplusplus
 extern "C" {
