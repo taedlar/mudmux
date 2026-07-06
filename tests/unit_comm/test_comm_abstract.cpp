@@ -3,8 +3,10 @@
 #endif
 
 #include <gtest/gtest.h>
+#include <limits>
 #include <openssl/bio.h>
 
+#include "comm/abstract.h"
 #include "mudmux/mudmux.h"
 #include "mudmux/comm.h"
 
@@ -31,3 +33,29 @@ TEST(CommTest, AbstractRemove) {
     EXPECT_EQ(comm_abstract_remove(-1), -1);
     EXPECT_EQ(comm_abstract_remove(100), -1);
 }
+
+TEST(CommTest, SocketFdToBioFdRejectsInvalidSocket) {
+    int bio_fd = 123;
+    EXPECT_FALSE(comm_socket_fd_to_bio_fd(INVALID_SOCKET_FD, &bio_fd));
+    EXPECT_EQ(bio_fd, 123);
+}
+
+TEST(CommTest, SocketFdToBioFdRoundTripsIntMax) {
+    const int source_bio_fd = (std::numeric_limits<int>::max)();
+    const socket_fd_t socket_fd = comm_bio_fd_to_socket_fd(source_bio_fd);
+
+    int round_trip_bio_fd = -1;
+    ASSERT_TRUE(comm_socket_fd_to_bio_fd(socket_fd, &round_trip_bio_fd));
+    EXPECT_EQ(round_trip_bio_fd, source_bio_fd);
+}
+
+#ifdef _WIN32
+TEST(CommTest, SocketFdToBioFdRejectsValuesAboveIntMax) {
+    const socket_fd_t oversized_socket_fd =
+        static_cast<socket_fd_t>(static_cast<unsigned long long>((std::numeric_limits<int>::max)()) + 1ull);
+
+    int bio_fd = -1;
+    EXPECT_FALSE(comm_socket_fd_to_bio_fd(oversized_socket_fd, &bio_fd));
+    EXPECT_EQ(bio_fd, -1);
+}
+#endif

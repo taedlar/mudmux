@@ -4,10 +4,9 @@
 #include <cstdint>
 #include <limits>
 #include <type_traits>
+#include <openssl/bio.h>
 
 #include "async/async_runtime.h"
-
-#include <openssl/bio.h>
 
 typedef struct outbound_buffer_s outbound_buffer_t;
 
@@ -22,6 +21,7 @@ static_assert(std::is_trivially_default_constructible_v<comm_abstract_t>,
 static_assert(std::is_trivially_copyable_v<comm_abstract_t>,
     "comm_abstract_t must be trivially copyable"); // for std::realloc to work correctly
 
+/* socket type BIO helpers */
 #ifdef _WIN32
 static inline socket_fd_t comm_bio_fd_to_socket_fd (int bio_fd) {
     return static_cast<socket_fd_t>(static_cast<unsigned int>(bio_fd));
@@ -62,6 +62,8 @@ static inline bool comm_bio_get_socket_fd (BIO* bio, socket_fd_t* out_fd) {
     *out_fd = comm_bio_fd_to_socket_fd(bio_fd);
     return *out_fd != INVALID_SOCKET_FD;
 }
+
+
 
 #ifdef __cplusplus
 extern "C" {
