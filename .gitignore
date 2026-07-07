@@ -1,3 +1,6 @@
+# vscode settings
+.vscode/**
+
 # CMake build directory
 out/**
 
