@@ -113,6 +113,7 @@ void comm_free_outbound_buffers(comm_abstract_t* comm) {
 }
 
 void comm_flush (async_runtime_t* runtime, int slot) {
+    std::lock_guard<std::recursive_mutex> lock(mud_logic_mutex);
     auto comm = comm_abstract_get (slot);
     if (!comm || !comm->wbio)
         return; // invalid parameters
@@ -182,6 +183,7 @@ void comm_flush (async_runtime_t* runtime, int slot) {
 void comm_flush_all (async_runtime_t* runtime) {
     int max_slot = comm_max_slot();
     for (int slot = 0; slot < max_slot; ++slot) {
+        std::lock_guard<std::recursive_mutex> lock(mud_logic_mutex);
         auto* comm = comm_abstract_get(slot);
         if (comm && (comm->flags & C_BUFFERED_WRITE))
             comm_flush (runtime, slot);
