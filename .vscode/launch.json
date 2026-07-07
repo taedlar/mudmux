@@ -25,7 +25,7 @@
             "type": "cppvsdbg",
             "request": "launch",
             "cwd": "${workspaceFolder}",
-            "program": "out/build/clangcl-x64/src/Debug/example_server.exe",
+            "program": "out/build/clangcl-x64/examples/chatroom/Debug/chatroom.exe",
             "args": ["-f", "src/mud.conf", "-VV"]
         }
     ]

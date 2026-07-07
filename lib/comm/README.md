@@ -95,11 +95,8 @@ MUDMUX_HOOK_ERROR            // Transport errors
 
 **Configuration:**
 ```bash
-# Enable with flag
-example_server --console
-
-# Or auto-detect from stdin
-example_server  # (will use console if TTY)
+# Enable with configuration file
+chatroom -f mud.conf
 ```
 
 ### 2. File Input (`file_input.cpp`)
@@ -115,16 +112,11 @@ example_server  # (will use console if TTY)
 **Configuration:**
 ```bash
 # Specify input file
-example_server --input input.txt
+chatroom --input input.txt
 
-# Pipe from command
-cat input.txt | example_server
+# Pipe from command ()
+cat input.txt | chatroom --input
 ```
-
-**Key design:**
-- Cannot rely on completion events (Windows file I/O synchronous)
-- Must call `comm_process_file_input()` unconditionally every loop iteration
-- Separate from console: exclusive choice, not both
 
 ### 3. Network Sockets (`accept.cpp`)
 
@@ -170,15 +162,14 @@ for (each event from async_runtime_wait) {
 
 ```bash
 # Console/stdin (interactive)
-example_server --console          # Force console mode
-example_server                    # Auto-detect (TTY = console)
+chatroom -f mud.conf              # Enable re-connectable console mode
 
 # File input (automated testing)
-example_server --input FILE       # Read from FILE
-cat FILE | example_server         # Read from pipe
+chatroom --input FILE       # Read from FILE
+cat FILE | chatroom         # Read from pipe
 
 # Output routing
-example_server --output FILE      # Write to FILE
+chatroom --output FILE      # Write to FILE
 
 # Network (configured in mud.conf)
 # See network listen configuration in mud.conf
@@ -189,11 +180,10 @@ example_server --output FILE      # Write to FILE
 Network listen addresses are configured in `mud.conf`:
 
 ```yaml
-listen:
-  - address: "*"
-    port: 4000
-  - address: "127.0.0.1"
-    port: 8000
+transport:
+  console: true
+  accept:
+    - "*:4000"
 ```
 
 Each listen address occupies a unique slot for inbound message routing.
@@ -204,7 +194,7 @@ Each listen address occupies a unique slot for inbound message routing.
 
 ```bash
 # Run server with interactive console input
-example_server -f mud.conf
+chatroom -f mud.conf
 
 # Type commands interactively
 telnet localhost 4000  # Can also connect remotely
@@ -221,7 +211,7 @@ test
 EOF
 
 # Run with file input, capture output
-example_server -f mud.conf -i input.txt -o output.txt
+chatroom -i input.txt -o output.txt
 
 # Verify output
 cat output.txt
@@ -231,7 +221,7 @@ cat output.txt
 
 ```bash
 # Run server with console AND network listening
-example_server -f mud.conf --console
+chatroom -f mud.conf
 
 # In another terminal, connect remotely
 telnet localhost 4000
@@ -268,15 +258,15 @@ telnet localhost 4000
 
 **Common questions:**
 
-- **"Where did my input go?"** — Check slot routing. Run with `-VV` flag to see debug logs.
+- **"Where did my input go?"** — Check slot routing. Run with `--verbose` or `-V` flag to see debug logs.
 - **"Why is console slow?"** — Windows mode switching, expected 10-50ms per line.
 - **"File input stops after first line?"** — Check queue isn't full or EOF detected early.
 - **"Can I use console and file at the same time?"** — No, exclusive choice. Use file for testing.
 
 **Debug flags:**
 ```bash
-example_server -VV          # Very verbose logging
-example_server -VV -i test.txt  # Verbose + file input
+chatroom -VV              # Use -V for INFO logs, or -VV for INFO + DEBUG logs
+chatroom -VV -i test.txt  # Verbose + file input
 ```
 
 For detailed implementation and testing guidance, see [AGENTS.md](AGENTS.md).

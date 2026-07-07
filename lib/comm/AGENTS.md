@@ -114,7 +114,7 @@ All three functions support `COMM_SLOT_CONSOLE` as well as network slots and ret
 
 ### C++ Convenience Writer (`mudmux/comm.h`)
 
-`example_server` uses the slot stream-style writer:
+`chatroom` uses the slot stream-style writer:
 
 ```cpp
 auto comm = comm_abstract_get(slot);
@@ -406,7 +406,7 @@ for (int i = 0; i < num_events; ++i) {
 ```bash
 # Test file input routing
 echo -e "cmd1\ncmd2\ncmd3" > input.txt
-example_server --input input.txt --output output.txt
+chatroom --input input.txt --output output.txt
 
 # Verify output contains all commands
 ```
@@ -414,7 +414,7 @@ example_server --input input.txt --output output.txt
 **Network + console:**
 ```bash
 # Run server listening
-example_server -i
+chatroom -f mud.conf
 
 # In another terminal, telnet and send commands
 telnet localhost 4000

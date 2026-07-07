@@ -13,7 +13,7 @@ set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
 # ================
 project(mudmux
     VERSION 0.1
-    DESCRIPTION "A transport-layer host for MUDs"
+    DESCRIPTION "A transport-layer library for MUDs"
     HOMEPAGE_URL "https://github.com/taedlar/mudmux"
     LANGUAGES CXX
 )
@@ -30,6 +30,9 @@ include(utils)
 cmake_dependent_option(MUDMUX_BUILD_TESTS
   "Enable mudmux tests" ON
   "BUILD_TESTING;MUDMUX_MAIN_PROJECT" OFF)
+cmake_dependent_option(MUDMUX_BUILD_EXAMPLES
+  "Enable mudmux examples" ON
+  "MUDMUX_MAIN_PROJECT" OFF)
 
 # compiler settings
 if(MSVC)
@@ -74,6 +77,7 @@ add_compile_definitions(HAVE_CONFIG_H)
 add_subdirectory(lib/async)
 add_subdirectory(lib/comm)
 add_subdirectory(src)
+add_subdirectory(examples/chatroom)
 
 # add tests
 if (MUDMUX_BUILD_TESTS)

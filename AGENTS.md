@@ -9,13 +9,14 @@ See [README.md](README.md) for the full feature list.
 ## Architecture
 
 ```
-src/              — mudmux shared library + example_server binary
+src/              — mudmux shared library
   mudmux.cpp      — C API impl (mudmux_init / mudmux_run / mudmux_shutdown)
   hooks.cpp       — hook registration & dispatch
   include/mudmux/ — public C API headers (mudmux.h, hooks.h)
 lib/async/        — platform-agnostic async event loop (epoll/IOCP/poll)
 lib/comm/         — unified read/write abstraction (socket, console, pipe)
 cmake/            — helper CMake modules (fetch-settings, utils, setup)
+examples/         — example MUD servers
 ```
 
 **Key dependency rule**: any `src/` file that exports a symbol via `MUDMUX_EXPORT` **must** `#include "mudmux/mudmux.h"` (which pulls in the generated `mudmux_export.h`). Missing this will cause undefined-reference link errors on Linux.
@@ -35,13 +36,13 @@ ctest --preset units-linux-gcc
 
 Build output lands in `out/build/<preset>/`. A `compile_commands.json` is always generated there (`CMAKE_EXPORT_COMPILE_COMMANDS=ON`).
 
-**Preferred verify step**: build the default target — it builds both `mudmux` (the shared library) and `example_server`.
+**Preferred verify step**: build the default target — it builds both `mudmux` (the shared library) and `chatroom`.
 
-### Quick Testing with `example_server`
+### Quick Testing with `chatroom`
 
-To test the `mudmux` shared library, use the executable `example_server` to setup a simple MUD server.
+To test the `mudmux` shared library, use the executable `chatroom` to setup a simple MUD server.
 
-- Running `example_server` without argumnets will start the server without listening ports and idle until Ctrl-C pressed or SIGINT received. The default logging verbosity is set to "warning". Use `--help` option to get program help documents.
+- Running `chatroom` without argumnets will start the server without listening ports and idle until Ctrl-C pressed or SIGINT received. The default logging verbosity is set to "warning". Use `--help` option to get program help documents.
 
 ## Dependencies
 
@@ -51,7 +52,7 @@ Fetched automatically by CMake via FetchContent (declared in `cmake/fetch-settin
 |---------|---------|
 | spdlog | logging throughout |
 | yaml-cpp | config parsing in `mudmux_init` |
-| argparse | `example_server` CLI |
+| argparse | examples CLI |
 | GoogleTest | unit tests (when `BUILD_TESTING=ON`) |
 
 System deps: **OpenSSL** (required), **Boost.JSON** (optional, via `find_boost`).

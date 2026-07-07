@@ -1,6 +1,5 @@
 // main.cpp
 
-#include <atomic>
 #include <csignal>
 #include <iostream>
 #include <fstream>

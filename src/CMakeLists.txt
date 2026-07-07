@@ -31,18 +31,3 @@ target_sources(mudmux_headers PUBLIC
         BASE_DIRS ${CMAKE_CURRENT_BINARY_DIR}
         FILES ${CMAKE_CURRENT_BINARY_DIR}/mudmux_export.h
 )
-
-# example server using mudmux library
-add_executable(example_server main.cpp)
-target_link_libraries(example_server PRIVATE
-    spdlog::spdlog
-    argparse::argparse
-    mudmux::mudmux
-    OpenSSL::SSL
-    OpenSSL::Crypto
-)
-target_include_directories(example_server PRIVATE ${CMAKE_SOURCE_DIR}/lib)
-
-if(WIN32)
-    target_link_libraries(example_server PRIVATE OpenSSL::applink)
-endif()
