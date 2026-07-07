@@ -11,9 +11,11 @@ extern "C" {
 
 void comm_buffered_write (comm_abstract_t *comm, const void *buf, size_t len);
 
+void comm_free_outbound_buffers(comm_abstract_t* comm);
+
 void comm_flush (async_runtime_t* runtime, int slot);
 
-void comm_flush_all_outbound (async_runtime_t* runtime);
+void comm_flush_all (async_runtime_t* runtime);
 
 /**
  * @brief Close a communication slot, removing it from the async runtime and invoking

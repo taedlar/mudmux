@@ -70,7 +70,7 @@ int comm_write(comm_abstract_t *comm, const void *buf, size_t len);
 // Non-blocking (buffered) write path
 void comm_buffered_write (comm_abstract_t *comm, const void *buf, size_t len);
 void comm_flush(async_runtime_t *runtime, int slot);
-void comm_flush_all_outbound(async_runtime_t *runtime);
+void comm_flush_all(async_runtime_t *runtime);
 bool comm_close(async_runtime_t *runtime, int slot);
 
 // Input mode control
@@ -81,7 +81,7 @@ bool comm_enable_virtual_terminal(int slot);
 
 // Lifecycle
 int comm_abstract_remove(int slot);
-void comm_abstract_cleanup(void);
+void comm_abstract_remove_all(void);
 ```
 
 `comm_close()` is also exposed to logic-layer code through `mudmux/comm.h` (`#define comm_close mudmux_comm_api->close`), so hooks can proactively close slots.
@@ -167,8 +167,8 @@ Outbound writes are intentionally staged and flushed after hook execution.
 ### Flush Triggers
 
 - `comm_buffered_write()` sets `C_BUFFERED_WRITE` to mark pending outbound data.
-- `mudmux_invoke_hook()` calls `comm_flush_all_outbound(async_get_current_runtime())` after each hook callback returns.
-- `comm_flush_all_outbound()` iterates all slots and flushes those with `C_BUFFERED_WRITE`.
+- `mudmux_invoke_hook()` calls `comm_flush_all(async_get_current_runtime())` after each hook callback returns.
+- `comm_flush_all()` iterates all slots and flushes those with `C_BUFFERED_WRITE`.
 
 ### Proactive Close Path (`comm_close`)
 
@@ -330,7 +330,7 @@ Input Sources:
                               ↓                                           ↓
                           comm_buffered_write()                     comm_close()
                               ↓                                           ↓
-                         comm_flush_all_outbound()        [set C_CLOSING, invoke
+                         comm_flush_all()        [set C_CLOSING, invoke
                               ↓                         disconnect, defer if buffered]
                           BIO/socket/file write path                     ↓
                                                   [final slot removal]

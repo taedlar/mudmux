@@ -15,11 +15,23 @@ using namespace testing;
 TEST(CommTest, AbstractAddBio) {
     mudmux_init(nullptr);
     EXPECT_EQ(comm_abstract_add_bio(nullptr, nullptr, -1, 0), -1); // both rbio and wbio are null: reject
-    EXPECT_NE(comm_abstract_add_bio(BIO_new_fp (stdin, BIO_NOCLOSE), nullptr, -1, 0), -1); // read-only: accept
-    EXPECT_NE(comm_abstract_add_bio(nullptr, BIO_new_fp (stdout, BIO_NOCLOSE), -1, 0), -1); // write-only: accept
+    int slot_r = comm_abstract_add_bio(BIO_new_fp (stdin, BIO_NOCLOSE), nullptr, -1, 0);
+    EXPECT_NE(slot_r, -1); // read-only: accept
+    int slot_w = comm_abstract_add_bio(nullptr, BIO_new_fp (stdout, BIO_NOCLOSE), -1, 0);
+    EXPECT_NE(slot_w, -1); // write-only: accept
     BIO* bio = BIO_new_fp (stdin, BIO_NOCLOSE);
-    EXPECT_NE(comm_abstract_add_bio(bio, bio, -1, 0), -1); // bi-directional: accept
-    ASSERT_NO_FATAL_FAILURE(comm_abstract_cleanup());
+    int slot_rw = comm_abstract_add_bio(bio, bio, -1, 0);
+    EXPECT_NE(slot_rw, -1); // bi-directional: accept
+
+    if (slot_r >= 0) {
+        EXPECT_TRUE(comm_close(nullptr, slot_r));
+    }
+    if (slot_w >= 0) {
+        EXPECT_TRUE(comm_close(nullptr, slot_w));
+    }
+    if (slot_rw >= 0) {
+        EXPECT_TRUE(comm_close(nullptr, slot_rw));
+    }
 }
 
 TEST(CommTest, AbstractGet) {
@@ -28,10 +40,10 @@ TEST(CommTest, AbstractGet) {
     EXPECT_EQ(comm_abstract_get(100), nullptr);
 }
 
-TEST(CommTest, AbstractRemove) {
+TEST(CommTest, AbstractCloseInvalidSlot) {
     mudmux_init(nullptr);
-    EXPECT_EQ(comm_abstract_remove(-1), -1);
-    EXPECT_EQ(comm_abstract_remove(100), -1);
+    EXPECT_TRUE(comm_close(nullptr, -1));
+    EXPECT_TRUE(comm_close(nullptr, 100));
 }
 
 TEST(CommTest, SocketFdToBioFdRejectsInvalidSocket) {

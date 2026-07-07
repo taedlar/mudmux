@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <thread>
 #include <vector>
 #include <yaml-cpp/yaml.h>
 
@@ -27,6 +28,7 @@ extern "C" {
     mudmux_comm_api_t* mudmux_comm_api {nullptr}; // global pointer to comm API struct, initialized by mudmux_init()
 }
 
+static std::thread::id mud_logic_thread_id; // thread ID of the logic layer thread (main thread)
 static std::atomic<bool> is_running{false};
 static std::atomic<bool> is_shutting_down{false};
 
@@ -34,13 +36,37 @@ static bool enable_standard_input{false};
 static bool enable_console{false};
 static std::vector<std::string> accept_names; // array of names for BIO_set_accept_name()
 
+static bool comm_api_thread_guard(const char* api_name) {
+    if (mud_logic_thread_id == std::thread::id())
+        return true; // logic thread not bound yet (before mudmux_run)
+    if (std::this_thread::get_id() == mud_logic_thread_id)
+        return true;
+
+    SPDLOG_CRITICAL("comm API {} called from non-logic thread", api_name);
+    return false;
+}
+
+template <typename FallbackT, typename Fn, typename... Args>
+static FallbackT guarded_call(const char* api_name, FallbackT fallback, Fn&& fn, Args&&... args) {
+    if (!comm_api_thread_guard(api_name))
+        return fallback;
+    return fn(std::forward<Args>(args)...);
+}
+
+template <typename Fn, typename... Args>
+static void guarded_call_void(const char* api_name, Fn&& fn, Args&&... args) {
+    if (!comm_api_thread_guard(api_name))
+        return;
+    fn(std::forward<Args>(args)...);
+}
+
 static void init_async_api (void) {
     static mudmux_async_api_t async_api;
     async_api.event_init = async_event_init;
     async_api.event_destroy = async_event_destroy;
     async_api.event_set = async_event_set;
     async_api.event_reset = async_event_reset;
-    async_api.event_wait = async_event_wait;
+    // async_api.event_wait = async_event_wait;
     async_api.event_get_wait_handle = async_event_get_wait_handle;
 
     mudmux_async_api = &async_api; // set global pointer to initialized struct
@@ -52,20 +78,42 @@ static void init_async_api (void) {
 static void init_comm_api (void) {
     static mudmux_comm_api_t comm_api;
     comm_api.max_slot = comm_max_slot;
-    comm_api.add_bio = comm_abstract_add_bio;
-    comm_api.add_file = comm_abstract_add_file;
-    comm_api.get = comm_abstract_get;
-    comm_api.remove = comm_abstract_remove;
-    comm_api.cleanup = comm_abstract_cleanup;
-    comm_api.get_flags = comm_get_flags;
-    comm_api.set_flags = comm_set_flags;
-    comm_api.clear_flags = comm_clear_flags;
-    comm_api.buffered_write = comm_buffered_write;
-    comm_api.close = comm_close;
-    comm_api.set_line_input = comm_set_line_input;
-    comm_api.set_char_input = comm_set_char_input;
-    comm_api.set_echo = comm_set_echo;
-    comm_api.enable_virtual_terminal = comm_enable_virtual_terminal;
+    comm_api.add_bio = +[](BIO* rbio, BIO* wbio, int slot, uint32_t flags) -> int {
+        return guarded_call<int>("add_bio", -1, comm_abstract_add_bio, rbio, wbio, slot, flags);
+    };
+    comm_api.add_file = +[](const char* fn_in, const char* fn_out, int slot, uint32_t flags) -> int {
+        return guarded_call<int>("add_file", -1, comm_abstract_add_file, fn_in, fn_out, slot, flags);
+    };
+    comm_api.get = +[](int slot) -> comm_abstract_t* {
+        return guarded_call<comm_abstract_t*>("get", nullptr, comm_abstract_get, slot);
+    };
+    comm_api.get_flags = +[](comm_abstract_t* comm) -> uint32_t {
+        return guarded_call<uint32_t>("get_flags", 0, comm_get_flags, comm);
+    };
+    comm_api.set_flags = +[](comm_abstract_t* comm, uint32_t flags) {
+        guarded_call_void("set_flags", comm_set_flags, comm, flags);
+    };
+    comm_api.clear_flags = +[](comm_abstract_t* comm, uint32_t flags) {
+        guarded_call_void("clear_flags", comm_clear_flags, comm, flags);
+    };
+    comm_api.buffered_write = +[](comm_abstract_t* comm, const void* buf, size_t len) {
+        guarded_call_void("buffered_write", comm_buffered_write, comm, buf, len);
+    };
+    comm_api.close = +[](async_runtime_t* runtime, int slot) -> bool {
+        return guarded_call<bool>("close", false, comm_close, runtime, slot);
+    };
+    comm_api.set_line_input = +[](int slot, bool echo) -> bool {
+        return guarded_call<bool>("set_line_input", false, comm_set_line_input, slot, echo);
+    };
+    comm_api.set_char_input = +[](int slot) -> bool {
+        return guarded_call<bool>("set_char_input", false, comm_set_char_input, slot);
+    };
+    comm_api.set_echo = +[](int slot, bool echo) -> bool {
+        return guarded_call<bool>("set_echo", false, comm_set_echo, slot, echo);
+    };
+    comm_api.enable_virtual_terminal = +[](int slot) -> bool {
+        return guarded_call<bool>("enable_virtual_terminal", false, comm_enable_virtual_terminal, slot);
+    };
 
     mudmux_comm_api = &comm_api; // set global pointer to initialized struct
 }
@@ -118,6 +166,7 @@ extern "C" void mudmux_deinit (void) {
         return;
     }
     enable_console = false;
+    mud_logic_thread_id = std::thread::id();
     accept_names.clear();
     memset(mudmux_comm_api, 0, sizeof(mudmux_comm_api_t));
     memset(mudmux_async_api, 0, sizeof(mudmux_async_api_t));
@@ -128,6 +177,7 @@ extern "C" int mudmux_run (void* context) {
         SPDLOG_ERROR ("mudmux_run() called while already running");
         return EXIT_FAILURE;
     }
+    mud_logic_thread_id = std::this_thread::get_id(); // store the thread ID of the logic layer thread (main thread)
 
     // initialize subsystems
     auto runtime = async_runtime_init(context);
@@ -246,7 +296,8 @@ extern "C" int mudmux_run (void* context) {
     comm_shutdown_console (runtime);
     async_runtime_deinit (runtime);
     is_running.store(false);
-    comm_abstract_cleanup(); // do this after async_runtime_deinit() to avoid accept worker error on invalid socket hanndles
+    mud_logic_thread_id = std::thread::id();
+    comm_abstract_remove_all(); // do this after async_runtime_deinit() to avoid accept worker error on invalid socket hanndles
     return EXIT_SUCCESS;
 }
 

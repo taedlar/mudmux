@@ -78,6 +78,15 @@ Hooks (`mudmux_hook_type_t`) let the loaded logic layer react to transport event
 
 Register with `mudmux_register_hook()`; invoke with `mudmux_invoke_hook()`.
 
+### Hook API Protection and Threading Model
+
+During hook invocation, the event-loop thread enters the logic layer while holding the MUD logic mutex. This protects comm API usage inside hooks so slot/state mutations remain deterministic from the logic layer point of view.
+
+- In hook callbacks: treat comm API calls as part of a serialized critical section on the main event-loop thread.
+- Outside that locked hook region: the server is fully multi-threaded. Any logic-layer shared state must use proper synchronization (mutexes/atomics/queues) to avoid races.
+
+Practical rule: if logic code touches shared data from worker threads or from code paths not running under hook dispatch, synchronization is required even if comm APIs are protected during hooks.
+
 ### Proactive Slot Closing (`comm_close`)
 
 Logic-layer hooks can proactively close a communication slot via `comm_close(runtime, slot)` from `mudmux/comm.h`.

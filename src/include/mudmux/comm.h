@@ -40,8 +40,6 @@ typedef struct mudmux_comm_api_s {
 #endif
     int (*add_file)(const char *fn_in, const char* fn_out, int slot, uint32_t flags);
     comm_abstract_t* (*get)(int slot);
-    int (*remove)(int slot);
-    void (*cleanup)(void);
     uint32_t (*get_flags)(comm_abstract_t *comm);
     void (*set_flags)(comm_abstract_t *comm, uint32_t flags);
     void (*clear_flags)(comm_abstract_t *comm, uint32_t flags);
@@ -59,8 +57,6 @@ typedef struct mudmux_comm_api_s {
 #define comm_abstract_add_bio           mudmux_comm_api->add_bio
 #define comm_abstract_add_file          mudmux_comm_api->add_file
 #define comm_abstract_get               mudmux_comm_api->get
-#define comm_abstract_remove            mudmux_comm_api->remove
-#define comm_abstract_cleanup           mudmux_comm_api->cleanup
 #define comm_get_flags                  mudmux_comm_api->get_flags
 #define comm_set_flags                  mudmux_comm_api->set_flags
 #define comm_clear_flags                mudmux_comm_api->clear_flags
