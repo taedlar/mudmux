@@ -5,6 +5,7 @@
 #include "abstract.h"
 
 #include <cstdlib>
+#include <mutex>
 #include <vector>
 #include <type_traits>
 #include <string.h>
@@ -17,6 +18,7 @@ static comm_abstract_t* all_comms{nullptr};
 static size_t max_comms{0};
 
 static int comm_abstract_ensure_capacity (size_t required_slots = RESERVED_SLOTS + 1) {
+    std::lock_guard<std::recursive_mutex> lock(mud_logic_mutex);
     if (all_comms && max_comms >= required_slots) {
         return 0;
     }
@@ -48,6 +50,7 @@ static int comm_abstract_ensure_capacity (size_t required_slots = RESERVED_SLOTS
 }
 
 static int comm_abstract_find_slot (void) {
+    std::lock_guard<std::recursive_mutex> lock(mud_logic_mutex);
     // find the first available slot after RESERVED_SLOTS
     size_t slot = RESERVED_SLOTS;
     while (slot < max_comms && (all_comms[slot].rbio || all_comms[slot].wbio))
@@ -67,6 +70,8 @@ int comm_abstract_add_bio (BIO* rbio, BIO* wbio, int slot, uint32_t flags) {
         SPDLOG_WARN ("invalid arguments: both rbio and wbio are null");
         return -1;
     }
+
+    std::lock_guard<std::recursive_mutex> lock(mud_logic_mutex);
     if (comm_abstract_ensure_capacity() < 0)
         return -1;
 
@@ -106,6 +111,7 @@ int comm_abstract_add_file (const char* fn_in, const char* fn_out, int slot, uin
 }
 
 int comm_abstract_disconnect (int slot) {
+    std::lock_guard<std::recursive_mutex> lock(mud_logic_mutex);
     comm_abstract_t* comm = comm_abstract_get (slot);
     if (!comm) {
         SPDLOG_WARN ("invalid slot {} in comm_abstract_disconnect()", slot);
@@ -119,22 +125,37 @@ int comm_abstract_disconnect (int slot) {
 }
 
 int comm_abstract_remove (int slot) {
+    std::lock_guard<std::recursive_mutex> lock(mud_logic_mutex);
     comm_abstract_t* comm = comm_abstract_get (slot);
-    if (!comm) {
-        SPDLOG_WARN ("invalid slot {} in comm_abstract_remove()", slot);
-        return -1;
-    }
+    if (!comm)
+        return 0; // already removed or invalid slot
     if (comm->rbio)
         BIO_free_all (comm->rbio);
     if (comm->wbio && comm->wbio != comm->rbio)
         BIO_free_all (comm->wbio);
     comm->rbio = comm->wbio = nullptr;
     comm->flags = 0;
+    comm_free_outbound_buffers(comm); // free any remaining outbound buffers
     SPDLOG_DEBUG ("removed comm slot {}", slot);
     return 0;
 }
 
+void comm_abstract_remove_all (void) {
+    std::lock_guard<std::recursive_mutex> lock(mud_logic_mutex);
+    if (!all_comms)
+        return;
+    int i = 0;
+    while (i < static_cast<int>(max_comms)) {
+        comm_abstract_remove (i);
+        i++;
+    }
+    delete[] all_comms;
+    all_comms = nullptr;
+    max_comms = 0;
+}
+
 comm_abstract_t* comm_abstract_get (int slot) {
+    std::lock_guard<std::recursive_mutex> lock(mud_logic_mutex);
     if (!all_comms || slot < 0 || slot >= static_cast<int>(max_comms))
         return nullptr;
     comm_abstract_t* comm = &all_comms[slot];
@@ -163,23 +184,6 @@ void comm_set_flags (comm_abstract_t *comm, uint32_t flags) {
 void comm_clear_flags (comm_abstract_t *comm, uint32_t flags) {
     if (comm)
         comm->flags &= ~flags;
-}
-
-void comm_abstract_cleanup (void) {
-    comm_abstract_t* comm = all_comms;
-    int i = 0;
-    while (comm && i < static_cast<int>(max_comms)) {
-        if (comm->rbio)
-            BIO_free_all (comm->rbio);
-        if (comm->wbio && comm->wbio != comm->rbio)
-            BIO_free_all (comm->wbio);
-        comm->rbio = comm->wbio = nullptr;
-        comm++;
-        i++;
-    }
-    delete[] all_comms;
-    all_comms = nullptr;
-    max_comms = 0;
 }
 
 int comm_read (comm_abstract_t *comm, void *buf, size_t len) {

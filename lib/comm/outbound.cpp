@@ -100,6 +100,17 @@ void comm_buffered_write (comm_abstract_t *comm, const void *buf, size_t len) {
     }
 }
 
+void comm_free_outbound_buffers(comm_abstract_t* comm) {
+    if (!comm)
+        return;
+    while (comm->outbound) {
+        outbound_buffer_t* next_buffer = comm->outbound->next;
+        free_outbound_buffer(comm->outbound);
+        comm->outbound = next_buffer;
+    }
+    assert(comm->outbound == nullptr);
+}
+
 void comm_flush (async_runtime_t* runtime, int slot) {
     auto comm = comm_abstract_get (slot);
     if (!comm || !comm->wbio)
@@ -115,12 +126,7 @@ void comm_flush (async_runtime_t* runtime, int slot) {
                     // invoke disconnect hook (if not already closing), drop any buffered outbound data
                     if (!(comm_get_flags(comm) & C_CLOSING))
                         comm_invoke_disconnect(runtime, slot); // invoke disconnect hook for this comm slot
-                    while (comm->outbound) {
-                        outbound_buffer_t* next_buffer = comm->outbound->next;
-                        free_outbound_buffer(comm->outbound);
-                        comm->outbound = next_buffer;
-                    }
-                    // dropping all buffered outbound data will have C_BUFFERED_WRITE cleared before return
+                    comm_free_outbound_buffers(comm); // drop any buffered outbound data
                 }
                 break;
             }
@@ -172,7 +178,7 @@ void comm_flush (async_runtime_t* runtime, int slot) {
     }
 }
 
-void comm_flush_all_outbound (async_runtime_t* runtime) {
+void comm_flush_all (async_runtime_t* runtime) {
     int max_slot = comm_max_slot();
     for (int slot = 0; slot < max_slot; ++slot) {
         auto* comm = comm_abstract_get(slot);

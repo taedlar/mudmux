@@ -22,7 +22,7 @@ typedef struct mudmux_async_api_s {
     void (*event_destroy)(async_event_t* event);
     void (*event_set)(async_event_t* event);
     void (*event_reset)(async_event_t* event);
-    bool (*event_wait)(async_event_t* event, int timeout_ms);
+    // bool (*event_wait)(async_event_t* event, int timeout_ms);
     async_wait_handle_t (*event_get_wait_handle)(async_event_t* event);
 } mudmux_async_api_t;
 
@@ -31,7 +31,7 @@ typedef struct mudmux_async_api_s {
 #define async_event_destroy             mudmux_async_api->event_destroy
 #define async_event_set                 mudmux_async_api->event_set
 #define async_event_reset               mudmux_async_api->event_reset
-#define async_event_wait                mudmux_async_api->event_wait
+// #define async_event_wait                mudmux_async_api->event_wait
 #define async_event_get_wait_handle     mudmux_async_api->event_get_wait_handle
 #endif
 

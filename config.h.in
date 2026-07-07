@@ -27,4 +27,9 @@
 #endif
 #endif
 
+#if defined(MUDMUX_STATIC_DEFINE) || defined(mudmux_EXPORTS)
+#include <mutex>
+extern std::recursive_mutex mud_logic_mutex; // logic layer mutex
+#endif
+
 #endif /* CONFIG_H */

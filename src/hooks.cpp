@@ -2,8 +2,12 @@
 #include "config.h"
 #endif
 
+#include <mutex>
+
 #include "mudmux/hooks.h"
 #include "comm/outbound.h"
+
+std::recursive_mutex mud_logic_mutex; // logic layer mutex
 
 static mudmux_hook_func_t all_hooks[MUDMUX_HOOK_MAX] = {nullptr}; // array of hook functions
 
@@ -24,7 +28,15 @@ extern "C" int mudmux_invoke_hook (enum mudmux_hook_type_t hook_type, void* ctx,
     mudmux_hook_func_t hook_func = all_hooks[hook_type];
     if (!hook_func)
         return 0; // no-op if no hook is registered for this type
-    int ret = hook_func(ctx, msg, data, size);
-    comm_flush_all_outbound (async_get_current_runtime()); // flush any buffered output after hook invocation
+
+    // ===== ENTERING LOGIC LAYER =====
+    int ret = 0;
+    {
+        std::lock_guard<std::recursive_mutex> lock(mud_logic_mutex);
+        ret = hook_func(ctx, msg, data, size);
+    }
+    // ===== EXITING LOGIC LAYER =====
+
+    comm_flush_all (async_get_current_runtime()); // flush any buffered output after hook invocation
     return ret;
 }

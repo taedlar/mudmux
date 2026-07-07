@@ -8,14 +8,17 @@
 
 #include "async/async_runtime.h"
 
+typedef struct inbound_buffer_s inbound_buffer_t;
 typedef struct outbound_buffer_s outbound_buffer_t;
 
 typedef struct comm_abstract_s {
     BIO *rbio; // could be null or equal to wbio for bidirectional sockets
     BIO *wbio; // could be null or equal to rbio for bidirectional sockets
+    inbound_buffer_t* inbound;
     outbound_buffer_t* outbound;
     uint32_t flags;
 } comm_abstract_t;
+
 static_assert(std::is_trivially_default_constructible_v<comm_abstract_t>,
     "comm_abstract_t must be trivially default constructible"); // for std::calloc to work correctly
 static_assert(std::is_trivially_copyable_v<comm_abstract_t>,
@@ -69,6 +72,7 @@ static inline bool comm_bio_get_socket_fd (BIO* bio, socket_fd_t* out_fd) {
 extern "C" {
 #endif
 
+/* comm_abstract_t life cycle */
 int comm_max_slot (void);
 int comm_abstract_add_bio (BIO *rbio, BIO *wbio, int slot, uint32_t flags);
 BIO* comm_abstract_get_rbio (int slot);
@@ -76,7 +80,7 @@ BIO* comm_abstract_get_wbio (int slot);
 int comm_abstract_add_file(const char *fn_in, const char* fn_out, int slot, uint32_t flags);
 comm_abstract_t* comm_abstract_get (int slot);
 int comm_abstract_remove (int slot);
-void comm_abstract_cleanup (void);
+void comm_abstract_remove_all (void);
 
 /* flag management */
 uint32_t comm_get_flags (comm_abstract_t *comm);
