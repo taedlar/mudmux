@@ -77,6 +77,7 @@ static bool set_console_input_mode (DWORD set_bits, DWORD clear_bits) {
 }
 
 bool comm_set_line_input (int slot, bool echo) {
+    std::lock_guard<std::recursive_mutex> lock(mud_logic_mutex);
     auto comm = comm_abstract_get(slot);
     switch (slot) {
     case COMM_SLOT_CONSOLE: {
@@ -120,6 +121,7 @@ bool comm_set_char_input (int slot) {
         /* clear */ ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT
     );
     if (ret) {
+        std::lock_guard<std::recursive_mutex> lock(mud_logic_mutex);
         auto comm = comm_abstract_get(slot);
         if (comm)
             comm_clear_flags (comm, C_LINE_INPUT | C_CLIENT_ECHO);
@@ -128,6 +130,7 @@ bool comm_set_char_input (int slot) {
 }
 
 bool comm_set_echo (int slot, bool echo) {
+    std::lock_guard<std::recursive_mutex> lock(mud_logic_mutex);
     auto comm = comm_abstract_get(slot);
     bool result = false;
     switch (slot) {
@@ -169,6 +172,7 @@ static void posix_tcsetattr(int fd, struct termios *tio) {
 #endif /* HAVE_TERMIOS_H */
 
 bool comm_set_line_input (int slot, bool echo) {
+    std::lock_guard<std::recursive_mutex> lock(mud_logic_mutex);
     auto comm = comm_abstract_get (slot);
     switch (slot) {
     case COMM_SLOT_CONSOLE:
@@ -200,6 +204,7 @@ bool comm_set_line_input (int slot, bool echo) {
 }
 
 bool comm_set_char_input(int slot) {
+    std::lock_guard<std::recursive_mutex> lock(mud_logic_mutex);
     auto comm = comm_abstract_get(slot);
     switch (slot) {
     case COMM_SLOT_CONSOLE:
@@ -226,6 +231,7 @@ bool comm_set_char_input(int slot) {
 }
 
 bool comm_set_echo (int slot, bool echo) {
+    std::lock_guard<std::recursive_mutex> lock(mud_logic_mutex);
     auto comm = comm_abstract_get (slot);
     switch (slot) {
     case COMM_SLOT_CONSOLE:

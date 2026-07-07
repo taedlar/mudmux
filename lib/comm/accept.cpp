@@ -74,6 +74,7 @@ int comm_accept (async_runtime_t* runtime, const char* accept_name) {
 }
 
 static int _accept_new_comm (int slot, socket_fd_t event_fd) {
+	std::lock_guard<std::recursive_mutex> lock(mud_logic_mutex);
 	comm_abstract_t* listener_comm = comm_abstract_get(slot);
 	BIO* listener_bio = comm_abstract_get_rbio(slot);
 	if (!listener_bio || !(comm_get_flags(listener_comm) & C_SOCKET_LISTENING)) {

@@ -4,10 +4,11 @@
 
 #include "outbound.h"
 
-#include "console.h"
+#include <mutex>
 #include <openssl/bio.h>
 #include <openssl/err.h>
 
+#include "console.h"
 #include "mudmux/comm.h"
 #include "mudmux/hooks.h"
 
@@ -188,6 +189,7 @@ void comm_flush_all (async_runtime_t* runtime) {
 }
 
 bool comm_close (async_runtime_t* runtime, int slot) {
+    std::lock_guard<std::recursive_mutex> lock(mud_logic_mutex);
     auto comm = comm_abstract_get(slot);
     if (!comm)
         return true; // already removed

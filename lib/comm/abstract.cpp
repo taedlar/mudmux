@@ -155,7 +155,6 @@ void comm_abstract_remove_all (void) {
 }
 
 comm_abstract_t* comm_abstract_get (int slot) {
-    std::lock_guard<std::recursive_mutex> lock(mud_logic_mutex);
     if (!all_comms || slot < 0 || slot >= static_cast<int>(max_comms))
         return nullptr;
     comm_abstract_t* comm = &all_comms[slot];
@@ -163,11 +162,13 @@ comm_abstract_t* comm_abstract_get (int slot) {
 }
 
 BIO* comm_abstract_get_rbio (int slot) {
+    std::lock_guard<std::recursive_mutex> lock(mud_logic_mutex);
     comm_abstract_t* comm = comm_abstract_get(slot);
     return comm ? comm->rbio : nullptr;
 }
 
 BIO* comm_abstract_get_wbio (int slot) {
+    std::lock_guard<std::recursive_mutex> lock(mud_logic_mutex);
     comm_abstract_t* comm = comm_abstract_get(slot);
     return comm ? comm->wbio : nullptr;
 }
