@@ -92,7 +92,7 @@ bool comm_set_line_input (int slot, bool echo) {
         if (!set_console_input_mode (set_bits, clear_bits))
             return false;
         SPDLOG_DEBUG ("console input mode set: C_LINE_INPUT was {}, echo={}",
-            (comm ? (comm_get_flags(comm) & C_LINE_INPUT) != 0 : false), echo);
+            (comm ? (comm_get_flags(comm.get()) & C_LINE_INPUT) != 0 : false), echo);
         break;
     }
     default:
