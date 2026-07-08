@@ -481,8 +481,9 @@ extern "C" int async_runtime_post_read(async_runtime_t* runtime, socket_fd_t fd,
     DWORD bytes_received;
     int result = WSARecv(fd, &io_ctx->wsa_buf, 1, &bytes_received, &flags,
                          &io_ctx->overlapped, NULL);
-    
-    if (result == SOCKET_ERROR && WSAGetLastError() != WSA_IO_PENDING) {
+    int err = WSAGetLastError();
+    if (result == SOCKET_ERROR && err != WSA_IO_PENDING) {
+        SPDLOG_DEBUG ("WSARecv failed on fd {}: {}", fd, err);
         free_iocp_context(runtime, io_ctx);
         return -1;
     }

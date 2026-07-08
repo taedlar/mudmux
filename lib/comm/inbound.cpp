@@ -56,6 +56,11 @@ int comm_process_input (
         return 1;
     }
 
+    // inbound message hook function could have closed the connection ...
+    if (!comm) {
+        return 1;
+    }
+
     if (async_runtime_post_read(runtime, event->fd, nullptr, 0) < 0) {
         SPDLOG_ERROR ("failed to re-arm read for fd {}", event->fd);
         return 1;
