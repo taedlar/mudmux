@@ -23,6 +23,7 @@ static void process_command_line (int argc, char* argv[]);
 static int on_connect (void*, int slot, void*, size_t) {
     auto comm = comm_abstract_get(slot);
     if (comm) {
+        comm_enable_prompt (slot, true); // enable prompt for console user
         comm_set_line_input (slot, true); // enable line input mode for console user
         *comm << "Welcome to mudmux!\n\r";
     }
@@ -38,6 +39,13 @@ static int on_message_inbound (void*, int slot, void* data, size_t size) {
         *comm << "Received message: [" << message << "]\n\r";
     if (message == "quit" || message == "exit")
         comm_close(nullptr, slot); // close the connection on "quit" or "exit"
+    return 0;
+}
+
+static int on_prompt (void*, int slot, void*, size_t) {
+    auto comm = comm_abstract_get(slot);
+    if (comm)
+        *comm << "> "; // display prompt for user input
     return 0;
 }
 
@@ -68,7 +76,7 @@ int main (int argc, char* argv[]) {
     mudmux_register_hook (MUDMUX_HOOK_CONNECT, on_connect);
     mudmux_register_hook (MUDMUX_HOOK_MESSAGE_INBOUND, on_message_inbound);
     mudmux_register_hook (MUDMUX_HOOK_DISCONNECT, on_disconnect);
-    // [optional] connect any additional transports (e.g., listening sockets, etc.) here
+    mudmux_register_hook (MUDMUX_HOOK_PROMPT, on_prompt);
 
     // run infinite event loop until shutdown is requested
     int exit_code = mudmux_run(nullptr);

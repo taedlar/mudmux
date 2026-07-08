@@ -112,6 +112,9 @@ static void init_comm_api (void) {
     comm_api.set_echo = +[](int slot, bool echo) -> bool {
         return guarded_call<bool>("set_echo", false, comm_set_echo, slot, echo);
     };
+    comm_api.enable_prompt = +[](int slot, bool enable) {
+        guarded_call_void("enable_prompt", comm_enable_prompt, slot, enable);
+    };
     comm_api.enable_virtual_terminal = +[](int slot) -> bool {
         return guarded_call<bool>("enable_virtual_terminal", false, comm_enable_virtual_terminal, slot);
     };
@@ -237,7 +240,7 @@ extern "C" int mudmux_run (void* context) {
         // Process file input before event loop (async file reader thread posts completions,
         // but needs to be drained even if no events were returned by async_runtime_wait)
         if (comm_has_file_inputs()) {
-            comm_process_file_input(runtime, COMM_SLOT_CONSOLE, nullptr);
+            comm_process_file_input (runtime, COMM_SLOT_CONSOLE, nullptr);
         }
 
         // Process I/O events from transports (non-blocking)
@@ -251,7 +254,6 @@ extern "C" int mudmux_run (void* context) {
             }
 
             int slot = context_to_slot (event.context);
-
             {
                 comm_abstract_ptr comm (slot, mud_logic_mutex);
                 if (!comm) {
@@ -284,6 +286,7 @@ extern "C" int mudmux_run (void* context) {
                 }
             }
         }
+        comm_invoke_prompt(runtime); // invoke prompt hook for all comms with C_ENABLE_PROMPT flag set
     }
     SPDLOG_INFO ("===== exited event loop =====");
 
