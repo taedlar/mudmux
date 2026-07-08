@@ -145,6 +145,7 @@ extern "C" console_type_t console_detect_type(void) {
 #else
     /* POSIX: use isatty */
     if (isatty(STDIN_FILENO)) {
+        SPDLOG_DEBUG ("stdin is a TTY, assuming real console");
         return CONSOLE_TYPE_REAL;
     }
 
@@ -152,12 +153,15 @@ extern "C" console_type_t console_detect_type(void) {
     struct stat st;
     if (fstat(STDIN_FILENO, &st) == 0) {
         if (S_ISFIFO(st.st_mode)) {
+            SPDLOG_DEBUG ("stdin is a FIFO, assuming pipe");
             return CONSOLE_TYPE_PIPE;
-        } else if (S_ISREG(st.st_mode)) {
+        } else /*if (S_ISREG(st.st_mode))*/ {
+            SPDLOG_DEBUG ("fstat succeeded on stdin, assuming file");
             return CONSOLE_TYPE_FILE;
         }
     }
 
+    SPDLOG_DEBUG ("stdin is not a TTY, pipe, or file ({}), assuming none", errno);
     return CONSOLE_TYPE_NONE;
 #endif
 }
