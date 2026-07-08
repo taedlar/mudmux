@@ -1,7 +1,7 @@
 #ifndef COMM_OUTBOUND_H
 #define COMM_OUTBOUND_H
 
-#include "abstract.h"
+#include "abstract.hpp"
 
 #include "async/async_runtime.h"
 

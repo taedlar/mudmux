@@ -31,7 +31,7 @@ Slot 1+ (Transport Slots):
 
 ### Implementation
 
-**Slot state** (`abstract.h`):
+**Slot state** (`abstract.hpp`):
 ```c
 typedef struct comm_abstract_s comm_abstract_t;  // Opaque struct
 ```
@@ -47,7 +47,7 @@ Slots are accessed exclusively through opaque `comm_abstract_t` structs via publ
 - **Socket BIO** (for network)
 - **Console BIO** (custom, Windows/POSIX)
 
-### Key API (`abstract.h`)
+### Key API (`abstract.hpp`)
 
 ```c
 // Register I/O sources at a slot
@@ -55,7 +55,8 @@ int comm_abstract_add_bio(BIO *rbio, BIO *wbio, int slot, uint32_t flags);
 int comm_abstract_add_file(const char *fn_in, const char *fn_out, int slot, uint32_t flags);
 
 // Slot access
-BIO* comm_abstract_get_rbio(int slot);
+bool comm_abstract_has_rbio(int slot);
+bool comm_abstract_get_rbio_fd(int slot, socket_fd_t* out_fd);
 comm_abstract_t* comm_abstract_get(int slot);
 
 // Flag management

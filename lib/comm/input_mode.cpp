@@ -18,7 +18,7 @@
 #include <unistd.h>
 #endif
 
-#include "abstract.h"
+#include "abstract.hpp"
 #include "async/console_worker.h"
 #include "mudmux/comm.h"
 
@@ -77,8 +77,7 @@ static bool set_console_input_mode (DWORD set_bits, DWORD clear_bits) {
 }
 
 bool comm_set_line_input (int slot, bool echo) {
-    std::lock_guard<std::recursive_mutex> lock(mud_logic_mutex);
-    auto comm = comm_abstract_get(slot);
+    comm_abstract_ptr comm(slot, mud_logic_mutex);
     switch (slot) {
     case COMM_SLOT_CONSOLE: {
         /*
@@ -101,7 +100,7 @@ bool comm_set_line_input (int slot, bool echo) {
     }
 
     if (comm)
-        comm_set_flags (comm, C_LINE_INPUT);
+        comm_set_flags (comm.get(), C_LINE_INPUT);
     return true;
 }
 
@@ -121,17 +120,15 @@ bool comm_set_char_input (int slot) {
         /* clear */ ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT
     );
     if (ret) {
-        std::lock_guard<std::recursive_mutex> lock(mud_logic_mutex);
-        auto comm = comm_abstract_get(slot);
+        comm_abstract_ptr comm(slot, mud_logic_mutex);
         if (comm)
-            comm_clear_flags (comm, C_LINE_INPUT | C_CLIENT_ECHO);
+            comm_clear_flags (comm.get(), C_LINE_INPUT | C_CLIENT_ECHO);
     }
     return ret;
 }
 
 bool comm_set_echo (int slot, bool echo) {
-    std::lock_guard<std::recursive_mutex> lock(mud_logic_mutex);
-    auto comm = comm_abstract_get(slot);
+    comm_abstract_ptr comm(slot, mud_logic_mutex);
     bool result = false;
     switch (slot) {
     case COMM_SLOT_CONSOLE:
@@ -148,9 +145,9 @@ bool comm_set_echo (int slot, bool echo) {
     }
     if (comm) {
         if (echo)
-            comm_set_flags (comm, C_CLIENT_ECHO);
+            comm_set_flags (comm.get(), C_CLIENT_ECHO);
         else
-            comm_clear_flags (comm, C_CLIENT_ECHO);
+            comm_clear_flags (comm.get(), C_CLIENT_ECHO);
     }
     return result;
 }
@@ -172,8 +169,7 @@ static void posix_tcsetattr(int fd, struct termios *tio) {
 #endif /* HAVE_TERMIOS_H */
 
 bool comm_set_line_input (int slot, bool echo) {
-    std::lock_guard<std::recursive_mutex> lock(mud_logic_mutex);
-    auto comm = comm_abstract_get (slot);
+    comm_abstract_ptr comm(slot, mud_logic_mutex);
     switch (slot) {
     case COMM_SLOT_CONSOLE:
 #ifdef HAVE_TERMIOS_H
@@ -199,13 +195,12 @@ bool comm_set_line_input (int slot, bool echo) {
     }
 
     if (comm)
-        comm_set_flags (comm, C_LINE_INPUT);
+        comm_set_flags (comm.get(), C_LINE_INPUT);
     return true;
 }
 
 bool comm_set_char_input(int slot) {
-    std::lock_guard<std::recursive_mutex> lock(mud_logic_mutex);
-    auto comm = comm_abstract_get(slot);
+    comm_abstract_ptr comm(slot, mud_logic_mutex);
     switch (slot) {
     case COMM_SLOT_CONSOLE:
 #ifdef HAVE_TERMIOS_H
@@ -226,13 +221,12 @@ bool comm_set_char_input(int slot) {
         return false;
     }
     if (comm)
-        comm_clear_flags (comm, C_LINE_INPUT | C_CLIENT_ECHO);
+        comm_clear_flags (comm.get(), C_LINE_INPUT | C_CLIENT_ECHO);
     return true;
 }
 
 bool comm_set_echo (int slot, bool echo) {
-    std::lock_guard<std::recursive_mutex> lock(mud_logic_mutex);
-    auto comm = comm_abstract_get (slot);
+    comm_abstract_ptr comm(slot, mud_logic_mutex);
     switch (slot) {
     case COMM_SLOT_CONSOLE:
 #ifdef HAVE_TERMIOS_H
@@ -254,9 +248,9 @@ bool comm_set_echo (int slot, bool echo) {
     }
     if (comm) {
         if (echo)
-            comm_set_flags (comm, C_CLIENT_ECHO);
+            comm_set_flags (comm.get(), C_CLIENT_ECHO);
         else
-            comm_clear_flags (comm, C_CLIENT_ECHO);
+            comm_clear_flags (comm.get(), C_CLIENT_ECHO);
     }
     return true;
 }

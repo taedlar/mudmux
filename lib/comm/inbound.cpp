@@ -4,7 +4,7 @@
 
 #include "inbound.h"
 
-#include "abstract.h"
+#include "abstract.hpp"
 #include "mudmux/hooks.h"
 
 int comm_invoke_connect (async_runtime_t* runtime, int slot) {
@@ -42,7 +42,7 @@ int comm_process_input (
     if (!runtime || !event || slot < 0) {
         return -1;
     }
-    comm_abstract_t* comm = comm_abstract_get(slot);
+    comm_abstract_ptr comm(slot, mud_logic_mutex);
     if (!comm) {
         return -1;
     }
@@ -62,7 +62,7 @@ int comm_process_input (
     }
 #else
     char buffer[4096];
-    int read_bytes = comm_read(comm, buffer, sizeof(buffer));
+    int read_bytes = comm_read(comm.get(), buffer, sizeof(buffer));
     if (read_bytes <= 0) {
         return 1;
     }

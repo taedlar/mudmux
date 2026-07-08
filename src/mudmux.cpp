@@ -15,6 +15,7 @@
 #include "async/async_event.h"
 #include "async/console_worker.h"
 #include "comm/accept.h"
+#include "comm/abstract.hpp"
 #include "comm/console.h"
 #include "comm/file_input.h"
 #include "comm/inbound.h"
@@ -188,8 +189,7 @@ extern "C" int mudmux_run (void* context) {
             success = comm_init_console (runtime);
         }
         else { // file input is enabled (before entering event loop), simulate a single console session with file input
-            BIO* rbio = comm_abstract_get_rbio (COMM_SLOT_CONSOLE);
-            if (rbio) {
+            if (comm_abstract_has_rbio(COMM_SLOT_CONSOLE)) {
                 SPDLOG_DEBUG("detected existing file input, initializing async file input processing");
                 // Initialize file input (starts reader thread)
                 if (!comm_init_async_file_input(runtime, COMM_SLOT_CONSOLE)) {
@@ -253,14 +253,13 @@ extern "C" int mudmux_run (void* context) {
             int slot = context_to_slot (event.context);
 
             {
-                std::lock_guard<std::recursive_mutex> lock(mud_logic_mutex);
-                auto* comm = comm_abstract_get (slot);
+                comm_abstract_ptr comm(slot, mud_logic_mutex);
                 if (!comm) {
                     // This can happen if the comm was removed (e.g., due to disconnect) while events were still pending
                     continue;
                 }
                 SPDLOG_DEBUG ("processing event for slot {} (event.fd={})", slot, event.fd);
-                if (comm_get_flags(comm) & C_SOCKET_LISTENING) {
+                if (comm_get_flags(comm.get()) & C_SOCKET_LISTENING) {
                     comm_process_listener_event (runtime, slot, event.fd);
                     continue;
                 }
@@ -278,7 +277,7 @@ extern "C" int mudmux_run (void* context) {
                     continue;
                 }
 
-                if (comm_get_flags(comm) & C_CLOSING) {
+                if (comm_get_flags(comm.get()) & C_CLOSING) {
                     SPDLOG_DEBUG ("comm slot {} has C_CLOSING flag set, proceeding with graceful close", slot);
                     (void) comm_close(runtime, slot); // proceed pending graceful close if C_CLOSING flag is set
                     continue;

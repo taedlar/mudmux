@@ -13,7 +13,7 @@
 #include <windows.h>
 #endif
 
-#include "abstract.h"
+#include "abstract.hpp"
 #include "inbound.h"
 #include "input_mode.h"
 #include "async/console_worker.h"
@@ -51,7 +51,8 @@ extern "C" bool comm_init_console (async_runtime_t *runtime) {
     // if COMM_SLOT_CONSOLE already exists, it could be setup to pipe/file input, we'll leave it
     // alone and only initialize the console worker to read from stdin (whatever it is) and
     // enqueue lines into console_queue.
-    if (!comm_abstract_get(COMM_SLOT_CONSOLE)) {
+    comm_abstract_ptr console_comm(COMM_SLOT_CONSOLE, mud_logic_mutex);
+    if (!console_comm) {
         if (comm_abstract_add_file (nullptr, nullptr, COMM_SLOT_CONSOLE, 0) < 0) { // unlike adding BIOs, null file names will use stdin/stdout
             SPDLOG_ERROR ("failed to connect console communication");
             console_worker_destroy (console_ctx);
@@ -153,7 +154,8 @@ extern "C" int comm_process_console_input (async_runtime_t *runtime, bool allow_
             disconnected = true;
         }
 
-        if (!comm_abstract_get(COMM_SLOT_CONSOLE) && allow_reconnect && console_ctx) {
+        comm_abstract_ptr console_comm(COMM_SLOT_CONSOLE, mud_logic_mutex);
+        if (!console_comm && allow_reconnect && console_ctx) {
             if (!async_queue_is_empty(console_queue)) {
                 SPDLOG_INFO ("----- reconnecting console communication");
                 if (comm_abstract_add_file (nullptr, nullptr, COMM_SLOT_CONSOLE, 0) < 0) {
@@ -174,9 +176,9 @@ extern "C" int comm_process_console_input (async_runtime_t *runtime, bool allow_
     }
 
     if (disconnected) {
-        auto comm = comm_abstract_get(COMM_SLOT_CONSOLE);
+        comm_abstract_ptr comm(COMM_SLOT_CONSOLE, mud_logic_mutex);
         if (comm) {
-            if (!(comm_get_flags(comm) & C_CLOSING))
+            if (!(comm_get_flags(comm.get()) & C_CLOSING))
                 comm_invoke_disconnect (runtime, COMM_SLOT_CONSOLE); // invoke disconnect hook for console user
             comm_abstract_remove (COMM_SLOT_CONSOLE); // remove console from comm_abstract
         }

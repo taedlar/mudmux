@@ -2,7 +2,7 @@
 #include "config.h"
 #endif
 
-#include "abstract.h"
+#include "abstract.hpp"
 
 #include <cstdlib>
 #include <mutex>
@@ -14,55 +14,64 @@
 
 #include "mudmux/comm.h"
 
-static comm_abstract_t* all_comms{nullptr};
-static size_t max_comms{0};
+comm_abstract_t* comm_abstract_ptr::all_comms_ = nullptr;
+size_t comm_abstract_ptr::max_comms_ = 0;
 
-static int comm_abstract_ensure_capacity (size_t required_slots = RESERVED_SLOTS + 1) {
-    std::lock_guard<std::recursive_mutex> lock(mud_logic_mutex);
-    if (all_comms && max_comms >= required_slots) {
+int comm_abstract_ptr::ensure_capacity(size_t required_slots) {
+    if (all_comms_ && max_comms_ >= required_slots) {
         return 0;
     }
 
-    if (!all_comms) {
-        max_comms = 64; // initial capacity: 64 slots (including RESERVED_SLOTS)
-        while (max_comms < required_slots)
-            max_comms *= 2;
-        all_comms = static_cast<comm_abstract_t*>(std::calloc(max_comms, sizeof(comm_abstract_t)));
-        if (!all_comms) {
+    if (!all_comms_) {
+        max_comms_ = 64; // initial capacity: 64 slots (including RESERVED_SLOTS)
+        while (max_comms_ < required_slots)
+            max_comms_ *= 2;
+        all_comms_ = static_cast<comm_abstract_t*>(std::calloc(max_comms_, sizeof(comm_abstract_t)));
+        if (!all_comms_) {
             SPDLOG_ERROR("failed to allocate memory for comm slots");
             return -1;
         }
     }
     else {
-        size_t new_max = max_comms * 2;
+        size_t new_max = max_comms_ * 2;
         while (new_max < required_slots)
             new_max *= 2; // grow to 128, 256, 512, etc. until it can accommodate required_slots
-        comm_abstract_t* new_comms = static_cast<comm_abstract_t*>(std::realloc(all_comms, sizeof(comm_abstract_t) * new_max));
+        comm_abstract_t* new_comms = static_cast<comm_abstract_t*>(std::realloc(all_comms_, sizeof(comm_abstract_t) * new_max));
         if (!new_comms) {
             SPDLOG_ERROR("failed to reallocate memory for comm slots");
             return -1;
         }
-        memset(new_comms + max_comms, 0, sizeof(comm_abstract_t) * (new_max - max_comms));
-        all_comms = new_comms;
-        max_comms = new_max;
+        memset(new_comms + max_comms_, 0, sizeof(comm_abstract_t) * (new_max - max_comms_));
+        all_comms_ = new_comms;
+        max_comms_ = new_max;
     }
     return 0;
 }
 
-static int comm_abstract_find_slot (void) {
-    std::lock_guard<std::recursive_mutex> lock(mud_logic_mutex);
+int comm_abstract_ptr::find_slot(void) {
     // find the first available slot after RESERVED_SLOTS
     size_t slot = RESERVED_SLOTS;
-    while (slot < max_comms && (all_comms[slot].rbio || all_comms[slot].wbio))
+    while (slot < max_comms_ && (all_comms_[slot].rbio || all_comms_[slot].wbio))
         slot++;
     // if no available slot, expand the array
-    if (slot >= max_comms)
-        comm_abstract_ensure_capacity (slot + 1);
+    if (slot >= max_comms_)
+        ensure_capacity (slot + 1);
     return static_cast<int>(slot);
 }
 
+int comm_abstract_ptr::max_slot_count(void) {
+    return static_cast<int>(max_comms_);
+}
+
+void comm_abstract_ptr::reset_storage(void) {
+    std::free(all_comms_); // allocated by calloc/realloc
+    all_comms_ = nullptr;
+    max_comms_ = 0;
+}
+
 int comm_max_slot (void) {
-    return static_cast<int>(max_comms);
+    std::lock_guard<std::recursive_mutex> lock(mud_logic_mutex);
+    return comm_abstract_ptr::max_slot_count();
 }
 
 int comm_abstract_add_bio (BIO* rbio, BIO* wbio, int slot, uint32_t flags) {
@@ -72,19 +81,22 @@ int comm_abstract_add_bio (BIO* rbio, BIO* wbio, int slot, uint32_t flags) {
     }
 
     std::lock_guard<std::recursive_mutex> lock(mud_logic_mutex);
-    if (comm_abstract_ensure_capacity() < 0)
+    if (comm_abstract_ptr::ensure_capacity() < 0)
         return -1;
 
-    if (slot < 0 || slot >= static_cast<int>(max_comms)) {
-        slot = comm_abstract_find_slot();
+    if (slot < 0 || slot >= comm_abstract_ptr::max_slot_count()) {
+        slot = comm_abstract_ptr::find_slot();
     } 
     else if (comm_abstract_get(slot)) {
         SPDLOG_WARN ("slot {} is already in use; removing existing comm", slot);
         comm_abstract_remove (slot); // clear existing comm at this slot
     }
-    all_comms[slot].rbio = rbio;
-    all_comms[slot].wbio = wbio;
-    all_comms[slot].flags = flags;
+    comm_abstract_t* slot_comm = comm_abstract_ptr::slot_ptr_unlocked(slot);
+    if (!slot_comm)
+        return -1;
+    slot_comm->rbio = rbio;
+    slot_comm->wbio = wbio;
+    slot_comm->flags = flags;
     return slot;
 }
 
@@ -111,8 +123,7 @@ int comm_abstract_add_file (const char* fn_in, const char* fn_out, int slot, uin
 }
 
 int comm_abstract_disconnect (int slot) {
-    std::lock_guard<std::recursive_mutex> lock(mud_logic_mutex);
-    comm_abstract_t* comm = comm_abstract_get (slot);
+    comm_abstract_ptr comm(slot, mud_logic_mutex);
     if (!comm) {
         SPDLOG_WARN ("invalid slot {} in comm_abstract_disconnect()", slot);
         return -1;
@@ -125,52 +136,67 @@ int comm_abstract_disconnect (int slot) {
 }
 
 int comm_abstract_remove (int slot) {
-    std::lock_guard<std::recursive_mutex> lock(mud_logic_mutex);
-    comm_abstract_t* comm = comm_abstract_get (slot);
+    comm_abstract_ptr comm(slot, mud_logic_mutex);
     if (!comm)
         return 0; // already removed or invalid slot
-    if (comm->rbio)
-        BIO_free_all (comm->rbio);
-    if (comm->wbio && comm->wbio != comm->rbio)
-        BIO_free_all (comm->wbio);
-    comm->rbio = comm->wbio = nullptr;
-    comm->flags = 0;
-    comm_free_outbound_buffers(comm); // free any remaining outbound buffers
+    comm_abstract_t* raw = comm.raw();
+    if (!raw)
+        return 0;
+    if (raw->rbio)
+        BIO_free_all (raw->rbio);
+    if (raw->wbio && raw->wbio != raw->rbio)
+        BIO_free_all (raw->wbio);
+    comm_free_outbound_buffers(raw); // free any remaining outbound buffers
+    raw->flags = 0;
+    raw->rbio = raw->wbio = nullptr;
     SPDLOG_DEBUG ("removed comm slot {}", slot);
     return 0;
 }
 
 void comm_abstract_remove_all (void) {
     std::lock_guard<std::recursive_mutex> lock(mud_logic_mutex);
-    if (!all_comms)
+    if (!comm_abstract_ptr::all_comms_)
         return;
     int i = 0;
-    while (i < static_cast<int>(max_comms)) {
+    while (i < comm_abstract_ptr::max_slot_count()) {
         comm_abstract_remove (i);
         i++;
     }
-    delete[] all_comms;
-    all_comms = nullptr;
-    max_comms = 0;
+    comm_abstract_ptr::reset_storage();
 }
 
 comm_abstract_t* comm_abstract_get (int slot) {
-    if (!all_comms || slot < 0 || slot >= static_cast<int>(max_comms))
-        return nullptr;
-    comm_abstract_t* comm = &all_comms[slot];
-    return (comm->rbio || comm->wbio) ? comm : nullptr;
+    return comm_abstract_ptr::get_slot(slot);
 }
 
-BIO* comm_abstract_get_rbio (int slot) {
-    std::lock_guard<std::recursive_mutex> lock(mud_logic_mutex);
-    comm_abstract_t* comm = comm_abstract_get(slot);
-    return comm ? comm->rbio : nullptr;
+bool comm_abstract_has_rbio (int slot) {
+    comm_abstract_ptr comm(slot, mud_logic_mutex);
+    return comm.has_rbio();
 }
 
-BIO* comm_abstract_get_wbio (int slot) {
-    std::lock_guard<std::recursive_mutex> lock(mud_logic_mutex);
-    comm_abstract_t* comm = comm_abstract_get(slot);
-    return comm ? comm->wbio : nullptr;
+bool comm_abstract_has_wbio (int slot) {
+    comm_abstract_ptr comm(slot, mud_logic_mutex);
+    return comm.has_wbio();
+}
+
+bool comm_abstract_get_rbio_fd (int slot, socket_fd_t* out_fd) {
+    comm_abstract_ptr comm(slot, mud_logic_mutex);
+    return comm.get_rbio_fd(out_fd);
+}
+
+bool comm_abstract_get_wbio_fd (int slot, socket_fd_t* out_fd) {
+    comm_abstract_ptr comm(slot, mud_logic_mutex);
+    return comm.get_wbio_fd(out_fd);
+}
+
+int comm_abstract_read_slot (int slot, void *buf, size_t len) {
+    comm_abstract_ptr comm(slot, mud_logic_mutex);
+    return comm.read(buf, len);
+}
+
+int comm_abstract_write_slot (int slot, const void *buf, size_t len) {
+    comm_abstract_ptr comm(slot, mud_logic_mutex);
+    return comm.write(buf, len);
 }
 
 uint32_t comm_get_flags (comm_abstract_t *comm) {
