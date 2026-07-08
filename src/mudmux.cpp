@@ -253,13 +253,13 @@ extern "C" int mudmux_run (void* context) {
             int slot = context_to_slot (event.context);
 
             {
-                comm_abstract_ptr comm(slot, mud_logic_mutex);
+                comm_abstract_ptr comm (slot, mud_logic_mutex);
                 if (!comm) {
                     // This can happen if the comm was removed (e.g., due to disconnect) while events were still pending
                     continue;
                 }
                 SPDLOG_DEBUG ("processing event for slot {} (event.fd={})", slot, event.fd);
-                if (comm_get_flags(comm.get()) & C_SOCKET_LISTENING) {
+                if (comm->flags & C_SOCKET_LISTENING) {
                     comm_process_listener_event (runtime, slot, event.fd);
                     continue;
                 }
@@ -277,7 +277,7 @@ extern "C" int mudmux_run (void* context) {
                     continue;
                 }
 
-                if (comm_get_flags(comm.get()) & C_CLOSING) {
+                if (comm->flags & C_CLOSING) {
                     SPDLOG_DEBUG ("comm slot {} has C_CLOSING flag set, proceeding with graceful close", slot);
                     (void) comm_close(runtime, slot); // proceed pending graceful close if C_CLOSING flag is set
                     continue;

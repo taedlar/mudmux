@@ -49,6 +49,9 @@ Slots are accessed exclusively through opaque `comm_abstract_t` structs via publ
 
 ### Key API (`abstract.hpp`)
 
+- For functions taking `slot` argument, it performs thread-safety locking before proceeding.
+- For functions takine `comm_abstract_t*` argument, it should be used in logic layer (i.e. hook functions) or inside a RAII guarded scope.
+
 ```c
 // Register I/O sources at a slot
 int comm_abstract_add_bio(BIO *rbio, BIO *wbio, int slot, uint32_t flags);
@@ -59,17 +62,6 @@ bool comm_abstract_has_rbio(int slot);
 bool comm_abstract_get_rbio_fd(int slot, socket_fd_t* out_fd);
 comm_abstract_t* comm_abstract_get(int slot);
 
-// Flag management
-uint32_t comm_get_flags (comm_abstract_t *comm);
-void comm_set_flags (comm_abstract_t *comm, uint32_t flags);
-void comm_clear_flags (comm_abstract_t *comm, uint32_t flags);
-
-// Non-blocking (buffered) write path
-void comm_buffered_write (comm_abstract_t *comm, const void *buf, size_t len);
-void comm_flush(async_runtime_t *runtime, int slot);
-void comm_flush_all(async_runtime_t *runtime);
-bool comm_close(async_runtime_t *runtime, int slot);
-
 // Input mode control
 bool comm_set_line_input(int slot, bool echo);
 bool comm_set_char_input(int slot);
@@ -79,6 +71,17 @@ bool comm_enable_virtual_terminal(int slot);
 // Lifecycle
 int comm_abstract_remove(int slot);
 void comm_abstract_remove_all(void);
+
+// Flag management
+uint32_t comm_get_flags (comm_abstract_t *comm);
+void comm_set_flags (comm_abstract_t *comm, uint32_t flags);
+void comm_clear_flags (comm_abstract_t *comm, uint32_t flags);
+
+// Non-blocking (buffered) write path
+void comm_buffered_write (comm_abstract_t *comm, const void *buf, size_t len);
+void comm_flush (async_runtime_t *runtime, int slot);
+void comm_flush_all (async_runtime_t *runtime);
+bool comm_close (async_runtime_t *runtime, int slot);
 ```
 
 `comm_close()` is also exposed to logic-layer code through `mudmux/comm.h` (`#define comm_close mudmux_comm_api->close`), so hooks can proactively close slots.

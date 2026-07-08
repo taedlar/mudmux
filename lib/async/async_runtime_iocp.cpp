@@ -30,8 +30,8 @@
 #define OP_ACCEPT  3
 
 /* Completion keys for special events */
-#define ACCEPT_COMPLETION_KEY  ((uintptr_t)-2)
-#define WAKEUP_COMPLETION_KEY  ((uintptr_t)-3)
+#define ACCEPT_COMPLETION_KEY  IOCP_COMPLETION_KEY(1)
+#define WAKEUP_COMPLETION_KEY  IOCP_COMPLETION_KEY(2)
 
 /**
  * IOCP context for each I/O operation
@@ -434,6 +434,17 @@ extern "C" int async_runtime_wait (async_runtime_t* runtime, io_event_t* events,
                 }
                 if (entries[i].lpCompletionKey == CONSOLE_COMPLETION_KEY) {
                     continue;
+                }
+                if (entries[i].lpCompletionKey == ASYNC_IO_ERROR_KEY) {
+                    events[event_count].fd = INVALID_SOCKET_FD;
+                    events[event_count].handle = NULL;
+                    events[event_count].completion_key = entries[i].lpCompletionKey;
+                    events[event_count].context = reinterpret_cast<void*>(
+                        static_cast<intptr_t>(entries[i].dwNumberOfBytesTransferred));
+                    events[event_count].event_type = EVENT_ERROR;
+                    events[event_count].bytes_transferred = entries[i].dwNumberOfBytesTransferred;
+                    events[event_count].buffer = NULL;
+                    event_count++;
                 }
             }
         }

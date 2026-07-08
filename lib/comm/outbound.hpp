@@ -9,6 +9,9 @@ void comm_buffered_write (comm_abstract_t *comm, const void *buf, size_t len);
 
 void comm_free_outbound_buffers(comm_abstract_t* comm);
 
+/**
+ * @brief Flush any buffered outbound data for the specified communication slot.
+ */
 void comm_flush (async_runtime_t* runtime, int slot);
 
 void comm_flush_all (async_runtime_t* runtime);

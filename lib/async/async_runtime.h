@@ -42,6 +42,11 @@ extern "C" {
 #define EVENT_ERROR  0x04  /**< Error occurred on socket/fd */
 #define EVENT_CLOSE  0x08  /**< Connection closed (EOF or remote shutdown) */
 
+/* Completion keys (32-bits wide) */
+#define ASYNC_IO_ERROR_KEY      ((uintptr_t)0xC0000001)  /**< Completion key for I/O error events (posted by event handlers) */
+#define IOCP_COMPLETION_KEY(x)  ((uintptr_t)0xC1000000 + (uintptr_t)(x))  /**< Completion key for async_runtime_iocp */
+#define ASYNC_WORKER_KEY(x)     ((uintptr_t)0xF0000000 + (uintptr_t)(x))  /**< Completion key for async workers */
+
 /**
  * Event structure returned by async_runtime_wait()
  * 

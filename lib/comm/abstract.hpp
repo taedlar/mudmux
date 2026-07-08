@@ -81,7 +81,7 @@ bool comm_abstract_get_wbio_fd (int slot, socket_fd_t* out_fd);
 int comm_abstract_read_slot (int slot, void *buf, size_t len);
 int comm_abstract_write_slot (int slot, const void *buf, size_t len);
 
-/* flag management */
+/* flag management (logic layer helper) */
 uint32_t comm_get_flags (comm_abstract_t *comm);
 void comm_set_flags (comm_abstract_t *comm, uint32_t flags);
 void comm_clear_flags (comm_abstract_t *comm, uint32_t flags);

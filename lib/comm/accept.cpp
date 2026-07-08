@@ -74,9 +74,9 @@ int comm_accept (async_runtime_t* runtime, const char* accept_name) {
 }
 
 static int _accept_new_comm (int slot, socket_fd_t event_fd) {
-	comm_abstract_ptr listener_comm(slot, mud_logic_mutex);
+	comm_abstract_ptr listener_comm (slot, mud_logic_mutex);
 	BIO* listener_bio = listener_comm ? listener_comm->rbio : nullptr;
-	if (!listener_bio || !(comm_get_flags(listener_comm.get()) & C_SOCKET_LISTENING)) {
+	if (!listener_bio || !(listener_comm->flags & C_SOCKET_LISTENING)) {
 		SPDLOG_WARN ("slot {} is not a valid listener", slot);
 		return -1;
 	}

@@ -176,9 +176,9 @@ int comm_process_console_input (async_runtime_t *runtime, bool allow_reconnect) 
     }
 
     if (disconnected) {
-        comm_abstract_ptr comm(COMM_SLOT_CONSOLE, mud_logic_mutex);
+        comm_abstract_ptr comm (COMM_SLOT_CONSOLE, mud_logic_mutex);
         if (comm) {
-            if (!(comm_get_flags(comm.get()) & C_CLOSING))
+            if (!(comm->flags & C_CLOSING))
                 comm_invoke_disconnect (runtime, COMM_SLOT_CONSOLE); // invoke disconnect hook for console user
             comm_abstract_remove (COMM_SLOT_CONSOLE); // remove console from comm_abstract
         }

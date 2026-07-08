@@ -92,7 +92,7 @@ bool comm_set_line_input (int slot, bool echo) {
         if (!set_console_input_mode (set_bits, clear_bits))
             return false;
         SPDLOG_DEBUG ("console input mode set: C_LINE_INPUT was {}, echo={}",
-            (comm ? (comm_get_flags(comm.get()) & C_LINE_INPUT) != 0 : false), echo);
+            (comm ? (comm->flags & C_LINE_INPUT) != 0 : false), echo);
         break;
     }
     default:
@@ -100,7 +100,7 @@ bool comm_set_line_input (int slot, bool echo) {
     }
 
     if (comm)
-        comm_set_flags (comm.get(), C_LINE_INPUT);
+        comm->flags |= C_LINE_INPUT;
     return true;
 }
 
@@ -122,7 +122,7 @@ bool comm_set_char_input (int slot) {
     if (ret) {
         comm_abstract_ptr comm(slot, mud_logic_mutex);
         if (comm)
-            comm_clear_flags (comm.get(), C_LINE_INPUT | C_CLIENT_ECHO);
+            comm->flags &= ~(C_LINE_INPUT | C_CLIENT_ECHO);
     }
     return ret;
 }
@@ -145,9 +145,9 @@ bool comm_set_echo (int slot, bool echo) {
     }
     if (comm) {
         if (echo)
-            comm_set_flags (comm.get(), C_CLIENT_ECHO);
+            comm->flags |= C_CLIENT_ECHO;
         else
-            comm_clear_flags (comm.get(), C_CLIENT_ECHO);
+            comm->flags &= ~C_CLIENT_ECHO;
     }
     return result;
 }
@@ -195,7 +195,7 @@ bool comm_set_line_input (int slot, bool echo) {
     }
 
     if (comm)
-        comm_set_flags (comm.get(), C_LINE_INPUT);
+        comm->flags |= C_LINE_INPUT;
     return true;
 }
 
@@ -221,7 +221,7 @@ bool comm_set_char_input(int slot) {
         return false;
     }
     if (comm)
-        comm_clear_flags (comm.get(), C_LINE_INPUT | C_CLIENT_ECHO);
+        comm->flags &= ~(C_LINE_INPUT | C_CLIENT_ECHO);
     return true;
 }
 
@@ -248,9 +248,9 @@ bool comm_set_echo (int slot, bool echo) {
     }
     if (comm) {
         if (echo)
-            comm_set_flags (comm.get(), C_CLIENT_ECHO);
+            comm->flags |= C_CLIENT_ECHO;
         else
-            comm_clear_flags (comm.get(), C_CLIENT_ECHO);
+            comm->flags &= ~C_CLIENT_ECHO;
     }
     return true;
 }
