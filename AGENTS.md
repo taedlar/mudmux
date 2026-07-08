@@ -75,7 +75,7 @@ Hooks (`mudmux_hook_type_t`) let the loaded logic layer react to transport event
 | `MUDMUX_HOOK_DISCONNECT` | connection closed |
 | `MUDMUX_HOOK_MESSAGE_INBOUND` | data received from client |
 | `MUDMUX_HOOK_MESSAGE_OUTBOUND` | data sent to client |
-| `MUDMUX_HOOK_ERROR` | transport error |
+| `MUDMUX_HOOK_PROMPT` | finished draining inbound data |
 
 Register with `mudmux_register_hook()`; invoke with `mudmux_invoke_hook()`.
 

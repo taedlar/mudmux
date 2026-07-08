@@ -145,6 +145,7 @@ void comm_flush (async_runtime_t* runtime, int slot) {
         comm->outbound = next_buffer;
         obb = next_buffer;
     }
+    BIO_flush(comm->wbio); // ensure all data is sent to the transport layer
 
     socket_fd_t fd {INVALID_SOCKET_FD};
     if (!comm_bio_get_socket_fd(comm->wbio, &fd)) {

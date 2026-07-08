@@ -14,6 +14,8 @@
 #define C_SOCKET_WRITABLE   0x10000000
 #define C_LINE_INPUT        0x08000000
 #define C_CLIENT_ECHO       0x04000000
+#define C_ENABLE_PROMPT     0x00000004
+#define C_INVOKED_PROMPT    0x00000002
 #define C_BUFFERED_WRITE    0x00000001
 
 typedef struct comm_abstract_s comm_abstract_t;
@@ -48,6 +50,7 @@ typedef struct mudmux_comm_api_s {
     bool (*set_line_input)(int slot, bool echo);
     bool (*set_char_input)(int slot);
     bool (*set_echo)(int slot, bool echo);
+    void (*enable_prompt)(int slot, bool enable);
     bool (*enable_virtual_terminal)(int slot);
 } mudmux_comm_api_t;
 
@@ -64,6 +67,8 @@ typedef struct mudmux_comm_api_s {
 #define comm_close                      mudmux_comm_api->close
 #define comm_set_line_input             mudmux_comm_api->set_line_input
 #define comm_set_char_input             mudmux_comm_api->set_char_input
+#define comm_set_echo                   mudmux_comm_api->set_echo
+#define comm_enable_prompt              mudmux_comm_api->enable_prompt
 #define comm_enable_virtual_terminal    mudmux_comm_api->enable_virtual_terminal
 #endif
 

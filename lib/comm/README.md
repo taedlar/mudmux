@@ -77,7 +77,7 @@ All input events — regardless of source — are delivered via `MUDMUX_HOOK_MES
 MUDMUX_HOOK_CONNECT          // New input session starts (slot=0 for console, 1+ for network)
 MUDMUX_HOOK_MESSAGE_INBOUND  // Each line received, slot identifies source
 MUDMUX_HOOK_MESSAGE_OUTBOUND // Data sent to output
-MUDMUX_HOOK_ERROR            // Transport errors
+MUDMUX_HOOK_PROMPT           // Finished draining inbound data
 ```
 
 **Key advantage:** Logic layer logic is transport-agnostic. The same code handles console, file, and network input without modification.
