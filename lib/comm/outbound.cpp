@@ -4,10 +4,11 @@
 
 #include "outbound.h"
 
-#include "console.h"
+#include <mutex>
 #include <openssl/bio.h>
 #include <openssl/err.h>
 
+#include "console.h"
 #include "mudmux/comm.h"
 #include "mudmux/hooks.h"
 
@@ -56,6 +57,8 @@ void comm_buffered_write (comm_abstract_t *comm, const void *buf, size_t len) {
         SPDLOG_ERROR("Attempted to write more data than allowed for buffered write");
         return;
     }
+    // This queue stores plaintext payload only; TLS framing and encryption must happen
+    // below this layer so hooks remain non-blocking and transport buffering stays explicit.
     if (!comm->outbound) {
         // No existing outbound buffer, allocate one (always buffer-and-flush)
         comm->outbound = allocate_outbound_buffer();
@@ -112,7 +115,7 @@ void comm_free_outbound_buffers(comm_abstract_t* comm) {
 }
 
 void comm_flush (async_runtime_t* runtime, int slot) {
-    auto comm = comm_abstract_get (slot);
+    comm_abstract_ptr comm(slot, mud_logic_mutex);
     if (!comm || !comm->wbio)
         return; // invalid parameters
     outbound_buffer_t* obb = comm->outbound;
@@ -124,9 +127,9 @@ void comm_flush (async_runtime_t* runtime, int slot) {
                 if (!BIO_should_retry(comm->wbio)) {
                     SPDLOG_ERROR ("BIO_write failed during flush: {}", ERR_error_string(ERR_get_error(), nullptr));
                     // invoke disconnect hook (if not already closing), drop any buffered outbound data
-                    if (!(comm_get_flags(comm) & C_CLOSING))
+                    if (!(comm_get_flags(comm.get()) & C_CLOSING))
                         comm_invoke_disconnect(runtime, slot); // invoke disconnect hook for this comm slot
-                    comm_free_outbound_buffers(comm); // drop any buffered outbound data
+                    comm_free_outbound_buffers(comm.get()); // drop any buffered outbound data
                 }
                 break;
             }
@@ -149,8 +152,8 @@ void comm_flush (async_runtime_t* runtime, int slot) {
     }
 
     if (comm->outbound) {
-        if (!(comm_get_flags(comm) & C_SOCKET_WRITABLE)) {
-            comm_set_flags(comm, C_SOCKET_WRITABLE);
+        if (!(comm_get_flags(comm.get()) & C_SOCKET_WRITABLE)) {
+            comm_set_flags(comm.get(), C_SOCKET_WRITABLE);
             if (fd != INVALID_SOCKET_FD)
                 async_runtime_modify (runtime, fd, EVENT_READ | EVENT_WRITE, nullptr);
         }
@@ -159,16 +162,16 @@ void comm_flush (async_runtime_t* runtime, int slot) {
     }
     else {
         // all buffered data flushed, remove writable event if it was set
-        if (comm_get_flags(comm) & C_SOCKET_WRITABLE) {
+        if (comm_get_flags(comm.get()) & C_SOCKET_WRITABLE) {
             if (fd != INVALID_SOCKET_FD)
                 async_runtime_modify (runtime, fd, EVENT_READ, nullptr); // remove writable event, keep readable event
-            comm_clear_flags(comm, C_SOCKET_WRITABLE);
+            comm_clear_flags(comm.get(), C_SOCKET_WRITABLE);
         }
 
         // clear buffered-write flag, it will be set again when new data is written
-        comm_clear_flags(comm, C_BUFFERED_WRITE);
+        comm_clear_flags(comm.get(), C_BUFFERED_WRITE);
 
-        if (comm_get_flags(comm) & C_CLOSING) {
+        if (comm_get_flags(comm.get()) & C_CLOSING) {
             socket_fd_t fd {INVALID_SOCKET_FD};
             if (comm->wbio && comm_bio_get_socket_fd(comm->wbio, &fd)) {
                 SPDLOG_DEBUG ("comm slot has C_CLOSING flag set, sending shutdown signal to peer");
@@ -181,27 +184,27 @@ void comm_flush (async_runtime_t* runtime, int slot) {
 void comm_flush_all (async_runtime_t* runtime) {
     int max_slot = comm_max_slot();
     for (int slot = 0; slot < max_slot; ++slot) {
-        auto* comm = comm_abstract_get(slot);
+        comm_abstract_ptr comm(slot, mud_logic_mutex);
         if (comm && (comm->flags & C_BUFFERED_WRITE))
             comm_flush (runtime, slot);
     }
 }
 
 bool comm_close (async_runtime_t* runtime, int slot) {
-    auto comm = comm_abstract_get(slot);
+    comm_abstract_ptr comm(slot, mud_logic_mutex);
     if (!comm)
         return true; // already removed
 
     if (!runtime)
         runtime = async_get_current_runtime();
 
-    if (!(comm_get_flags(comm) & C_CLOSING)) {
+    if (!(comm_get_flags(comm.get()) & C_CLOSING)) {
         // let logic layer handle disconnect (e.g., cleanup, logging, etc.)
-        comm_set_flags(comm, C_CLOSING);
+        comm_set_flags(comm.get(), C_CLOSING);
         comm_invoke_disconnect(runtime, slot);
     }
 
-    if (comm_get_flags(comm) & C_BUFFERED_WRITE) {
+    if (comm_get_flags(comm.get()) & C_BUFFERED_WRITE) {
         SPDLOG_DEBUG("comm slot {} has buffered data, will flush before disconnecting", slot);
         return false;
     }

@@ -8,7 +8,7 @@ The communication layer provides mudmux with a **unified interface for all I/O s
 
 | File | Purpose |
 |------|---------|
-| `abstract.h/cpp` | **Slot abstraction layer** — BIO-based unified I/O for all sources, slot lifecycle |
+| `abstract.hpp/cpp` | **Slot abstraction layer** — BIO-based unified I/O for all sources, slot lifecycle |
 | `inbound.h/cpp` | **Hook dispatch** — Route all input to `MUDMUX_HOOK_MESSAGE_INBOUND` with metadata |
 | `console.h/cpp` | **Console/stdin input** — Worker thread, real-time mode switching |
 | `file_input.h/cpp` | **File input** — Async reader thread, queue-based buffering |

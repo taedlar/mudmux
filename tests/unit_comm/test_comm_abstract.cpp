@@ -6,7 +6,7 @@
 #include <limits>
 #include <openssl/bio.h>
 
-#include "comm/abstract.h"
+#include "comm/abstract.hpp"
 #include "mudmux/mudmux.h"
 #include "mudmux/comm.h"
 

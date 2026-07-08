@@ -13,3 +13,8 @@ target_link_libraries(chatroom PRIVATE
 if(WIN32)
     target_link_libraries(chatroom PRIVATE OpenSSL::applink)
 endif()
+
+add_custom_command(TARGET chatroom POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy -t $<TARGET_FILE_DIR:chatroom> $<TARGET_RUNTIME_DLLS:chatroom>
+    COMMAND_EXPAND_LISTS
+)

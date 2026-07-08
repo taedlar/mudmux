@@ -7,7 +7,7 @@
 #include <mutex>
 #include <openssl/bio.h>
 
-#include "abstract.h"
+#include "abstract.hpp"
 #include "inbound.h"
 #include "async/async_queue.h"
 #include "mudmux/hooks.h"
@@ -26,14 +26,13 @@ static void file_input_reader_thread (async_runtime_t* runtime, int slot, async_
     SPDLOG_INFO ("file input reader thread started for slot {}", slot);
     
     while (true) {
-        BIO* rbio = comm_abstract_get_rbio (slot);
-        if (!rbio) {
+        if (!comm_abstract_has_rbio(slot)) {
             SPDLOG_INFO ("file input closed for slot {}", slot);
             break;
         }
         
-        // Read from file BIO
-        int bytes_read = BIO_read(rbio, buffer, sizeof(buffer) - 1);
+        // Read from file BIO while slot lock is held in comm_abstract_read_slot.
+        int bytes_read = comm_abstract_read_slot(slot, buffer, sizeof(buffer) - 1);
         
         if (bytes_read < 0) {
             SPDLOG_ERROR ("BIO_read failed for slot {}", slot);
@@ -77,8 +76,7 @@ extern "C" bool comm_init_async_file_input (async_runtime_t *runtime, int slot) 
     }
     
     // Check if slot has an rbio (file input)
-    BIO* rbio = comm_abstract_get_rbio(slot);
-    if (!rbio) {
+    if (!comm_abstract_has_rbio(slot)) {
         SPDLOG_ERROR ("no file input detected for slot {} for async initialization", slot);
         return false;
     }

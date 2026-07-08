@@ -15,6 +15,7 @@
 #include "async/async_event.h"
 #include "async/console_worker.h"
 #include "comm/accept.h"
+#include "comm/abstract.hpp"
 #include "comm/console.h"
 #include "comm/file_input.h"
 #include "comm/inbound.h"
@@ -188,8 +189,7 @@ extern "C" int mudmux_run (void* context) {
             success = comm_init_console (runtime);
         }
         else { // file input is enabled (before entering event loop), simulate a single console session with file input
-            BIO* rbio = comm_abstract_get_rbio (COMM_SLOT_CONSOLE);
-            if (rbio) {
+            if (comm_abstract_has_rbio(COMM_SLOT_CONSOLE)) {
                 SPDLOG_DEBUG("detected existing file input, initializing async file input processing");
                 // Initialize file input (starts reader thread)
                 if (!comm_init_async_file_input(runtime, COMM_SLOT_CONSOLE)) {
@@ -243,50 +243,45 @@ extern "C" int mudmux_run (void* context) {
         // Process I/O events from transports (non-blocking)
         for (int i = 0; i < num_events; ++i) {
             auto& event = events[i];
-            
-            // Skip file input and console completion events (already processed above)
-            if (IS_FILE_INPUT_COMPLETION_KEY(event.fd) || event.fd == CONSOLE_COMPLETION_KEY)
-                continue;
-#ifndef NDEBUG
-            SPDLOG_DEBUG ("event: fd={}, event_type={}, bytes_transferred={}",
-                event.fd, event.event_type, event.bytes_transferred);
-#endif
 
             if (!event.context) {
+                // completion events: we always drain completion queue before processing
+                // I/O events (e.g., console input, file input, etc.)
                 continue;
             }
 
-            int slot = context_to_slot(event.context);
-            auto* comm = comm_abstract_get (slot);
-            if (!comm) {
-                // This can happen if the comm was removed (e.g., due to disconnect) while events were still pending
-                continue;
-            }
-            SPDLOG_DEBUG ("processing event for slot {} (event.fd={})", slot, event.fd);
+            int slot = context_to_slot (event.context);
 
-            if (comm_get_flags(comm) & C_SOCKET_LISTENING) {
-                comm_process_listener_event (runtime, slot, event.fd);
-                continue;
-            }
-
-            if (event.event_type & EVENT_READ) {
-                if (comm_process_input(runtime, &event, slot) != 0) {
-                    (void) comm_close(runtime, slot);
+            {
+                comm_abstract_ptr comm(slot, mud_logic_mutex);
+                if (!comm) {
+                    // This can happen if the comm was removed (e.g., due to disconnect) while events were still pending
                     continue;
                 }
-                // TODO: dispatch inbound message to logic layer with fair command turns
-                continue;
-            }
+                SPDLOG_DEBUG ("processing event for slot {} (event.fd={})", slot, event.fd);
+                if (comm_get_flags(comm.get()) & C_SOCKET_LISTENING) {
+                    comm_process_listener_event (runtime, slot, event.fd);
+                    continue;
+                }
+                if (event.event_type & EVENT_READ) {
+                    if (comm_process_input(runtime, &event, slot) != 0) {
+                        (void) comm_close(runtime, slot);
+                        continue;
+                    }
+                    // TODO: dispatch inbound message to logic layer with fair command turns
+                    continue;
+                }
 
-            if (event.event_type & (EVENT_CLOSE | EVENT_ERROR)) {
-                (void) comm_close(runtime, slot); // close the connection on error or close event
-                continue;
-            }
+                if (event.event_type & (EVENT_CLOSE | EVENT_ERROR)) {
+                    (void) comm_close(runtime, slot); // close the connection on error or close event
+                    continue;
+                }
 
-            if (comm_get_flags(comm) & C_CLOSING) {
-                SPDLOG_DEBUG ("comm slot {} has C_CLOSING flag set, proceeding with graceful close", slot);
-                (void) comm_close(runtime, slot); // proceed pending graceful close if C_CLOSING flag is set
-                continue;
+                if (comm_get_flags(comm.get()) & C_CLOSING) {
+                    SPDLOG_DEBUG ("comm slot {} has C_CLOSING flag set, proceeding with graceful close", slot);
+                    (void) comm_close(runtime, slot); // proceed pending graceful close if C_CLOSING flag is set
+                    continue;
+                }
             }
         }
     }

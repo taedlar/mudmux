@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <openssl/bio.h>
 
-#include "abstract.h"
+#include "abstract.hpp"
 #include "inbound.h"
 #include "mudmux/hooks.h"
 #include "mudmux/comm.h"
@@ -67,16 +67,16 @@ int comm_accept (async_runtime_t* runtime, const char* accept_name) {
 		return -1;
 	}
 
-	if (comm_abstract_get_rbio (slot))
+	if (comm_abstract_has_rbio(slot))
 		SPDLOG_INFO ("listening transport {} registered (slot={}, fd={})", accept_name, slot, listen_fd);
 
 	return 0;
 }
 
 static int _accept_new_comm (int slot, socket_fd_t event_fd) {
-	comm_abstract_t* listener_comm = comm_abstract_get(slot);
-	BIO* listener_bio = comm_abstract_get_rbio(slot);
-	if (!listener_bio || !(comm_get_flags(listener_comm) & C_SOCKET_LISTENING)) {
+	comm_abstract_ptr listener_comm(slot, mud_logic_mutex);
+	BIO* listener_bio = listener_comm ? listener_comm->rbio : nullptr;
+	if (!listener_bio || !(comm_get_flags(listener_comm.get()) & C_SOCKET_LISTENING)) {
 		SPDLOG_WARN ("slot {} is not a valid listener", slot);
 		return -1;
 	}
@@ -135,13 +135,12 @@ static int _accept_new_comm (int slot, socket_fd_t event_fd) {
 }
 
 int _async_poll_read (async_runtime_t* runtime, int slot) {
-	BIO* rbio = comm_abstract_get_rbio (slot);
-	if (!runtime || !rbio) {
+	if (!runtime) {
 		SPDLOG_WARN ("invalid arguments to _async_poll_read");
 		return -1;
 	}
 	socket_fd_t fd {INVALID_SOCKET_FD};
-	if (!comm_bio_get_socket_fd(rbio, &fd)) {
+	if (!comm_abstract_get_rbio_fd(slot, &fd)) {
 		SPDLOG_WARN ("invalid fd for slot {}", slot);
 		return -1;
 	}
@@ -149,8 +148,7 @@ int _async_poll_read (async_runtime_t* runtime, int slot) {
 }
 
 int comm_process_listener_event (async_runtime_t* runtime, int listener_slot, socket_fd_t event_fd) {
-	BIO* listener_bio = comm_abstract_get_rbio (listener_slot);
-	if (!runtime || !listener_bio) {
+	if (!runtime || !comm_abstract_has_rbio(listener_slot)) {
 		SPDLOG_WARN ("invalid arguments");
 		return -1;
 	}
@@ -180,7 +178,7 @@ int comm_process_listener_event (async_runtime_t* runtime, int listener_slot, so
 #ifdef _WIN32
 	// [IOCP] post an initial IOCP read for the accepted socket to trigger the first read event
 	socket_fd_t accepted_fd {INVALID_SOCKET_FD};
-	if (!comm_bio_get_socket_fd(comm_abstract_get_rbio(accepted_slot), &accepted_fd)) {
+	if (!comm_abstract_get_rbio_fd(accepted_slot, &accepted_fd)) {
 		SPDLOG_ERROR ("BIO_get_fd failed for accepted slot {}", accepted_slot);
 		comm_abstract_remove (accepted_slot);
 		return -1;

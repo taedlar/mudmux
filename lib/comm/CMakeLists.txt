@@ -14,7 +14,7 @@ target_sources(comm INTERFACE
     FILE_SET HEADERS
     BASE_DIRS ${CMAKE_SOURCE_DIR}/lib
     FILES
-        abstract.h
+        abstract.hpp
         accept.h
         console.h
         file_input.h
