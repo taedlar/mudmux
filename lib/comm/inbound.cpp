@@ -62,7 +62,7 @@ int comm_process_input (
     }
 #else
     char buffer[4096];
-    int read_bytes = comm_read(comm.get(), buffer, sizeof(buffer));
+    int read_bytes = comm.read (buffer, sizeof(buffer));
     if (read_bytes <= 0) {
         return 1;
     }

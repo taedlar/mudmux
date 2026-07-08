@@ -64,10 +64,6 @@ uint32_t comm_get_flags (comm_abstract_t *comm);
 void comm_set_flags (comm_abstract_t *comm, uint32_t flags);
 void comm_clear_flags (comm_abstract_t *comm, uint32_t flags);
 
-// Read/write operations
-int comm_read(comm_abstract_t *comm, void *buf, size_t len);
-int comm_write(comm_abstract_t *comm, const void *buf, size_t len);
-
 // Non-blocking (buffered) write path
 void comm_buffered_write (comm_abstract_t *comm, const void *buf, size_t len);
 void comm_flush(async_runtime_t *runtime, int slot);

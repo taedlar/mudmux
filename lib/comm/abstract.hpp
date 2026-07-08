@@ -88,10 +88,6 @@ uint32_t comm_get_flags (comm_abstract_t *comm);
 void comm_set_flags (comm_abstract_t *comm, uint32_t flags);
 void comm_clear_flags (comm_abstract_t *comm, uint32_t flags);
 
-/* synchronous I/O, internal use only */
-int comm_read (comm_abstract_t *comm, void *buf, size_t len);
-int comm_write (comm_abstract_t *comm, const void *buf, size_t len);
-
 }
 
 class comm_abstract_ptr {
@@ -165,13 +161,9 @@ public:
         return comm && comm->wbio && comm_bio_get_socket_fd(comm->wbio, out_fd);
     }
 
-    inline int read(void* buf, size_t len) const {
-        return comm_read(get(), buf, len);
-    }
-
-    inline int write(const void* buf, size_t len) const {
-        return comm_write(get(), buf, len);
-    }
+    // synchronous I/O
+    int read (void* buf, size_t len);
+    int write (const void* buf, size_t len);
 
     friend int comm_max_slot (void);
     friend int comm_abstract_add_bio (BIO *rbio, BIO *wbio, int slot, uint32_t flags);
