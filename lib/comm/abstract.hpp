@@ -1,5 +1,5 @@
-#ifndef COMM_ABSTRACT_H
-#define COMM_ABSTRACT_H
+#ifndef COMM_ABSTRACT_HPP
+#define COMM_ABSTRACT_HPP
 
 #include <cstdint>
 #include <limits>
@@ -67,8 +67,6 @@ static inline bool comm_bio_get_socket_fd (BIO* bio, socket_fd_t* out_fd) {
     return *out_fd != INVALID_SOCKET_FD;
 }
 
-extern "C" {
-
 /* comm_abstract_t life cycle */
 int comm_max_slot (void);
 int comm_abstract_add_bio (BIO *rbio, BIO *wbio, int slot, uint32_t flags);
@@ -88,8 +86,10 @@ uint32_t comm_get_flags (comm_abstract_t *comm);
 void comm_set_flags (comm_abstract_t *comm, uint32_t flags);
 void comm_clear_flags (comm_abstract_t *comm, uint32_t flags);
 
-}
-
+/**
+ * comm_abstract_ptr is a RAII wrapper for comm_abstract_t that locks the mud_logic_mutex
+ * and provides safe access to the underlying comm_abstract_t for a given slot.
+ */
 class comm_abstract_ptr {
 private:
     std::unique_lock<std::recursive_mutex> lock_;
@@ -121,7 +121,7 @@ public:
     comm_abstract_ptr(comm_abstract_ptr&&) = default;
     comm_abstract_ptr& operator=(comm_abstract_ptr&&) = default;
 
-    static inline comm_abstract_t* get_slot(int slot) {
+    static inline comm_abstract_t* get_slot(int slot) { // comm_abstract_get() accessor to comm_abstract_t
         return resolve_slot_unlocked(slot);
     }
 
@@ -129,7 +129,7 @@ public:
         return slot_ptr_unlocked(slot_);
     }
 
-    inline comm_abstract_t* get() const {
+    inline comm_abstract_t* get() const { // RAII accessor to comm_abstract_t
         return resolve_slot_unlocked(slot_);
     }
 
@@ -165,9 +165,11 @@ public:
     int read (void* buf, size_t len);
     int write (const void* buf, size_t len);
 
+    // other exposed methods that require access to private members
     friend int comm_max_slot (void);
     friend int comm_abstract_add_bio (BIO *rbio, BIO *wbio, int slot, uint32_t flags);
     friend void comm_abstract_remove_all (void);
-};
 
-#endif /* COMM_ABSTRACT_H */
+}; // comm_abstract_ptr
+
+#endif /* COMM_ABSTRACT_HPP */

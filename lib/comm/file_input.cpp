@@ -2,13 +2,13 @@
 #include "config.h"
 #endif
 
-#include "file_input.h"
+#include "file_input.hpp"
 
 #include <mutex>
 #include <openssl/bio.h>
 
 #include "abstract.hpp"
-#include "inbound.h"
+#include "inbound.hpp"
 #include "async/async_queue.h"
 #include "mudmux/hooks.h"
 #include "mudmux/mudmux.h"
@@ -63,7 +63,7 @@ static void file_input_reader_thread (async_runtime_t* runtime, int slot, async_
     SPDLOG_INFO("file input reader thread stopped");
 }
 
-extern "C" bool comm_init_async_file_input (async_runtime_t *runtime, int slot) {
+bool comm_init_async_file_input (async_runtime_t *runtime, int slot) {
     std::lock_guard<std::mutex> lock(file_input_mutex);
     
     // create file input queue if it doesn't exist
@@ -97,7 +97,7 @@ extern "C" bool comm_init_async_file_input (async_runtime_t *runtime, int slot) 
     return true;
 }
 
-extern "C" void comm_shutdown_async_file_input (void) {
+void comm_shutdown_async_file_input (void) {
     std::lock_guard<std::mutex> lock(file_input_mutex);
     
     if (file_input_thread) {
@@ -116,7 +116,7 @@ extern "C" void comm_shutdown_async_file_input (void) {
     file_input_eof = false;
 }
 
-extern "C" int comm_process_file_input (async_runtime_t *runtime, int slot, const io_event_t* event) {
+int comm_process_file_input (async_runtime_t *runtime, int slot, const io_event_t* event) {
     (void)event; // unused
     
     std::lock_guard<std::mutex> lock(file_input_mutex);
@@ -141,7 +141,7 @@ extern "C" int comm_process_file_input (async_runtime_t *runtime, int slot, cons
     return 1;
 }
 
-extern "C" bool comm_has_file_inputs (void) {
+bool comm_has_file_inputs (void) {
     std::lock_guard<std::mutex> lock(file_input_mutex);
     return file_input_queue != nullptr;
 }

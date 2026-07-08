@@ -2,7 +2,7 @@
 #include <config.h>
 #endif /* HAVE_CONFIG_H */
 
-#include "input_mode.h"
+#include "input_mode.hpp"
 
 #include <cstdlib>
 #ifdef _WIN32

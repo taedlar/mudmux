@@ -1,13 +1,9 @@
-#ifndef COMM_OUTBOUND_H
-#define COMM_OUTBOUND_H
+#ifndef COMM_OUTBOUND_HPP
+#define COMM_OUTBOUND_HPP
 
 #include "abstract.hpp"
 
 #include "async/async_runtime.h"
-
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 void comm_buffered_write (comm_abstract_t *comm, const void *buf, size_t len);
 
@@ -29,8 +25,4 @@ bool comm_close(async_runtime_t* runtime, int slot);
 
 int comm_invoke_disconnect (async_runtime_t* runtime, int slot);
 
-#ifdef __cplusplus
-}
-#endif /* __cplusplus */
-
-#endif /* COMM_OUTBOUND_H */
+#endif /* COMM_OUTBOUND_HPP */

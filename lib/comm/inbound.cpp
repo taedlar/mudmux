@@ -2,7 +2,7 @@
 #include "config.h"
 #endif
 
-#include "inbound.h"
+#include "inbound.hpp"
 
 #include "abstract.hpp"
 #include "mudmux/hooks.h"

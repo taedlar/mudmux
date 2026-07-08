@@ -2,13 +2,13 @@
 #include "config.h"
 #endif
 
-#include "accept.h"
+#include "accept.hpp"
 
 #include <cstdint>
 #include <openssl/bio.h>
 
 #include "abstract.hpp"
-#include "inbound.h"
+#include "inbound.hpp"
 #include "mudmux/hooks.h"
 #include "mudmux/comm.h"
 

@@ -2,13 +2,13 @@
 #include "config.h"
 #endif
 
-#include "outbound.h"
+#include "outbound.hpp"
 
 #include <mutex>
 #include <openssl/bio.h>
 #include <openssl/err.h>
 
-#include "console.h"
+#include "console.hpp"
 #include "mudmux/comm.h"
 #include "mudmux/hooks.h"
 
@@ -51,6 +51,8 @@ static void free_outbound_buffer(outbound_buffer_t* buffer) {
 }
 
 void comm_buffered_write (comm_abstract_t *comm, const void *buf, size_t len) {
+    std::lock_guard<std::recursive_mutex> lock(mud_logic_mutex);
+
     if (!comm || !comm->wbio || !buf || len == 0)
         return; // invalid parameters
     if (len > sizeof(outbound_buffer_t::buffer) * MAX_OUTBOUND_BUFFERS_PER_SLOT) {

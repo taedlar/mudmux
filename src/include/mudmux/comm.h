@@ -79,7 +79,7 @@ MUDMUX_EXPORT extern mudmux_comm_api_t* mudmux_comm_api;
 #include <string>
 
 #ifndef comm_buffered_write
-#include "comm/outbound.h"
+#include "comm/outbound.hpp"
 #endif
 
 // communication slot writer

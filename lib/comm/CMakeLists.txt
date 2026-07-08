@@ -15,11 +15,12 @@ target_sources(comm INTERFACE
     BASE_DIRS ${CMAKE_SOURCE_DIR}/lib
     FILES
         abstract.hpp
-        accept.h
-        console.h
-        file_input.h
-        input_mode.h
-        inbound.h
+        accept.hpp
+        console.hpp
+        file_input.hpp
+        input_mode.hpp
+        inbound.hpp
+        outbound.hpp
 )
 target_compile_definitions(comm PRIVATE mudmux_EXPORTS)
 
