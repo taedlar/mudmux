@@ -2,7 +2,7 @@
 #include "config.h"
 #endif
 
-#include "inbound.h"
+#include "inbound.hpp"
 
 #include "abstract.hpp"
 #include "mudmux/hooks.h"
@@ -56,13 +56,18 @@ int comm_process_input (
         return 1;
     }
 
+    // inbound message hook function could have closed the connection ...
+    if (!comm) {
+        return 1;
+    }
+
     if (async_runtime_post_read(runtime, event->fd, nullptr, 0) < 0) {
         SPDLOG_ERROR ("failed to re-arm read for fd {}", event->fd);
         return 1;
     }
 #else
     char buffer[4096];
-    int read_bytes = comm_read(comm.get(), buffer, sizeof(buffer));
+    int read_bytes = comm.read (buffer, sizeof(buffer));
     if (read_bytes <= 0) {
         return 1;
     }

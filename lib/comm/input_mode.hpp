@@ -1,5 +1,5 @@
-#ifndef COMM_INPUT_MODE_H
-#define COMM_INPUT_MODE_H
+#ifndef COMM_INPUT_MODE_HPP
+#define COMM_INPUT_MODE_HPP
 
 /**
  * @brief Enable (TELNET line mode, termios ICANON or Windows cooked) line-input mode for the
@@ -30,4 +30,4 @@ bool comm_set_char_input (int slot);
  */
 bool comm_set_echo (int slot, bool echo);
 
-#endif /* COMM_INPUT_MODE_H */
+#endif /* COMM_INPUT_MODE_HPP */

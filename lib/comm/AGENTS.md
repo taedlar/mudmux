@@ -49,6 +49,9 @@ Slots are accessed exclusively through opaque `comm_abstract_t` structs via publ
 
 ### Key API (`abstract.hpp`)
 
+- For functions taking `slot` argument, it performs thread-safety locking before proceeding.
+- For functions takine `comm_abstract_t*` argument, it should be used in logic layer (i.e. hook functions) or inside a RAII guarded scope.
+
 ```c
 // Register I/O sources at a slot
 int comm_abstract_add_bio(BIO *rbio, BIO *wbio, int slot, uint32_t flags);
@@ -59,21 +62,6 @@ bool comm_abstract_has_rbio(int slot);
 bool comm_abstract_get_rbio_fd(int slot, socket_fd_t* out_fd);
 comm_abstract_t* comm_abstract_get(int slot);
 
-// Flag management
-uint32_t comm_get_flags (comm_abstract_t *comm);
-void comm_set_flags (comm_abstract_t *comm, uint32_t flags);
-void comm_clear_flags (comm_abstract_t *comm, uint32_t flags);
-
-// Read/write operations
-int comm_read(comm_abstract_t *comm, void *buf, size_t len);
-int comm_write(comm_abstract_t *comm, const void *buf, size_t len);
-
-// Non-blocking (buffered) write path
-void comm_buffered_write (comm_abstract_t *comm, const void *buf, size_t len);
-void comm_flush(async_runtime_t *runtime, int slot);
-void comm_flush_all(async_runtime_t *runtime);
-bool comm_close(async_runtime_t *runtime, int slot);
-
 // Input mode control
 bool comm_set_line_input(int slot, bool echo);
 bool comm_set_char_input(int slot);
@@ -83,11 +71,22 @@ bool comm_enable_virtual_terminal(int slot);
 // Lifecycle
 int comm_abstract_remove(int slot);
 void comm_abstract_remove_all(void);
+
+// Flag management
+uint32_t comm_get_flags (comm_abstract_t *comm);
+void comm_set_flags (comm_abstract_t *comm, uint32_t flags);
+void comm_clear_flags (comm_abstract_t *comm, uint32_t flags);
+
+// Non-blocking (buffered) write path
+void comm_buffered_write (comm_abstract_t *comm, const void *buf, size_t len);
+void comm_flush (async_runtime_t *runtime, int slot);
+void comm_flush_all (async_runtime_t *runtime);
+bool comm_close (async_runtime_t *runtime, int slot);
 ```
 
 `comm_close()` is also exposed to logic-layer code through `mudmux/comm.h` (`#define comm_close mudmux_comm_api->close`), so hooks can proactively close slots.
 
-### Input Mode API (`input_mode.h`)
+### Input Mode API (`input_mode.hpp`)
 
 Three functions control the input mode and echo behaviour for a slot. They are exposed to logic-layer code through `mudmux/comm.h`:
 
@@ -105,7 +104,7 @@ Three functions control the input mode and echo behaviour for a slot. They are e
 
 All three functions support `COMM_SLOT_CONSOLE` as well as network slots and return `true` on success.
 
-### Virtual Terminal Output API (`console.h`)
+### Virtual Terminal Output API (`console.hpp`)
 
 `comm_enable_virtual_terminal(slot)` enables ANSI/VT100 output processing for the slot's output side. Exposed via `mudmux_comm_api->enable_virtual_terminal`.
 
@@ -143,7 +142,7 @@ void comm_invoke_inbound_message(async_runtime_t *runtime, int slot,
 - Data is line-buffered (null-terminated)
 - Called in main loop context (not from worker threads)
 
-### Inbound Message Processing API (`inbound.h`)
+### Inbound Message Processing API (`inbound.hpp`)
 
 ```c
 int comm_invoke_inbound_message(async_runtime_t* runtime, int slot, 
@@ -204,7 +203,7 @@ This keeps plugin/client code using the public header while the core implementat
 
 ### Components
 
-**file_input.h / file_input.cpp:**
+**file_input.hpp / file_input.cpp:**
 - Provides async file input processing via a dedicated reader thread
 - Uses OpenSSL BIO abstraction layer (same as sockets/console)
 - Communicates with main loop through thread-safe queue and completion events
@@ -251,7 +250,7 @@ FILE_INPUT_COMPLETION_KEY(slot) = (0xFFF0 << 16) | (slot & 0xFFFF)
 - Must call `comm_process_console_input()` every iteration (Windows mode switching)
 - Returns early if no console initialized (safe to call unconditionally)
 
-**API** (`console.h`):
+**API** (`console.hpp`):
 ```c
 bool comm_init_console(async_runtime_t *runtime);
 void comm_shutdown_console(async_runtime_t *runtime);
@@ -287,7 +286,7 @@ int slot = FILE_INPUT_SLOT_FROM_KEY(key);
 bool is_file_event = IS_FILE_INPUT_COMPLETION_KEY(key);
 ```
 
-**API** (`file_input.h`):
+**API** (`file_input.hpp`):
 ```c
 bool comm_init_async_file_input(async_runtime_t *runtime, int slot);
 int comm_process_file_input(async_runtime_t *runtime, int slot, const io_event_t* event);
@@ -307,7 +306,7 @@ void comm_shutdown_async_file_input(void);
 - Async event-driven (IOCP/epoll/poll)
 - Connections flow through inbound message hook
 
-**API** (`accept.h`):
+**API** (`accept.hpp`):
 ```c
 int comm_accept(async_runtime_t* runtime, const char* accept_name);
 int comm_process_listener_event(async_runtime_t* runtime, int listener_slot, socket_fd_t event_fd);

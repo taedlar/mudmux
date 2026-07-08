@@ -5,7 +5,7 @@
 #include <mutex>
 
 #include "mudmux/hooks.h"
-#include "comm/outbound.h"
+#include "comm/outbound.hpp"
 
 std::recursive_mutex mud_logic_mutex; // logic layer mutex
 

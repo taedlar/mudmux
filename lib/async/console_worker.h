@@ -31,7 +31,7 @@ typedef struct console_worker_context_s console_worker_context_t;
 /**
  * Completion key for console events
  */
-#define CONSOLE_COMPLETION_KEY 0xC0701E
+#define CONSOLE_COMPLETION_KEY  ASYNC_WORKER_KEY(1)  /**< Completion key for console worker events */
 
 /**
  * Maximum line length (including null terminator)

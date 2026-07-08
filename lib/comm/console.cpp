@@ -2,7 +2,7 @@
 #include "config.h"
 #endif
 
-#include "console.h"
+#include "console.hpp"
 
 #include <cstring>
 #include <mutex>
@@ -14,8 +14,8 @@
 #endif
 
 #include "abstract.hpp"
-#include "inbound.h"
-#include "input_mode.h"
+#include "inbound.hpp"
+#include "input_mode.hpp"
 #include "async/console_worker.h"
 #include "mudmux/hooks.h"
 #include "mudmux/comm.h"
@@ -25,7 +25,7 @@ static std::mutex console_mutex;
 static async_queue_t* console_queue{nullptr};
 static console_worker_context_t* console_ctx{nullptr};
 
-extern "C" bool comm_init_console (async_runtime_t *runtime) {
+bool comm_init_console (async_runtime_t *runtime) {
 
     std::lock_guard<std::mutex> lock(console_mutex);
     auto console_type = async_runtime_get_console_type (runtime);
@@ -71,7 +71,7 @@ extern "C" bool comm_init_console (async_runtime_t *runtime) {
     return true;
 }
 
-extern "C" void comm_signal_console_eof (async_runtime_t *runtime) {
+void comm_signal_console_eof (async_runtime_t *runtime) {
     std::lock_guard<std::mutex> lock(console_mutex);
     (void)runtime; // unused parameter
     if (console_ctx) {
@@ -79,7 +79,7 @@ extern "C" void comm_signal_console_eof (async_runtime_t *runtime) {
     }
 }
 
-extern "C" void comm_shutdown_console (async_runtime_t *runtime) {
+void comm_shutdown_console (async_runtime_t *runtime) {
     (void)runtime; // unused parameter
     std::lock_guard<std::mutex> lock(console_mutex);
     
@@ -127,7 +127,7 @@ bool comm_enable_virtual_terminal (int slot) {
 }
 #endif
 
-extern "C" int comm_process_console_input (async_runtime_t *runtime, bool allow_reconnect) {
+int comm_process_console_input (async_runtime_t *runtime, bool allow_reconnect) {
     bool disconnected = false;
     // check EOF on console worker and handle disconnect/re-connect if needed
     {
@@ -176,9 +176,9 @@ extern "C" int comm_process_console_input (async_runtime_t *runtime, bool allow_
     }
 
     if (disconnected) {
-        comm_abstract_ptr comm(COMM_SLOT_CONSOLE, mud_logic_mutex);
+        comm_abstract_ptr comm (COMM_SLOT_CONSOLE, mud_logic_mutex);
         if (comm) {
-            if (!(comm_get_flags(comm.get()) & C_CLOSING))
+            if (!(comm->flags & C_CLOSING))
                 comm_invoke_disconnect (runtime, COMM_SLOT_CONSOLE); // invoke disconnect hook for console user
             comm_abstract_remove (COMM_SLOT_CONSOLE); // remove console from comm_abstract
         }

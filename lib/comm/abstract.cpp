@@ -213,16 +213,16 @@ void comm_clear_flags (comm_abstract_t *comm, uint32_t flags) {
         comm->flags &= ~flags;
 }
 
-int comm_read (comm_abstract_t *comm, void *buf, size_t len) {
-    if (!comm || !comm->rbio || !buf)
+int comm_abstract_ptr::read (void *buf, size_t len) {
+    if (!has_rbio() || !buf)
         return -1; // invalid parameters
-    return BIO_read (comm->rbio, buf, static_cast<int>(len));
+    return BIO_read (get()->rbio, buf, static_cast<int>(len));
 }
 
-int comm_write (comm_abstract_t *comm, const void *buf, size_t len) {
-    if (!comm || !comm->wbio || !buf)
+int comm_abstract_ptr::write (const void *buf, size_t len) {
+    if (!has_wbio() || !buf)
         return -1; // invalid parameters
     if (len == 0)
         len = strlen (static_cast<const char*>(buf)); // auto-detect length for null-terminated strings
-    return BIO_write (comm->wbio, buf, static_cast<int>(len));
+    return BIO_write (get()->wbio, buf, static_cast<int>(len));
 }

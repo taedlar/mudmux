@@ -178,11 +178,17 @@ extern "C" int async_runtime_wait(async_runtime_t* runtime, io_event_t* events,
             uint64_t val;
             while (read(runtime->event_fd, &val, sizeof(val)) == sizeof(val)) {
                 if (event_count < max_events) {
+                    uintptr_t completion_key = (uintptr_t)(val >> 32);
+                    uintptr_t completion_data = (uintptr_t)(val & 0xFFFFFFFF);
                     events[event_count].fd = -1;
-                    events[event_count].completion_key = (uintptr_t)(val >> 32);
-                    events[event_count].context = NULL;
-                    events[event_count].event_type = EVENT_READ;
-                    events[event_count].bytes_transferred = (int)(val & 0xFFFFFFFF);
+                    events[event_count].completion_key = completion_key;
+                    events[event_count].context = (completion_key == ASYNC_IO_ERROR_KEY)
+                        ? reinterpret_cast<void*>(static_cast<intptr_t>(completion_data))
+                        : NULL;
+                    events[event_count].event_type = (completion_key == ASYNC_IO_ERROR_KEY)
+                        ? EVENT_ERROR
+                        : EVENT_READ;
+                    events[event_count].bytes_transferred = completion_data;
                     events[event_count].buffer = NULL;
                     event_count++;
                 }
