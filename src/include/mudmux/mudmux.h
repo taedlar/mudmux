@@ -25,7 +25,7 @@ MUDMUX_EXPORT void mudmux_enable_standard_input (bool enable);
 
 /**
  * @brief Enable or disable console support for the mudmux server.
- * Console mode is simular to standard input mode, except the server does not exit when
+ * Console mode is similar to standard input mode, except the server does not exit when
  * EOF is received on stdin or disconnected by the MUD server. Instead, the console can be
  * re-connected after EOF or disconnection if any input is received on stdin (e.g., pressing
  * ENTER on the keyboard).
