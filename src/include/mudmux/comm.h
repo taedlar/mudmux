@@ -45,8 +45,6 @@ typedef struct mudmux_comm_api_s {
     int (*add_file)(const char *fn_in, const char* fn_out, int slot, uint32_t flags);
     comm_abstract_t* (*get)(int slot);
     uint32_t (*get_flags)(comm_abstract_t *comm);
-    void (*set_flags)(comm_abstract_t *comm, uint32_t flags);
-    void (*clear_flags)(comm_abstract_t *comm, uint32_t flags);
     void (*buffered_write)(comm_abstract_t *comm, const void *buf, size_t len);
     bool (*close)(async_runtime_t* runtime, int slot);
     bool (*set_line_input)(int slot, bool echo);
@@ -63,8 +61,6 @@ typedef struct mudmux_comm_api_s {
 #define comm_abstract_add_file          mudmux_comm_api->add_file
 #define comm_abstract_get               mudmux_comm_api->get
 #define comm_get_flags                  mudmux_comm_api->get_flags
-#define comm_set_flags                  mudmux_comm_api->set_flags
-#define comm_clear_flags                mudmux_comm_api->clear_flags
 #define comm_buffered_write             mudmux_comm_api->buffered_write
 #define comm_close                      mudmux_comm_api->close
 #define comm_set_line_input             mudmux_comm_api->set_line_input

@@ -91,12 +91,6 @@ static void init_comm_api (void) {
     comm_api.get_flags = +[](comm_abstract_t* comm) -> uint32_t {
         return guarded_call<uint32_t>("get_flags", 0, comm_get_flags, comm);
     };
-    comm_api.set_flags = +[](comm_abstract_t* comm, uint32_t flags) {
-        guarded_call_void("set_flags", comm_set_flags, comm, flags);
-    };
-    comm_api.clear_flags = +[](comm_abstract_t* comm, uint32_t flags) {
-        guarded_call_void("clear_flags", comm_clear_flags, comm, flags);
-    };
     comm_api.buffered_write = +[](comm_abstract_t* comm, const void* buf, size_t len) {
         guarded_call_void("buffered_write", comm_buffered_write, comm, buf, len);
     };
