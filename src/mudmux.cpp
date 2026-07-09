@@ -268,11 +268,16 @@ extern "C" int mudmux_run (void* context) {
                     continue;
                 }
                 if (event.event_type & EVENT_READ) {
-                    if (comm_process_input(runtime, &event, slot) != 0) {
+#ifdef _WIN32
+                    bool refilled = comm_refill_inbound_buffers (slot, static_cast<char*>(event.buffer), event.bytes_transferred)
+                        && 0 == async_runtime_post_read (runtime, event.fd, nullptr, 0); // re-arm IOCP for next read
+#else
+                    bool refilled = comm_refill_inbound_buffers (slot); // read more data from rbio
+#endif
+                    if (!refilled || comm_process_input(runtime, slot) != 0) {
                         (void) comm_close(runtime, slot);
                         continue;
                     }
-                    // TODO: dispatch inbound message to logic layer with fair command turns
                     continue;
                 }
 

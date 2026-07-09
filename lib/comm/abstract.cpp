@@ -12,6 +12,8 @@
 #include <openssl/bio.h>
 #include <openssl/err.h>
 
+#include "inbound.hpp"
+#include "outbound.hpp"
 #include "mudmux/comm.h"
 
 comm_abstract_t* comm_abstract_ptr::all_comms_ = nullptr;
@@ -146,6 +148,7 @@ int comm_abstract_remove (int slot) {
         BIO_free_all (raw->rbio);
     if (raw->wbio && raw->wbio != raw->rbio)
         BIO_free_all (raw->wbio);
+    comm_free_inbound_buffers(raw); // free any remaining inbound buffers
     comm_free_outbound_buffers(raw); // free any remaining outbound buffers
     raw->flags = 0;
     raw->rbio = raw->wbio = nullptr;
@@ -189,16 +192,6 @@ bool comm_abstract_get_wbio_fd (int slot, socket_fd_t* out_fd) {
     return comm.get_wbio_fd(out_fd);
 }
 
-int comm_abstract_read_slot (int slot, void *buf, size_t len) {
-    comm_abstract_ptr comm(slot, mud_logic_mutex);
-    return comm.read(buf, len);
-}
-
-int comm_abstract_write_slot (int slot, const void *buf, size_t len) {
-    comm_abstract_ptr comm(slot, mud_logic_mutex);
-    return comm.write(buf, len);
-}
-
 uint32_t comm_get_flags (comm_abstract_t *comm) {
     return comm ? comm->flags : 0;
 }
@@ -211,18 +204,4 @@ void comm_set_flags (comm_abstract_t *comm, uint32_t flags) {
 void comm_clear_flags (comm_abstract_t *comm, uint32_t flags) {
     if (comm)
         comm->flags &= ~flags;
-}
-
-int comm_abstract_ptr::read (void *buf, size_t len) {
-    if (!has_rbio() || !buf)
-        return -1; // invalid parameters
-    return BIO_read (get()->rbio, buf, static_cast<int>(len));
-}
-
-int comm_abstract_ptr::write (const void *buf, size_t len) {
-    if (!has_wbio() || !buf)
-        return -1; // invalid parameters
-    if (len == 0)
-        len = strlen (static_cast<const char*>(buf)); // auto-detect length for null-terminated strings
-    return BIO_write (get()->wbio, buf, static_cast<int>(len));
 }

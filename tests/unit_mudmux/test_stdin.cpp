@@ -45,6 +45,8 @@ TEST_F(MudmuxStdinTest, PipeInput) {
 #ifndef _WIN32
     signal(SIGPIPE, SIG_IGN); // Ignore SIGPIPE to prevent test from crashing on broken pipe
 #endif
+    mudmux_set_log_level (0);
+    SPDLOG_INFO ("CTEST_FULL_OUTPUT");
 
     // Enable standard input
     mudmux_enable_standard_input(true);
@@ -73,7 +75,7 @@ TEST_F(MudmuxStdinTest, PipeInput) {
         EXPECT_EQ(slot, COMM_SLOT_CONSOLE);
         std::string received_message(static_cast<char*>(data), len);
         SPDLOG_INFO ("Received message: {}", received_message);
-        EXPECT_EQ(received_message, "test input\n");
+        EXPECT_EQ(received_message, "test input");
         stdin_hook_called = true;
         return 0;
     });

@@ -5,6 +5,7 @@
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
 #include <windows.h>
 typedef HANDLE async_wait_handle_t;
 #define ASYNC_INVALID_WAIT_HANDLE NULL

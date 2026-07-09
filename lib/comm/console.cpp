@@ -53,7 +53,7 @@ bool comm_init_console (async_runtime_t *runtime) {
     // enqueue lines into console_queue.
     comm_abstract_ptr console_comm(COMM_SLOT_CONSOLE, mud_logic_mutex);
     if (!console_comm) {
-        if (comm_abstract_add_file (nullptr, nullptr, COMM_SLOT_CONSOLE, 0) < 0) { // unlike adding BIOs, null file names will use stdin/stdout
+        if (comm_abstract_add_file (nullptr, nullptr, COMM_SLOT_CONSOLE, C_LINE_INPUT) < 0) { // unlike adding BIOs, null file names will use stdin/stdout
             SPDLOG_ERROR ("failed to connect console communication");
             console_worker_destroy (console_ctx);
             console_ctx = nullptr;
@@ -158,7 +158,7 @@ int comm_process_console_input (async_runtime_t *runtime, bool allow_reconnect) 
         if (!console_comm && allow_reconnect && console_ctx) {
             if (!async_queue_is_empty(console_queue)) {
                 SPDLOG_INFO ("----- reconnecting console communication");
-                if (comm_abstract_add_file (nullptr, nullptr, COMM_SLOT_CONSOLE, 0) < 0) {
+                if (comm_abstract_add_file (nullptr, nullptr, COMM_SLOT_CONSOLE, C_LINE_INPUT) < 0) {
                     SPDLOG_ERROR ("failed to re-connect console communication");
                     return -1;
                 }
@@ -171,9 +171,18 @@ int comm_process_console_input (async_runtime_t *runtime, bool allow_reconnect) 
 
     // drain completed lines from the console queue and invoke the shared inbound hook path
     char console_line_buffer[4096];
-    while (async_queue_dequeue (console_queue, console_line_buffer, sizeof(console_line_buffer), nullptr)) {
-        comm_invoke_inbound_message(runtime, COMM_SLOT_CONSOLE, console_line_buffer, strlen(console_line_buffer));
+    size_t line_len = 0;
+    while (async_queue_dequeue (console_queue, console_line_buffer, sizeof(console_line_buffer), &line_len)) {
+        if (line_len > 0 && console_line_buffer[line_len - 1] == '\0') {
+            --line_len;
+        }
+        if (!comm_refill_inbound_buffers (COMM_SLOT_CONSOLE, console_line_buffer, line_len)) {
+            SPDLOG_WARN ("failed to refill inbound buffers for console input");
+            console_worker_set_eof (console_ctx); // signal EOF to console worker to stop reading
+            break;
+        }
     }
+    comm_process_input (runtime, COMM_SLOT_CONSOLE);
 
     if (disconnected) {
         comm_abstract_ptr comm (COMM_SLOT_CONSOLE, mud_logic_mutex);
@@ -189,5 +198,6 @@ int comm_process_console_input (async_runtime_t *runtime, bool allow_reconnect) 
             mudmux_shutdown();
         }
     }
+
     return 0;
 }

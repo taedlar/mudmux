@@ -6,6 +6,7 @@
 
 #include <mutex>
 #include <openssl/bio.h>
+#include <openssl/err.h>
 
 #include "abstract.hpp"
 #include "inbound.hpp"
@@ -26,18 +27,22 @@ static void file_input_reader_thread (async_runtime_t* runtime, int slot, async_
     SPDLOG_INFO ("file input reader thread started for slot {}", slot);
     
     while (true) {
-        if (!comm_abstract_has_rbio(slot)) {
-            SPDLOG_INFO ("file input closed for slot {}", slot);
-            break;
+        size_t bytes_read = 0;
+        {
+            comm_abstract_ptr comm(slot, mud_logic_mutex);
+            if (!comm || !comm->rbio) {
+                SPDLOG_ERROR ("file input reader thread exiting: invalid comm slot {}", slot);
+                break;
+            }
+            if (BIO_read_ex(comm->rbio, buffer, sizeof(buffer) - 1, &bytes_read) <= 0) {
+                if (!BIO_should_retry(comm->rbio)) {
+                    SPDLOG_ERROR ("BIO_read_ex() failed for slot {}: {}", slot, ERR_get_error());
+                    break;
+                }
+            }
         }
         
-        // Read from file BIO while slot lock is held in comm_abstract_read_slot.
-        int bytes_read = comm_abstract_read_slot(slot, buffer, sizeof(buffer) - 1);
-        
-        if (bytes_read < 0) {
-            SPDLOG_ERROR ("BIO_read failed for slot {}", slot);
-            break;
-        } else if (bytes_read == 0) {
+        if (!bytes_read) {
             // EOF
             SPDLOG_INFO ("file EOF detected for slot {}", slot);
             {
@@ -118,24 +123,39 @@ void comm_shutdown_async_file_input (void) {
 
 int comm_process_file_input (async_runtime_t *runtime, int slot, const io_event_t* event) {
     (void)event; // unused
-    
-    std::lock_guard<std::mutex> lock(file_input_mutex);
-    
-    if (!file_input_queue) {
-        return 0;
-    }
-    
-    // Drain completed lines from the queue
+
     char file_line_buffer[4096];
-    while (async_queue_dequeue (file_input_queue, file_line_buffer, sizeof(file_line_buffer), nullptr)) {
-        comm_invoke_inbound_message(runtime, slot, file_line_buffer, strlen(file_line_buffer));
+    size_t file_line_len = 0;
+
+    while (true) {
+        {
+            std::lock_guard<std::mutex> lock(file_input_mutex);
+            if (!file_input_queue) {
+                return 0;
+            }
+            if (!async_queue_dequeue (file_input_queue, file_line_buffer, sizeof(file_line_buffer), &file_line_len)) {
+                break;
+            }
+        }
+
+        if (file_line_len > 0 && file_line_buffer[file_line_len - 1] == '\0') {
+            --file_line_len;
+        }
+        if (!comm_refill_inbound_buffers (slot, file_line_buffer, file_line_len)) {
+            SPDLOG_WARN ("failed to refill inbound buffers for file input slot {}", slot);
+            break;
+        }
     }
-    
-    // Check if file EOF was detected
-    if (file_input_eof) {
-        SPDLOG_INFO ("async file input EOF detected for slot {}, shutting down server", slot);
-        mudmux_shutdown();
-        return 0;
+
+    (void) comm_process_input (runtime, slot);
+
+    {
+        std::lock_guard<std::mutex> lock(file_input_mutex);
+        if (file_input_eof) {
+            SPDLOG_INFO ("async file input EOF detected for slot {}, shutting down server", slot);
+            mudmux_shutdown();
+            return 0;
+        }
     }
     
     return 1;
