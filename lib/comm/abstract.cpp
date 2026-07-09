@@ -192,16 +192,6 @@ bool comm_abstract_get_wbio_fd (int slot, socket_fd_t* out_fd) {
     return comm.get_wbio_fd(out_fd);
 }
 
-int comm_abstract_read_slot (int slot, void *buf, size_t len) {
-    comm_abstract_ptr comm(slot, mud_logic_mutex);
-    return comm.read(buf, len);
-}
-
-int comm_abstract_write_slot (int slot, const void *buf, size_t len) {
-    comm_abstract_ptr comm(slot, mud_logic_mutex);
-    return comm.write(buf, len);
-}
-
 uint32_t comm_get_flags (comm_abstract_t *comm) {
     return comm ? comm->flags : 0;
 }
@@ -214,31 +204,4 @@ void comm_set_flags (comm_abstract_t *comm, uint32_t flags) {
 void comm_clear_flags (comm_abstract_t *comm, uint32_t flags) {
     if (comm)
         comm->flags &= ~flags;
-}
-
-ssize_t comm_abstract_ptr::read (void *buf, size_t len) {
-    if (!has_rbio() || !buf)
-        return -1; // invalid parameters
-    size_t bytes_read;
-    size_t total_bytes_read = 0;
-    while (len > 0) {
-        int success = BIO_read_ex (get()->rbio, buf, static_cast<int>(len), &bytes_read);
-        if (!success) {
-            if (!BIO_should_retry(get()->rbio))
-                SPDLOG_ERROR ("BIO_read_ex() failed for slot {}: {}", slot_, ERR_get_error());
-            break; // no more data available or error occurred
-        }
-        total_bytes_read += bytes_read;
-        buf = static_cast<char*>(buf) + bytes_read;
-        len -= bytes_read;
-    }
-    return total_bytes_read;
-}
-
-int comm_abstract_ptr::write (const void *buf, size_t len) {
-    if (!has_wbio() || !buf)
-        return -1; // invalid parameters
-    if (len == 0)
-        len = strlen (static_cast<const char*>(buf)); // auto-detect length for null-terminated strings
-    return BIO_write (get()->wbio, buf, static_cast<int>(len));
 }

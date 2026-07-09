@@ -78,8 +78,6 @@ bool comm_abstract_has_rbio (int slot);
 bool comm_abstract_has_wbio (int slot);
 bool comm_abstract_get_rbio_fd (int slot, socket_fd_t* out_fd);
 bool comm_abstract_get_wbio_fd (int slot, socket_fd_t* out_fd);
-int comm_abstract_read_slot (int slot, void *buf, size_t len);
-int comm_abstract_write_slot (int slot, const void *buf, size_t len);
 
 /* flag management (logic layer helper) */
 uint32_t comm_get_flags (comm_abstract_t *comm);
@@ -160,10 +158,6 @@ public:
         auto* comm = resolve_slot_unlocked(slot_);
         return comm && comm->wbio && comm_bio_get_socket_fd(comm->wbio, out_fd);
     }
-
-    // synchronous I/O
-    ssize_t read (void* buf, size_t len);
-    int write (const void* buf, size_t len);
 
     // other exposed methods that require access to private members
     friend int comm_max_slot (void);

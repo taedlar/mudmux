@@ -6,6 +6,7 @@
 
 #include <mutex>
 #include <openssl/bio.h>
+#include <openssl/err.h>
 
 #include "abstract.hpp"
 #include "inbound.hpp"
@@ -26,18 +27,22 @@ static void file_input_reader_thread (async_runtime_t* runtime, int slot, async_
     SPDLOG_INFO ("file input reader thread started for slot {}", slot);
     
     while (true) {
-        if (!comm_abstract_has_rbio(slot)) {
-            SPDLOG_INFO ("file input closed for slot {}", slot);
-            break;
+        size_t bytes_read = 0;
+        {
+            comm_abstract_ptr comm(slot, mud_logic_mutex);
+            if (!comm || !comm->rbio) {
+                SPDLOG_ERROR ("file input reader thread exiting: invalid comm slot {}", slot);
+                break;
+            }
+            if (BIO_read_ex(comm->rbio, buffer, sizeof(buffer) - 1, &bytes_read) <= 0) {
+                if (!BIO_should_retry(comm->rbio)) {
+                    SPDLOG_ERROR ("BIO_read_ex() failed for slot {}: {}", slot, ERR_get_error());
+                    break;
+                }
+            }
         }
         
-        // Read from file BIO while slot lock is held in comm_abstract_read_slot.
-        int bytes_read = comm_abstract_read_slot(slot, buffer, sizeof(buffer) - 1);
-        
-        if (bytes_read < 0) {
-            SPDLOG_ERROR ("BIO_read failed for slot {}", slot);
-            break;
-        } else if (bytes_read == 0) {
+        if (!bytes_read) {
             // EOF
             SPDLOG_INFO ("file EOF detected for slot {}", slot);
             {

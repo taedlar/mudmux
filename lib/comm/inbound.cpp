@@ -2,6 +2,7 @@
 #include "config.h"
 #endif
 
+#define NOMINMAX
 #include "inbound.hpp"
 
 #include <algorithm>
@@ -11,6 +12,10 @@
 #include "abstract.hpp"
 #include "mudmux/comm.h"
 #include "mudmux/hooks.h"
+
+#ifdef _WIN32
+typedef SSIZE_T ssize_t;
+#endif
 
 struct inbound_buffer_s {
     inbound_buffer_t* next{nullptr};
@@ -244,11 +249,11 @@ static ssize_t _find_newline_and_strip (inbound_buffer_t* ibb, size_t* line_len 
     for (size_t i = ibb->start; i < ibb->end; ++i) {
         if (ibb->buffer[i] == '\n' || ibb->buffer[i] == '\0') {
             // strip CR LF or LF by replacing with null terminators
+            ssize_t ret = static_cast<ssize_t>(i + 1);
             if (i > ibb->start && ibb->buffer[i - 1] == '\r') {
-                ibb->buffer[i - 1] = '\0';
+                ibb->buffer[i--] = '\0';
             }
             ibb->buffer[i] = '\0';
-            ssize_t ret = static_cast<ssize_t>(i + 1);
             // strip leading and trailing whitespace
             while (ibb->start < i && isspace(static_cast<unsigned char>(ibb->buffer[ibb->start]))) {
                 ibb->buffer[ibb->start++] = '\0';

@@ -182,6 +182,7 @@ int comm_process_console_input (async_runtime_t *runtime, bool allow_reconnect) 
             break;
         }
     }
+    comm_process_input (runtime, COMM_SLOT_CONSOLE);
 
     if (disconnected) {
         comm_abstract_ptr comm (COMM_SLOT_CONSOLE, mud_logic_mutex);
@@ -196,9 +197,6 @@ int comm_process_console_input (async_runtime_t *runtime, bool allow_reconnect) 
             SPDLOG_INFO ("EOF detected, shutting down server");
             mudmux_shutdown();
         }
-    }
-    else {
-        comm_process_input (runtime, COMM_SLOT_CONSOLE);
     }
 
     return 0;

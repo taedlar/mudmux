@@ -123,8 +123,6 @@ static int _accept_new_comm (int slot, socket_fd_t event_fd) {
         return -1;
     }
 	BIO_set_nbio (accepted_bio, 1); // set accepted socket to non-blocking mode
-
-	// add to communication slots
     int accepted_slot = comm_abstract_add_bio (accepted_bio, accepted_bio, -1, C_SOCKET_READABLE);
     if (accepted_slot < 0) {
         BIO_free (accepted_bio);

@@ -96,7 +96,8 @@ bool comm_set_line_input (int slot, bool echo) {
         break;
     }
     default:
-        return false;
+        // TODO: negotiate line input mode for network sockets (e.g., TELNET LINEMODE)
+        break;
     }
 
     if (comm)
@@ -105,26 +106,33 @@ bool comm_set_line_input (int slot, bool echo) {
 }
 
 bool comm_set_char_input (int slot) {
-    /*
-     * On Windows we use ENABLE_PROCESSED_INPUT + ENABLE_VIRTUAL_TERMINAL_INPUT
-     * to get character-at-a-time input without echo.
-     *
-     * - Ctrl-C still works as a signal to terminate the process (ENABLE_PROCESSED_INPUT)
-     * - ANSI escape sequences are recognized to support special keys (ENABLE_VIRTUAL_TERMINAL_INPUT)
-     * - Echo is disabled (clears ENABLE_ECHO_INPUT) to prevent ANSI escape sequences from being printed
-     *
-     * See https://learn.microsoft.com/en-us/windows/console/console-virtual-terminal-sequences
-     */
-    bool ret = set_console_input_mode (
-        /* set */ ENABLE_PROCESSED_INPUT | ENABLE_VIRTUAL_TERMINAL_INPUT,
-        /* clear */ ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT
-    );
-    if (ret) {
-        comm_abstract_ptr comm(slot, mud_logic_mutex);
-        if (comm)
-            comm->flags &= ~(C_LINE_INPUT | C_CLIENT_ECHO);
+    comm_abstract_ptr comm(slot, mud_logic_mutex);
+    switch (slot) {
+    case COMM_SLOT_CONSOLE:
+        /*
+        * On Windows we use ENABLE_PROCESSED_INPUT + ENABLE_VIRTUAL_TERMINAL_INPUT
+        * to get character-at-a-time input without echo.
+        *
+        * - Ctrl-C still works as a signal to terminate the process (ENABLE_PROCESSED_INPUT)
+        * - ANSI escape sequences are recognized to support special keys (ENABLE_VIRTUAL_TERMINAL_INPUT)
+        * - Echo is disabled (clears ENABLE_ECHO_INPUT) to prevent ANSI escape sequences from being printed
+        *
+        * See https://learn.microsoft.com/en-us/windows/console/console-virtual-terminal-sequences
+        */
+        if (!set_console_input_mode (
+            /* set */ ENABLE_PROCESSED_INPUT | ENABLE_VIRTUAL_TERMINAL_INPUT,
+            /* clear */ ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT
+        )) {
+            return false;
+        }
+        break;
+    default:
+        // TODO: negotiate character input mode for network sockets (e.g., TELNET LINEMODE)
+        break;
     }
-    return ret;
+    if (comm)
+        comm->flags &= ~(C_LINE_INPUT | C_CLIENT_ECHO);
+    return true;
 }
 
 bool comm_set_echo (int slot, bool echo) {
@@ -141,7 +149,8 @@ bool comm_set_echo (int slot, bool echo) {
             return false;
         break;
     default:
-        return false;
+        // TODO: negotiate echo mode for network sockets (e.g., TELNET ECHO option)
+        break;
     }
     if (comm) {
         if (echo)

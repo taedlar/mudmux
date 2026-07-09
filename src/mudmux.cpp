@@ -269,7 +269,7 @@ extern "C" int mudmux_run (void* context) {
                 }
                 if (event.event_type & EVENT_READ) {
 #ifdef _WIN32
-                    bool refilled = comm_refill_inbound_buffers (slot, event.buffer, event.buffer_size)
+                    bool refilled = comm_refill_inbound_buffers (slot, static_cast<char*>(event.buffer), event.bytes_transferred)
                         && 0 == async_runtime_post_read (runtime, event.fd, nullptr, 0); // re-arm IOCP for next read
 #else
                     bool refilled = comm_refill_inbound_buffers (slot); // read more data from rbio
