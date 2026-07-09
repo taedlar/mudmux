@@ -118,24 +118,39 @@ void comm_shutdown_async_file_input (void) {
 
 int comm_process_file_input (async_runtime_t *runtime, int slot, const io_event_t* event) {
     (void)event; // unused
-    
-    std::lock_guard<std::mutex> lock(file_input_mutex);
-    
-    if (!file_input_queue) {
-        return 0;
-    }
-    
-    // Drain completed lines from the queue
+
     char file_line_buffer[4096];
-    while (async_queue_dequeue (file_input_queue, file_line_buffer, sizeof(file_line_buffer), nullptr)) {
-        comm_invoke_inbound_message(runtime, slot, file_line_buffer, strlen(file_line_buffer));
+    size_t file_line_len = 0;
+
+    while (true) {
+        {
+            std::lock_guard<std::mutex> lock(file_input_mutex);
+            if (!file_input_queue) {
+                return 0;
+            }
+            if (!async_queue_dequeue (file_input_queue, file_line_buffer, sizeof(file_line_buffer), &file_line_len)) {
+                break;
+            }
+        }
+
+        if (file_line_len > 0 && file_line_buffer[file_line_len - 1] == '\0') {
+            --file_line_len;
+        }
+        if (!comm_refill_inbound_buffers (slot, file_line_buffer, file_line_len)) {
+            SPDLOG_WARN ("failed to refill inbound buffers for file input slot {}", slot);
+            break;
+        }
     }
-    
-    // Check if file EOF was detected
-    if (file_input_eof) {
-        SPDLOG_INFO ("async file input EOF detected for slot {}, shutting down server", slot);
-        mudmux_shutdown();
-        return 0;
+
+    (void) comm_process_input (runtime, slot);
+
+    {
+        std::lock_guard<std::mutex> lock(file_input_mutex);
+        if (file_input_eof) {
+            SPDLOG_INFO ("async file input EOF detected for slot {}, shutting down server", slot);
+            mudmux_shutdown();
+            return 0;
+        }
     }
     
     return 1;

@@ -18,9 +18,9 @@ int comm_invoke_inbound_message (async_runtime_t* runtime, int slot, const void*
  * @param slot The comm slot to refill.
  * @param src Optional source buffer to copy data from.
  * @param size Size of the source buffer.
- * @return 0 on success, -1 on error.
+ * @return true on success, false on error.
  */
-int comm_refill_inbound_buffers (int slot, const char* src = nullptr, size_t size = 0);
+bool comm_refill_inbound_buffers (int slot, const char* src = nullptr, size_t size = 0);
 
 void comm_free_inbound_buffers(comm_abstract_t* comm);
 

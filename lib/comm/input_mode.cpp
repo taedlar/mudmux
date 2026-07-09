@@ -174,8 +174,10 @@ bool comm_set_line_input (int slot, bool echo) {
     case COMM_SLOT_CONSOLE:
 #ifdef HAVE_TERMIOS_H
         struct termios tio;
-        if (tcgetattr (STDIN_FILENO, &tio) != 0)
+        if (tcgetattr (STDIN_FILENO, &tio) != 0) {
+            SPDLOG_WARN ("tcgetattr() failed for console stdin: {}", strerror(errno));
             return false;
+        }
         if (echo)
             tio.c_lflag |= ICANON;
         else
@@ -188,10 +190,10 @@ bool comm_set_line_input (int slot, bool echo) {
         break;
 #else
         (void)echo;
-        return false;
+        break;
 #endif
     default:
-        return false;
+        break;
     }
 
     if (comm)

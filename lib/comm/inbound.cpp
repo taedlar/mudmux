@@ -176,10 +176,10 @@ static inbound_buffer_t* _refill_inbound_buffers (comm_abstract_ptr& comm, refil
     return head;
 }
 
-int comm_refill_inbound_buffers (int slot, const char* src, size_t size) {
+bool comm_refill_inbound_buffers (int slot, const char* src, size_t size) {
     comm_abstract_ptr comm(slot, mud_logic_mutex);
     if (!comm)
-        return -1;
+        return false;
     if (src && size > 0) {
         // copy data from src into the inbound buffer chain
         size_t remaining = size;
@@ -215,13 +215,13 @@ int comm_refill_inbound_buffers (int slot, const char* src, size_t size) {
             remaining -= copy_len;
             ibb = ibb->next; // move to the next buffer in the chain if available
         }
-        return (remaining == 0) ? 0 : -1; // return 0 if all data copied, -1 if some data was discarded
+        return (remaining == 0); // return true if all data copied, false if some data was discarded
     }
 
     // refill from underlying BIO if src is nullptr
     refill_status_t status = refill_status_t::no_data;
     _refill_inbound_buffers(comm, &status);
-    return (status == refill_status_t::closed) ? -1 : 0; // return 0 if data read or no data, -1 if connection closed
+    return (status != refill_status_t::closed); // return true if data read or no data, false if connection closed
 }
 
 /**
@@ -256,6 +256,7 @@ static ssize_t _find_newline_and_strip (inbound_buffer_t* ibb, size_t* line_len 
             while (i > ibb->start && isspace(static_cast<unsigned char>(ibb->buffer[i - 1]))) {
                 ibb->buffer[--i] = '\0';
             }
+            SPDLOG_DEBUG ("stripped line: [{}], length={}", ibb->buffer + ibb->start, i - ibb->start);
             if (line_len) {
                 *line_len = i - ibb->start; // length of stripped line
             }

@@ -32,8 +32,6 @@ static int on_connect (void*, int slot, void*, size_t) {
 
 static int on_message_inbound (void*, int slot, void* data, size_t size) {
     std::string message(static_cast<char*>(data), size);
-    while (!message.empty() && (message.back() == '\n' || message.back() == '\r'))
-        message.pop_back(); // remove trailing newline characters
     auto comm = comm_abstract_get(slot);
     if (comm)
         *comm << "Received message: [" << message << "]\n\r";
