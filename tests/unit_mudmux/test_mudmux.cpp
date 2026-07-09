@@ -13,6 +13,25 @@ TEST(MudmuxTest, BasicInitialization) {
     ASSERT_NO_FATAL_FAILURE(mudmux_deinit());
 }
 
+TEST(MudmuxTest, InitializationWithEmptyConfig) {
+    // Test that the mudmux library initializes correctly with a configuration
+    // Configuration can be provided as YAML or JSON (JSON is a subset of YAML)
+    const char* config = R"({
+    })";
+    ASSERT_TRUE(mudmux_init(config));
+    ASSERT_NO_FATAL_FAILURE(mudmux_deinit());
+}
+
+TEST(MudmuxTest, InitializationWithIncorrectConfig) {
+    // Test that the mudmux library fails to initialize with an incorrect configuration
+    const char* incorrect_config = R"({
+        "transport": {
+            "console": "not_a_boolean"
+        }
+    })";
+    ASSERT_FALSE(mudmux_init(incorrect_config));
+}
+
 TEST(MudmuxTest, EventLoopRun) {
     // Test that the mudmux event loop can run and shutdown correctly
     ASSERT_TRUE(mudmux_init(nullptr));

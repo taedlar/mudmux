@@ -149,8 +149,10 @@ extern "C" bool mudmux_init (const char* config_yaml) {
         YAML::Node config = YAML::Load (config_yaml ? config_yaml : "{\"transport\":{\"console\":false}}");
         const YAML::Node& transport = config["transport"];
         // initialize transport layer
-        mudmux_enable_console (transport["console"].as<bool>(false));
-        if (transport["accept"]) {
+        if (transport["console"].IsDefined()) {
+            mudmux_enable_console (transport["console"].as<bool>());
+        }
+        if (transport["accept"].IsDefined()) {
             for (const auto& name : transport["accept"]) {
                 accept_names.push_back(name.as<std::string>());
             }
