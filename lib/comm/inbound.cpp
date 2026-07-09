@@ -42,23 +42,6 @@ static void free_inbound_buffer(inbound_buffer_t* buffer) {
     inbound_buffer_pool = buffer;
 }
 
-enum class refill_status_t {
-    no_data,
-    data,
-    closed
-};
-
-void comm_free_inbound_buffers(comm_abstract_t* comm) {
-    if (!comm)
-        return;
-    while (comm->inbound) {
-        inbound_buffer_t* next = comm->inbound->next;
-        free_inbound_buffer(comm->inbound);
-        comm->inbound = next;
-    }
-    assert(comm->inbound == nullptr);
-}
-
 void comm_enable_prompt (int slot, bool enable) {
     if (slot < 0) {
         return;
@@ -132,12 +115,30 @@ int comm_invoke_inbound_message (async_runtime_t* runtime, int slot, const void*
     return 0;
 }
 
+void comm_free_inbound_buffers(comm_abstract_t* comm) {
+    if (!comm)
+        return;
+    while (comm->inbound) {
+        inbound_buffer_t* next = comm->inbound->next;
+        free_inbound_buffer(comm->inbound);
+        comm->inbound = next;
+    }
+    assert(comm->inbound == nullptr);
+}
+
+enum class refill_status_t {
+    no_data,
+    data,
+    closed
+};
+
 /**
  * @brief Refill the inbound buffer chain for the specified comm slot by reading from the underlying BIO.
  * This function will *NOT* grow the inbound buffer chain beyond the initial buffer. If all buffers are
  * full, it will stop reading. If a comm slot needs a larger inbound buffer, setup the buffer chain explicitly
  * before calling this function.
  * @param comm Reference to the comm abstract pointer.
+ * @param status Optional pointer to a refill_status_t variable to receive the refill status.
  * @return Pointer to the head of the inbound buffer chain, or nullptr if no buffer is available.
  */
 static inbound_buffer_t* _refill_inbound_buffers (comm_abstract_ptr& comm, refill_status_t* status = nullptr) {
@@ -173,6 +174,54 @@ static inbound_buffer_t* _refill_inbound_buffers (comm_abstract_ptr& comm, refil
         SPDLOG_DEBUG ("inbound buffer chain is full");
     }
     return head;
+}
+
+int comm_refill_inbound_buffers (int slot, const char* src, size_t size) {
+    comm_abstract_ptr comm(slot, mud_logic_mutex);
+    if (!comm)
+        return -1;
+    if (src && size > 0) {
+        // copy data from src into the inbound buffer chain
+        size_t remaining = size;
+        inbound_buffer_t* ibb = comm->inbound;
+        if (!ibb) {
+            ibb = comm->inbound = allocate_inbound_buffer();
+        }
+        while (ibb && ibb->next) {
+            ibb = ibb->next; // move to the last buffer in the chain
+        }
+        while (ibb && remaining > 0) {
+            if (ibb->start == ibb->end) {
+                ibb->start = 0;
+                ibb->end = 0;
+            } else if (ibb->end == sizeof(ibb->buffer) && ibb->start > 0) {
+                memmove(ibb->buffer, ibb->buffer + ibb->start, ibb->end - ibb->start);
+                ibb->end -= ibb->start;
+                ibb->start = 0;
+            }
+            if (ibb->end == sizeof(ibb->buffer) && ibb->next) {
+                ibb = ibb->next;
+                continue;
+            }
+            if (ibb->end == sizeof(ibb->buffer)) {
+                // current buffer is full and there is no next buffer, cannot read more data
+                SPDLOG_WARN ("inbound buffer chain is full, discarded {} bytes of data", remaining);
+                break;
+            }
+            const size_t copy_len = std::min(remaining, sizeof(ibb->buffer) - ibb->end);
+            memcpy(ibb->buffer + ibb->end, src, copy_len);
+            ibb->end += copy_len;
+            src += copy_len;
+            remaining -= copy_len;
+            ibb = ibb->next; // move to the next buffer in the chain if available
+        }
+        return (remaining == 0) ? 0 : -1; // return 0 if all data copied, -1 if some data was discarded
+    }
+
+    // refill from underlying BIO if src is nullptr
+    refill_status_t status = refill_status_t::no_data;
+    _refill_inbound_buffers(comm, &status);
+    return (status == refill_status_t::closed) ? -1 : 0; // return 0 if data read or no data, -1 if connection closed
 }
 
 /**
@@ -246,11 +295,12 @@ static ssize_t _find_char_input_sequence (inbound_buffer_t* ibb, uint32_t comm_f
                 if (i >= ibb->end)
                     return -1; // incomplete ANSI sequence, wait for terminal character
                 if ((ibb->buffer[i] >= 'A' && ibb->buffer[i] <= 'Z') || (ibb->buffer[i] >= 'a' && ibb->buffer[i] <= 'z') || ibb->buffer[i] == '~') {
+                    ++i;
                     // valid ANSI control sequence found
                     if (char_len) {
-                        *char_len = i - ibb->start + 1; // length of the ANSI sequence
+                        *char_len = i - ibb->start; // length of the ANSI sequence
                     }
-                    return static_cast<ssize_t>(i + 1); // return index of first character after the ANSI sequence
+                    return static_cast<ssize_t>(i); // return index of first character after the ANSI sequence
                 }
                 // not a valid ANSI sequence, treat ESC as a single character
                 if (char_len) {
@@ -275,67 +325,20 @@ static ssize_t _find_char_input_sequence (inbound_buffer_t* ibb, uint32_t comm_f
     return static_cast<ssize_t>(ibb->start + mbc_len);
 }
 
-int comm_process_input (async_runtime_t* runtime, const io_event_t* event, int slot, int max_message) {
-    if (!runtime || !event || slot < 0) {
-        SPDLOG_ERROR ("comm_process_input() called with invalid parameters: runtime={}, event={}, slot={}", (void*)runtime, (void*)event, slot);
+int comm_process_input (async_runtime_t* runtime, int slot, int max_message) {
+    if (!runtime || slot < 0) {
+        SPDLOG_ERROR ("comm_process_input() called with invalid parameters: runtime={}, slot={}", (void*)runtime, slot);
         return -1;
     }
     comm_abstract_ptr comm(slot, mud_logic_mutex);
     if (!comm)
         return 1;
-
-#ifdef _WIN32
-    // On Windows, the data is already read into the event buffer by the async runtime,
-    // so we just need to copy it into the inbound buffer chain.
-    if (event->buffer && event->bytes_transferred > 0) {
-        const char* src = static_cast<const char*>(event->buffer);
-        size_t remaining = event->bytes_transferred;
-        inbound_buffer_t* ibb = comm->inbound;
-        if (!ibb) {
-            ibb = comm->inbound = allocate_inbound_buffer();
-        }
-        while (ibb && ibb->next) {
-            ibb = ibb->next; // move to the last buffer in the chain
-        }
-        while (ibb && remaining > 0) {
-            if (ibb->start == ibb->end) {
-                ibb->start = 0;
-                ibb->end = 0;
-            } else if (ibb->end == sizeof(ibb->buffer) && ibb->start > 0) {
-                memmove(ibb->buffer, ibb->buffer + ibb->start, ibb->end - ibb->start);
-                ibb->end -= ibb->start;
-                ibb->start = 0;
-            }
-            if (ibb->end == sizeof(ibb->buffer) && ibb->next) {
-                ibb = ibb->next;
-                continue;
-            }
-            if (ibb->end == sizeof(ibb->buffer)) {
-                // current buffer is full and there is no next buffer, cannot read more data
-                SPDLOG_WARN ("inbound buffer chain is full, cannot read more data for slot {}", slot);
-                break;
-            }
-            const size_t copy_len = std::min(remaining, sizeof(ibb->buffer) - ibb->end);
-            memcpy(ibb->buffer + ibb->end, src, copy_len);
-            ibb->end += copy_len;
-            src += copy_len;
-            remaining -= copy_len;
-            ibb = ibb->next; // move to the next buffer in the chain if available
-        }
-    }
-#endif
-
+    inbound_buffer_t* ibb = comm->inbound;
     int num_messages_processed = 0;
-    refill_status_t refill_status = refill_status_t::no_data;
     if (comm->flags & C_LINE_INPUT) {
         //
         // [LINE INPUT MODE] process input data line by line, invoking the inbound message hook for each complete line
         //
-#ifdef _WIN32
-        inbound_buffer_t* ibb = comm->inbound;
-#else
-        inbound_buffer_t* ibb = _refill_inbound_buffers(comm, &refill_status); // attempt to read more data into the inbound buffer chain
-#endif
         ssize_t next_line_start;
         size_t line_len;
         while (ibb && (max_message < 0 || num_messages_processed < max_message)) {
@@ -384,11 +387,6 @@ int comm_process_input (async_runtime_t* runtime, const io_event_t* event, int s
         //
         // [CHAR MODE] process input data as single character (or ANSI control sequence, UTF-8 character)
         //
-#ifdef _WIN32
-        inbound_buffer_t* ibb = comm->inbound;
-#else
-        inbound_buffer_t* ibb = _refill_inbound_buffers(comm, &refill_status); // attempt to read more data into the inbound buffer chain
-#endif
         ssize_t next_char_start;
         size_t char_len;
         while (ibb && (max_message < 0 || num_messages_processed < max_message)) {
@@ -405,17 +403,5 @@ int comm_process_input (async_runtime_t* runtime, const io_event_t* event, int s
         }
     }
 
-    // inbound message hook function could have closed the connection ...
-    if (!comm || refill_status == refill_status_t::closed || (event->event_type & (EVENT_CLOSE | EVENT_ERROR))) {
-        return 1;
-    }
-
-#ifdef _WIN32
-    if (async_runtime_post_read(runtime, event->fd, nullptr, 0) < 0) {
-        SPDLOG_ERROR ("failed to re-arm read for fd {}", event->fd);
-        return 1;
-    }
-#endif
-
-    return 0;
+    return comm ? 0 : 1; // return 0 if comm is valid, 1 if comm was closed
 }
