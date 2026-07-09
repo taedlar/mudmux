@@ -2,6 +2,7 @@
 
 add_executable(unit_mudmux
     test_mudmux.cpp
+    test_stdin.cpp
 )
 
 target_link_libraries(unit_mudmux
@@ -10,6 +11,7 @@ target_link_libraries(unit_mudmux
     GTest::gtest_main
     OpenSSL::SSL
     OpenSSL::applink
+    yaml-cpp::yaml-cpp
 )
 
 add_custom_command(TARGET unit_mudmux POST_BUILD
