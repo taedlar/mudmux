@@ -162,7 +162,7 @@ public:
     }
 
     // synchronous I/O
-    int read (void* buf, size_t len);
+    ssize_t read (void* buf, size_t len);
     int write (const void* buf, size_t len);
 
     // other exposed methods that require access to private members

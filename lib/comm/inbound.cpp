@@ -4,9 +4,60 @@
 
 #include "inbound.hpp"
 
+#include <algorithm>
+#include <cstring>
+#include <wchar.h>
+
 #include "abstract.hpp"
 #include "mudmux/comm.h"
 #include "mudmux/hooks.h"
+
+struct inbound_buffer_s {
+    inbound_buffer_t* next{nullptr};
+    char buffer[4096];
+    size_t start{0}; // <-- async read position (data to be processed)
+    size_t end{0}; // <-- append new data position (non-blocking)
+    inbound_buffer_t* reset () {
+        next = nullptr;
+        start = 0;
+        end = 0;
+        return this;
+    }
+};
+static inbound_buffer_t* inbound_buffer_pool{nullptr}; // recycled inbound buffers to avoid frequent heap allocations
+
+static inbound_buffer_t* allocate_inbound_buffer() {
+    if (inbound_buffer_pool) {
+        inbound_buffer_t* buffer = inbound_buffer_pool;
+        inbound_buffer_pool = inbound_buffer_pool->next;
+        return buffer->reset();
+    }
+    return new inbound_buffer_t();
+}
+
+static void free_inbound_buffer(inbound_buffer_t* buffer) {
+    if (!buffer)
+        return;
+    buffer->next = inbound_buffer_pool;
+    inbound_buffer_pool = buffer;
+}
+
+enum class refill_status_t {
+    no_data,
+    data,
+    closed
+};
+
+void comm_free_inbound_buffers(comm_abstract_t* comm) {
+    if (!comm)
+        return;
+    while (comm->inbound) {
+        inbound_buffer_t* next = comm->inbound->next;
+        free_inbound_buffer(comm->inbound);
+        comm->inbound = next;
+    }
+    assert(comm->inbound == nullptr);
+}
 
 void comm_enable_prompt (int slot, bool enable) {
     if (slot < 0) {
@@ -81,48 +132,287 @@ int comm_invoke_inbound_message (async_runtime_t* runtime, int slot, const void*
     return 0;
 }
 
-int comm_process_input (
-    async_runtime_t* runtime,
-    const io_event_t* event,
-    int slot) {
+/**
+ * @brief Refill the inbound buffer chain for the specified comm slot by reading from the underlying BIO.
+ * This function will *NOT* grow the inbound buffer chain beyond the initial buffer. If all buffers are
+ * full, it will stop reading. If a comm slot needs a larger inbound buffer, setup the buffer chain explicitly
+ * before calling this function.
+ * @param comm Reference to the comm abstract pointer.
+ * @return Pointer to the head of the inbound buffer chain, or nullptr if no buffer is available.
+ */
+static inbound_buffer_t* _refill_inbound_buffers (comm_abstract_ptr& comm, refill_status_t* status = nullptr) {
+    if (status)
+        *status = refill_status_t::no_data;
+    if (!comm)
+        return nullptr;
+
+    SPDLOG_DEBUG ("refilling inbound buffers");
+    inbound_buffer_t* ibb = comm->inbound;
+    if (!ibb) {
+        // do lazy allocation for the first inbound buffer if it doesn't exist yet
+        ibb = comm->inbound = allocate_inbound_buffer();
+    }
+    inbound_buffer_t* head = ibb;
+    while (ibb && ibb->next) {
+        ibb = ibb->next; // move to the last buffer in the chain
+    }
+    assert ((ibb == nullptr) || (ibb->next == nullptr)); // ensure we are at the end of the chain
+
+    if (ibb->end < sizeof(ibb->buffer)) {
+        size_t bytes_read = 0;
+        if (BIO_read_ex(comm->rbio, ibb->buffer + ibb->end, sizeof(ibb->buffer) - ibb->end, &bytes_read)) {
+            ibb->end += bytes_read;
+            if (bytes_read > 0 && status)
+                *status = refill_status_t::data;
+        } else if (!BIO_should_retry(comm->rbio)) {
+            if (status)
+                *status = refill_status_t::closed;
+        }
+        SPDLOG_DEBUG ("refilled inbound buffers : total_bytes_read={}", bytes_read);
+    } else {
+        SPDLOG_DEBUG ("inbound buffer chain is full");
+    }
+    return head;
+}
+
+/**
+ * @brief Find the first newline (LF or CR LF) or null character in the inbound buffer
+ * and strip it by removing newline, leading and trailing whitespaces.
+ * Stripped characters are replaced with null characters.
+ *
+ * If newline or null character is found, adjusts the start index of the inbound buffer to
+ * point to the first character of the line after stripping (always null-terminated).
+ *
+ * If no newline is found, returns -1 and does not modify the inbound buffer.
+ *
+ * @param ibb Pointer to the inbound buffer.
+ * @return Index of the beginning of next line, or -1 if no newline found.
+ */
+static ssize_t _find_newline_and_strip (inbound_buffer_t* ibb, size_t* line_len = nullptr) {
+    if (!ibb || ibb->start >= ibb->end)
+        return -1;
+    SPDLOG_DEBUG ("searching for newline in inbound buffer: start={}, end={}", ibb->start, ibb->end);
+    for (size_t i = ibb->start; i < ibb->end; ++i) {
+        if (ibb->buffer[i] == '\n' || ibb->buffer[i] == '\0') {
+            // strip CR LF or LF by replacing with null terminators
+            if (i > ibb->start && ibb->buffer[i - 1] == '\r') {
+                ibb->buffer[i - 1] = '\0';
+            }
+            ibb->buffer[i] = '\0';
+            ssize_t ret = static_cast<ssize_t>(i + 1);
+            // strip leading and trailing whitespace
+            while (ibb->start < i && isspace(static_cast<unsigned char>(ibb->buffer[ibb->start]))) {
+                ibb->buffer[ibb->start++] = '\0';
+            }
+            while (i > ibb->start && isspace(static_cast<unsigned char>(ibb->buffer[i - 1]))) {
+                ibb->buffer[--i] = '\0';
+            }
+            if (line_len) {
+                *line_len = i - ibb->start; // length of stripped line
+            }
+            return ret;
+        }
+    }
+    return -1;
+}
+
+/**
+ * @brief Find the next character input sequence (terminal input sequence, UTF-8 char) in
+ * the inbound buffer.
+ * If found, returns the index of the first character after the sequence.
+ * If not found, returns -1. The ANSI sequence is defined as starting with ESC '['
+ * and ending with a letter (A-Z or a-z) or a tilde (~). The sequence may contain
+ * digits and semicolons in between. Otherwise, it is treated as a UTF-8 character.
+ * 
+ * See https://en.wikipedia.org/wiki/ANSI_escape_code for more details on ANSI escape sequences.
+ *
+ * @param ibb Pointer to the inbound buffer.
+ * @param char_len Optional pointer to size_t to receive the length of the ANSI sequence.
+ * @return Index of the first character after the ANSI sequence, or -1 if not found
+ */
+static ssize_t _find_char_input_sequence (inbound_buffer_t* ibb, uint32_t comm_flags, size_t* char_len = nullptr) {
+    if (!ibb || ibb->start >= ibb->end)
+        return -1;
+    SPDLOG_DEBUG ("searching for character input sequence in inbound buffer: start={}, end={}", ibb->start, ibb->end);
+    if (comm_flags & C_ENABLE_ANSI) {
+        size_t i = ibb->start;
+        if (ibb->buffer[i] == '\x1B') { // ESC
+            // ANSI escape sequence starts with ESC
+            if (++i >= ibb->end)
+                return -1; // incomplete ANSI sequence, wait for more data
+            if (ibb->buffer[i] == '[') { // ESC '['
+                // skip digits and semicolons (optional parameters of the ANSI sequence)
+                while (++i < ibb->end && (isdigit(static_cast<unsigned char>(ibb->buffer[i])) || ibb->buffer[i] == ';'));
+                if (i >= ibb->end)
+                    return -1; // incomplete ANSI sequence, wait for terminal character
+                if ((ibb->buffer[i] >= 'A' && ibb->buffer[i] <= 'Z') || (ibb->buffer[i] >= 'a' && ibb->buffer[i] <= 'z') || ibb->buffer[i] == '~') {
+                    // valid ANSI control sequence found
+                    if (char_len) {
+                        *char_len = i - ibb->start + 1; // length of the ANSI sequence
+                    }
+                    return static_cast<ssize_t>(i + 1); // return index of first character after the ANSI sequence
+                }
+                // not a valid ANSI sequence, treat ESC as a single character
+                if (char_len) {
+                    *char_len = 1;
+                }
+                return static_cast<ssize_t>(ibb->start + 1);
+            }
+        }
+    }
+    // Not an ANSI control sequence, treat as a multibyte character (UTF-8) or
+    // single byte if not valid UTF-8 (including ESC followed by non-ANSI sequence).
+    mbstate_t state{};
+    size_t mbc_len = mbrlen(ibb->buffer + ibb->start, ibb->end - ibb->start, &state);
+    if (mbc_len == static_cast<size_t>(-2)) {
+        // Incomplete multibyte character, wait for more data
+        return -1;
+    }    
+    mbc_len = (mbc_len == static_cast<size_t>(-1)) ? 1 : mbc_len; // treat invalid multibyte as single byte
+    if (char_len) {
+        *char_len = static_cast<size_t>(mbc_len);
+    }
+    return static_cast<ssize_t>(ibb->start + mbc_len);
+}
+
+int comm_process_input (async_runtime_t* runtime, const io_event_t* event, int slot, int max_message) {
     if (!runtime || !event || slot < 0) {
+        SPDLOG_ERROR ("comm_process_input() called with invalid parameters: runtime={}, event={}, slot={}", (void*)runtime, (void*)event, slot);
         return -1;
     }
     comm_abstract_ptr comm(slot, mud_logic_mutex);
-    if (!comm) {
-        return -1;
-    }
+    if (!comm)
+        return 1;
 
 #ifdef _WIN32
-    if (!event->buffer || event->bytes_transferred == 0) {
-        return 1;
+    // On Windows, the data is already read into the event buffer by the async runtime,
+    // so we just need to copy it into the inbound buffer chain.
+    if (event->buffer && event->bytes_transferred > 0) {
+        const char* src = static_cast<const char*>(event->buffer);
+        size_t remaining = event->bytes_transferred;
+        inbound_buffer_t* ibb = comm->inbound;
+        if (!ibb) {
+            ibb = comm->inbound = allocate_inbound_buffer();
+        }
+        while (ibb && ibb->next) {
+            ibb = ibb->next; // move to the last buffer in the chain
+        }
+        while (ibb && remaining > 0) {
+            if (ibb->start == ibb->end) {
+                ibb->start = 0;
+                ibb->end = 0;
+            } else if (ibb->end == sizeof(ibb->buffer) && ibb->start > 0) {
+                memmove(ibb->buffer, ibb->buffer + ibb->start, ibb->end - ibb->start);
+                ibb->end -= ibb->start;
+                ibb->start = 0;
+            }
+            if (ibb->end == sizeof(ibb->buffer) && ibb->next) {
+                ibb = ibb->next;
+                continue;
+            }
+            if (ibb->end == sizeof(ibb->buffer)) {
+                // current buffer is full and there is no next buffer, cannot read more data
+                SPDLOG_WARN ("inbound buffer chain is full, cannot read more data for slot {}", slot);
+                break;
+            }
+            const size_t copy_len = std::min(remaining, sizeof(ibb->buffer) - ibb->end);
+            memcpy(ibb->buffer + ibb->end, src, copy_len);
+            ibb->end += copy_len;
+            src += copy_len;
+            remaining -= copy_len;
+            ibb = ibb->next; // move to the next buffer in the chain if available
+        }
     }
+#endif
 
-    if (comm_invoke_inbound_message(runtime, slot, event->buffer, event->bytes_transferred) < 0) {
-        return 1;
+    int num_messages_processed = 0;
+    refill_status_t refill_status = refill_status_t::no_data;
+    if (comm->flags & C_LINE_INPUT) {
+        //
+        // [LINE INPUT MODE] process input data line by line, invoking the inbound message hook for each complete line
+        //
+#ifdef _WIN32
+        inbound_buffer_t* ibb = comm->inbound;
+#else
+        inbound_buffer_t* ibb = _refill_inbound_buffers(comm, &refill_status); // attempt to read more data into the inbound buffer chain
+#endif
+        ssize_t next_line_start;
+        size_t line_len;
+        while (ibb && (max_message < 0 || num_messages_processed < max_message)) {
+            if ((next_line_start = _find_newline_and_strip(ibb, &line_len)) >= 0) {
+                // invoke inbound message hook for each complete line
+                comm_invoke_inbound_message(runtime, slot, ibb->buffer + ibb->start, line_len);
+                ibb->start = static_cast<size_t>(next_line_start);
+                ++num_messages_processed;
+            }
+            if (ibb->end == sizeof(ibb->buffer) && ibb->next) {
+                // (current buffer is full and there is a next buffer)
+                // attempt to move data from next buffer to current buffer if there is space
+                size_t space = sizeof(ibb->buffer) - (ibb->end - ibb->start);
+                if (space > 0 && ibb->next) {
+                    size_t next_len = ibb->next->end - ibb->next->start;
+                    size_t copy_len = std::min(space, next_len);
+                    if (ibb->start > 0) {
+                        // shift existing data to the beginning of the buffer
+                        memmove(ibb->buffer, ibb->buffer + ibb->start, ibb->end - ibb->start);
+                        ibb->end -= ibb->start;
+                        ibb->start = 0;
+                    }
+                    // fill the remaining space in the current buffer with data from the next buffer
+                    memcpy(ibb->buffer + ibb->end, ibb->next->buffer + ibb->next->start, copy_len);
+                    ibb->end += copy_len;
+                    ibb->next->start += copy_len;
+                    if (ibb->next->start == ibb->next->end) {
+                        // (next buffer is now empty)
+                        // move next buffer to the tail of chain, keeping size of chain unchanged
+                        inbound_buffer_t* empty_buffer = ibb->next;
+                        ibb->next = empty_buffer->next;
+                        while (ibb->next)
+                            ibb = ibb->next;
+                        ibb->next = empty_buffer->reset();
+                    }
+                    continue; // try to find a complete line again after moving data from next buffer
+                }
+            }
+            else {
+                // no complete line found, break to read more data
+                break;
+            }
+        }
+    }
+    else {
+        //
+        // [CHAR MODE] process input data as single character (or ANSI control sequence, UTF-8 character)
+        //
+#ifdef _WIN32
+        inbound_buffer_t* ibb = comm->inbound;
+#else
+        inbound_buffer_t* ibb = _refill_inbound_buffers(comm, &refill_status); // attempt to read more data into the inbound buffer chain
+#endif
+        ssize_t next_char_start;
+        size_t char_len;
+        while (ibb && (max_message < 0 || num_messages_processed < max_message)) {
+            if ((next_char_start = _find_char_input_sequence(ibb, comm->flags, &char_len)) >= 0) {
+                // invoke inbound message hook for each complete ANSI character sequence
+                comm_invoke_inbound_message(runtime, slot, ibb->buffer + ibb->start, char_len);
+                ibb->start = static_cast<size_t>(next_char_start);
+                ++num_messages_processed;
+            }
+            else {
+                // no complete ANSI character sequence found, break to read more data
+                break;
+            }
+        }
     }
 
     // inbound message hook function could have closed the connection ...
-    if (!comm) {
+    if (!comm || refill_status == refill_status_t::closed || (event->event_type & (EVENT_CLOSE | EVENT_ERROR))) {
         return 1;
     }
 
+#ifdef _WIN32
     if (async_runtime_post_read(runtime, event->fd, nullptr, 0) < 0) {
         SPDLOG_ERROR ("failed to re-arm read for fd {}", event->fd);
-        return 1;
-    }
-#else
-    char buffer[4096];
-    int read_bytes = comm.read (buffer, sizeof(buffer));
-    if (read_bytes <= 0) {
-        return 1;
-    }
-
-    if (comm_invoke_inbound_message(runtime, slot, buffer, static_cast<size_t>(read_bytes)) < 0) {
-        return 1;
-    }
-
-    if (event->event_type & (EVENT_CLOSE | EVENT_ERROR)) {
         return 1;
     }
 #endif

@@ -12,6 +12,8 @@
 #include <openssl/bio.h>
 #include <openssl/err.h>
 
+#include "inbound.hpp"
+#include "outbound.hpp"
 #include "mudmux/comm.h"
 
 comm_abstract_t* comm_abstract_ptr::all_comms_ = nullptr;
@@ -146,6 +148,7 @@ int comm_abstract_remove (int slot) {
         BIO_free_all (raw->rbio);
     if (raw->wbio && raw->wbio != raw->rbio)
         BIO_free_all (raw->wbio);
+    comm_free_inbound_buffers(raw); // free any remaining inbound buffers
     comm_free_outbound_buffers(raw); // free any remaining outbound buffers
     raw->flags = 0;
     raw->rbio = raw->wbio = nullptr;
@@ -213,10 +216,23 @@ void comm_clear_flags (comm_abstract_t *comm, uint32_t flags) {
         comm->flags &= ~flags;
 }
 
-int comm_abstract_ptr::read (void *buf, size_t len) {
+ssize_t comm_abstract_ptr::read (void *buf, size_t len) {
     if (!has_rbio() || !buf)
         return -1; // invalid parameters
-    return BIO_read (get()->rbio, buf, static_cast<int>(len));
+    size_t bytes_read;
+    size_t total_bytes_read = 0;
+    while (len > 0) {
+        int success = BIO_read_ex (get()->rbio, buf, static_cast<int>(len), &bytes_read);
+        if (!success) {
+            if (!BIO_should_retry(get()->rbio))
+                SPDLOG_ERROR ("BIO_read_ex() failed for slot {}: {}", slot_, ERR_get_error());
+            break; // no more data available or error occurred
+        }
+        total_bytes_read += bytes_read;
+        buf = static_cast<char*>(buf) + bytes_read;
+        len -= bytes_read;
+    }
+    return total_bytes_read;
 }
 
 int comm_abstract_ptr::write (const void *buf, size_t len) {
