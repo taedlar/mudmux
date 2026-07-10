@@ -5,6 +5,7 @@
 #include "telnet.hpp"
 
 #include "abstract.hpp"
+#include "outbound.hpp"
 #include "mudmux/comm.h"
 
 void comm_enable_telnet (int slot) {
@@ -14,8 +15,11 @@ void comm_enable_telnet (int slot) {
     if (comm->flags & C_ENABLE_TELNET)
         return;
     comm->flags |= C_ENABLE_TELNET;
-    SPDLOG_DEBUG ("enabled Telnet negotiation for comm slot {}", slot);
-    // TODO: initiate Telnet negotiation with the client (send IAC WILL/WONT DO/DONT sequences)
+    SPDLOG_DEBUG ("enabled TELNET for comm slot {}", slot);
+    // comm_telnet_send_will(comm.raw(), TELOPT_BINARY);
+    comm_telnet_send_will(comm.raw(), TELOPT_SGA);
+    comm_telnet_send_do(comm.raw(), TELOPT_SGA);
+    comm_telnet_send_wont(comm.raw(), TELOPT_ECHO);
 }
 
 size_t comm_telnet_process_inbound (char* dest, char* src, size_t src_len,
@@ -60,22 +64,22 @@ size_t comm_telnet_process_inbound (char* dest, char* src, size_t src_len,
             case S_TELNET_IAC_WILL:
                 negotiation->will_[byte >> 5] |= (1 << (byte & 31));
                 *state = S_TELNET_DATA;
-                SPDLOG_DEBUG("Telnet negotiation: WILL option {}", byte);
+                SPDLOG_DEBUG("received: they WILL option {}", byte);
                 break;
             case S_TELNET_IAC_WONT:
                 negotiation->wont_[byte >> 5] |= (1 << (byte & 31));
                 *state = S_TELNET_DATA;
-                SPDLOG_DEBUG("Telnet negotiation: WONT option {}", byte);
+                SPDLOG_DEBUG("received: they WONT option {}", byte);
                 break;
             case S_TELNET_IAC_DO:
                 negotiation->do_[byte >> 5] |= (1 << (byte & 31));
                 *state = S_TELNET_DATA;
-                SPDLOG_DEBUG("Telnet negotiation: DO option {}", byte);
+                SPDLOG_DEBUG("received: please DO option {}", byte);
                 break;
             case S_TELNET_IAC_DONT:
                 negotiation->dont_[byte >> 5] |= (1 << (byte & 31));
                 *state = S_TELNET_DATA;
-                SPDLOG_DEBUG("Telnet negotiation: DONT option {}", byte);
+                SPDLOG_DEBUG("received: please DONT option {}", byte);
                 break;
             default:
                 *state = S_TELNET_DATA; // Reset state on unexpected value
@@ -83,4 +87,32 @@ size_t comm_telnet_process_inbound (char* dest, char* src, size_t src_len,
         }
     }
     return dest_index;
+}
+
+void comm_telnet_send_will(comm_abstract_t* comm, int option) {
+    if (!comm || !comm->wbio)
+        return;
+    unsigned char buf[3] = { 255, 251, static_cast<unsigned char>(option) }; // IAC WILL option
+    comm_buffered_write(comm, reinterpret_cast<char*>(buf), sizeof(buf));
+}
+
+void comm_telnet_send_wont(comm_abstract_t* comm, int option) {
+    if (!comm || !comm->wbio)
+        return;
+    unsigned char buf[3] = { 255, 252, static_cast<unsigned char>(option) }; // IAC WONT option
+    comm_buffered_write(comm, reinterpret_cast<char*>(buf), sizeof(buf));
+}
+
+void comm_telnet_send_do(comm_abstract_t* comm, int option) {
+    if (!comm || !comm->wbio)
+        return;
+    unsigned char buf[3] = { 255, 253, static_cast<unsigned char>(option) }; // IAC DO option
+    comm_buffered_write(comm, reinterpret_cast<char*>(buf), sizeof(buf));
+}
+
+void comm_telnet_send_dont(comm_abstract_t* comm, int option) {
+    if (!comm || !comm->wbio)
+        return;
+    unsigned char buf[3] = { 255, 254, static_cast<unsigned char>(option) }; // IAC DONT option
+    comm_buffered_write(comm, reinterpret_cast<char*>(buf), sizeof(buf));
 }

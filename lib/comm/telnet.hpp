@@ -2,6 +2,20 @@
 #define COMM_TELNET_HPP
 
 #include <type_traits>
+#ifdef HAVE_ARPA_TELNET_H
+#include <arpa/telnet.h>
+#else
+#define TELOPT_BINARY 0
+#define TELOPT_ECHO 1
+#define TELOPT_SGA 3
+#define TELOPT_TTYPE 24
+#define TELOPT_NAWS 31
+#define TELOPT_TSPEED 32
+#define TELOPT_LINEMODE 34
+#define TELOPT_NEW_ENVIRON 39
+#endif
+
+#include "abstract.hpp"
 
 #define S_TELNET_DATA       0x0
 #define S_TELNET_IAC        0x1
@@ -55,5 +69,10 @@ void comm_enable_telnet (int slot);
  */
 size_t comm_telnet_process_inbound (char* dest, char* src, size_t src_len,
     uint32_t* state, comm_telnet_negotiation_t* negotiation);
+
+void comm_telnet_send_will(comm_abstract_t* comm, int option);
+void comm_telnet_send_wont(comm_abstract_t* comm, int option);
+void comm_telnet_send_do(comm_abstract_t* comm, int option);
+void comm_telnet_send_dont(comm_abstract_t* comm, int option);
 
 #endif // COMM_TELNET_HPP
