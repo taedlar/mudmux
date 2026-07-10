@@ -16,9 +16,10 @@
 #define C_CLIENT_ECHO       0x04000000
 #define C_ENABLE_TELNET     0x02000000
 #define C_ENABLE_ANSI       0x01000000
-#define C_ENABLE_PROMPT     0x00000004
-#define C_INVOKED_PROMPT    0x00000002
-#define C_BUFFERED_WRITE    0x00000001
+#define C_ENABLE_PROMPT     0x00040000
+#define C_INVOKED_PROMPT    0x00020000
+#define C_BUFFERED_WRITE    0x00010000
+#define M_TELNET_STATE      0x0000000f      /* used by TELNET */
 
 typedef struct comm_abstract_s comm_abstract_t;
 
@@ -51,6 +52,7 @@ typedef struct mudmux_comm_api_s {
     bool (*set_char_input)(int slot);
     bool (*set_echo)(int slot, bool echo);
     void (*enable_prompt)(int slot, bool enable);
+    void (*enable_telnet)(int slot);
     bool (*enable_virtual_terminal)(int slot);
 } mudmux_comm_api_v1_t;
 
@@ -67,6 +69,7 @@ typedef struct mudmux_comm_api_s {
 #define comm_set_char_input             mudmux_comm_api_v1->set_char_input
 #define comm_set_echo                   mudmux_comm_api_v1->set_echo
 #define comm_enable_prompt              mudmux_comm_api_v1->enable_prompt
+#define comm_enable_telnet              mudmux_comm_api_v1->enable_telnet
 #define comm_enable_virtual_terminal    mudmux_comm_api_v1->enable_virtual_terminal
 #endif
 

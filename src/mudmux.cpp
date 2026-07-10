@@ -20,6 +20,7 @@
 #include "comm/file_input.hpp"
 #include "comm/inbound.hpp"
 #include "comm/input_mode.hpp"
+#include "comm/telnet.hpp"
 #include "mudmux/async.h"
 #include "mudmux/comm.h"
 #include "mudmux/hooks.h"
@@ -108,6 +109,9 @@ static void init_comm_api (void) {
     };
     comm_api.enable_prompt = +[](int slot, bool enable) {
         guarded_call_void("enable_prompt", comm_enable_prompt, slot, enable);
+    };
+    comm_api.enable_telnet = +[](int slot) {
+        guarded_call_void("enable_telnet", comm_enable_telnet, slot);
     };
     comm_api.enable_virtual_terminal = +[](int slot) -> bool {
         return guarded_call<bool>("enable_virtual_terminal", false, comm_enable_virtual_terminal, slot);
