@@ -10,6 +10,7 @@
 #include <wchar.h>
 
 #include "abstract.hpp"
+#include "telnet.hpp"
 #include "mudmux/comm.h"
 #include "mudmux/hooks.h"
 
@@ -168,6 +169,17 @@ static inbound_buffer_t* _refill_inbound_buffers (comm_abstract_ptr& comm, refil
     if (ibb && ibb->end < sizeof(ibb->buffer)) {
         size_t bytes_read = 0;
         if (BIO_read_ex(comm->rbio, ibb->buffer + ibb->end, sizeof(ibb->buffer) - ibb->end, &bytes_read)) {
+            if (comm->flags & C_ENABLE_TELNET) {
+                // process Telnet negotiation and strip IAC sequences from the inbound buffer
+                uint32_t state = comm->flags & M_TELNET_STATE;
+                comm_telnet_negotiation_t telnet_neg;
+                memset(&telnet_neg, 0, sizeof(telnet_neg));
+                size_t processed_len = comm_telnet_process_inbound(
+                    ibb->buffer + ibb->end, ibb->buffer + ibb->end, bytes_read,
+                    &state, &telnet_neg); // process the newly read data in place
+                bytes_read = processed_len;
+                comm->flags = (comm->flags & ~M_TELNET_STATE) | (state & M_TELNET_STATE);
+            }
             ibb->end += bytes_read;
             if (bytes_read > 0 && status)
                 *status = refill_status_t::data;
@@ -217,8 +229,22 @@ bool comm_refill_inbound_buffers (int slot, const char* src, size_t size) {
                 break;
             }
             const size_t copy_len = std::min(remaining, sizeof(ibb->buffer) - ibb->end);
-            memcpy(ibb->buffer + ibb->end, src, copy_len);
-            ibb->end += copy_len;
+            size_t copied = 0;
+            if (comm->flags & C_ENABLE_TELNET) {
+                // process Telnet negotiation and strip IAC sequences from the source data
+                uint32_t state = comm->flags & M_TELNET_STATE;
+                comm_telnet_negotiation_t telnet_neg;
+                memset(&telnet_neg, 0, sizeof(telnet_neg));
+                size_t processed_len = comm_telnet_process_inbound(
+                    ibb->buffer + ibb->end, const_cast<char*>(src), copy_len,
+                    &state, &telnet_neg);
+                copied = processed_len;
+                comm->flags = (comm->flags & ~M_TELNET_STATE) | (state & M_TELNET_STATE);
+            } else {
+                memcpy(ibb->buffer + ibb->end, src, copy_len);
+                copied = copy_len;
+            }
+            ibb->end += copied;
             src += copy_len;
             remaining -= copy_len;
             ibb = ibb->next; // move to the next buffer in the chain if available

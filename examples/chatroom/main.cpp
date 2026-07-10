@@ -23,6 +23,7 @@ static void process_command_line (int argc, char* argv[]);
 static int on_connect (void*, int slot, void*, size_t) {
     auto comm = comm_abstract_get(slot);
     if (comm) {
+        comm_enable_telnet (slot); // enable Telnet negotiation for the connection
         comm_enable_prompt (slot, true); // enable prompt for console user
         comm_set_line_input (slot, true); // enable line input mode for console user
         *comm << "Welcome to mudmux!\n\r";

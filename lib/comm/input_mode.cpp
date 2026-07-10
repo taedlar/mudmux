@@ -19,6 +19,7 @@
 #endif
 
 #include "abstract.hpp"
+#include "telnet.hpp"
 #include "async/console_worker.h"
 #include "mudmux/comm.h"
 
@@ -78,6 +79,10 @@ static bool set_console_input_mode (DWORD set_bits, DWORD clear_bits) {
 
 bool comm_set_line_input (int slot, bool echo) {
     comm_abstract_ptr comm(slot, comm_slots_mtx);
+    if (!comm)
+        return false;
+    if (comm->flags & C_LINE_INPUT)
+        return comm_set_echo (slot, echo); // already in line input mode
     switch (slot) {
     case COMM_SLOT_CONSOLE: {
         /*
@@ -92,17 +97,18 @@ bool comm_set_line_input (int slot, bool echo) {
         if (!set_console_input_mode (set_bits, clear_bits))
             return false;
         SPDLOG_DEBUG ("console input mode set: C_LINE_INPUT was {}, echo={}",
-            (comm ? (comm->flags & C_LINE_INPUT) != 0 : false), echo);
+            (comm->flags & C_LINE_INPUT) != 0, echo);
         break;
     }
     default:
-        // TODO: negotiate line input mode for network sockets (e.g., TELNET LINEMODE)
+        if (comm->flags & C_ENABLE_TELNET) {
+            // TODO: negotiate line input mode for network sockets (e.g., TELNET LINEMODE)
+        }
         break;
     }
 
-    if (comm)
-        comm->flags |= C_LINE_INPUT;
-    return true;
+    comm->flags |= C_LINE_INPUT;
+    return comm_set_echo (slot, echo);
 }
 
 bool comm_set_char_input (int slot) {
@@ -127,7 +133,9 @@ bool comm_set_char_input (int slot) {
         }
         break;
     default:
-        // TODO: negotiate character input mode for network sockets (e.g., TELNET LINEMODE)
+        if (comm->flags & C_ENABLE_TELNET) {
+            // TODO: negotiate character input mode for network sockets (e.g., TELNET LINEMODE)
+        }
         break;
     }
     if (comm)
@@ -137,6 +145,8 @@ bool comm_set_char_input (int slot) {
 
 bool comm_set_echo (int slot, bool echo) {
     comm_abstract_ptr comm(slot, comm_slots_mtx);
+    if (!comm)
+        return false;
     bool result = false;
     switch (slot) {
     case COMM_SLOT_CONSOLE:
@@ -149,15 +159,21 @@ bool comm_set_echo (int slot, bool echo) {
             return false;
         break;
     default:
-        // TODO: negotiate echo mode for network sockets (e.g., TELNET ECHO option)
+        if (comm->flags & C_ENABLE_TELNET) {
+            // we never echo input data to the client.
+            // - when we claim won't echo, the client is expected to echo locally (e.g., for line input)
+            // - when we claim will echo, the client is expected to suppress local echo (e.g., for password input)
+            if (echo && !(comm->flags & C_CLIENT_ECHO))
+                comm_telnet_send_wont(comm.raw(), TELOPT_ECHO);
+            else if (!echo && (comm->flags & C_CLIENT_ECHO))
+                comm_telnet_send_will(comm.raw(), TELOPT_ECHO);
+        }
         break;
     }
-    if (comm) {
-        if (echo)
-            comm->flags |= C_CLIENT_ECHO;
-        else
-            comm->flags &= ~C_CLIENT_ECHO;
-    }
+    if (echo)
+        comm->flags |= C_CLIENT_ECHO;
+    else
+        comm->flags &= ~C_CLIENT_ECHO;
     return result;
 }
 
@@ -179,6 +195,10 @@ static void posix_tcsetattr(int fd, struct termios *tio) {
 
 bool comm_set_line_input (int slot, bool echo) {
     comm_abstract_ptr comm(slot, comm_slots_mtx);
+    if (!comm)
+        return false;
+    if (comm->flags & C_LINE_INPUT)
+        return comm_set_echo (slot, echo); // already in line input mode
     switch (slot) {
     case COMM_SLOT_CONSOLE:
 #ifdef HAVE_TERMIOS_H
@@ -196,22 +216,25 @@ bool comm_set_line_input (int slot, bool echo) {
         else
             tio.c_lflag &= ~ECHO;
         posix_tcsetattr (STDIN_FILENO, &tio);
-        break;
-#else
-        (void)echo;
-        break;
 #endif
+        break;
     default:
+        if (comm->flags & C_ENABLE_TELNET) {
+            // TODO: negotiate line input mode for network sockets (e.g., TELNET LINEMODE)
+        }
         break;
     }
 
-    if (comm)
-        comm->flags |= C_LINE_INPUT;
-    return true;
+    comm->flags |= C_LINE_INPUT;
+    return comm_set_echo (slot, echo);
 }
 
 bool comm_set_char_input(int slot) {
     comm_abstract_ptr comm(slot, comm_slots_mtx);
+    if (!comm)
+        return false;
+    if (!(comm->flags & C_LINE_INPUT))
+        return comm_set_echo (slot, false); // already in char input mode, disable echo
     switch (slot) {
     case COMM_SLOT_CONSOLE:
 #ifdef HAVE_TERMIOS_H
@@ -223,21 +246,22 @@ bool comm_set_char_input(int slot) {
         tio.c_cc[VMIN] = 0;  /* use polling as like O_NONBLOCK was set */
         tio.c_cc[VTIME] = 0; /* no timeout */
         posix_tcsetattr (STDIN_FILENO, &tio);
-        break;
-#else
-        (void)slot;
-        return false;
 #endif
+        break;
     default:
-        return false;
+        if (comm->flags & C_ENABLE_TELNET) {
+            // TODO: negotiate character input mode for network sockets (e.g., TELNET LINEMODE)
+        }
+        break;
     }
-    if (comm)
-        comm->flags &= ~(C_LINE_INPUT | C_CLIENT_ECHO);
-    return true;
+    comm->flags &= ~C_LINE_INPUT;
+    return comm_set_echo (slot, false); // disable echo in char input mode
 }
 
 bool comm_set_echo (int slot, bool echo) {
     comm_abstract_ptr comm(slot, comm_slots_mtx);
+    if (!comm)
+        return false;
     switch (slot) {
     case COMM_SLOT_CONSOLE:
 #ifdef HAVE_TERMIOS_H
@@ -249,20 +273,18 @@ bool comm_set_echo (int slot, bool echo) {
         else
             tio.c_lflag &= ~ECHO;
         posix_tcsetattr(STDIN_FILENO, &tio);
-        break;
-#else
-        (void)echo;
-        return false;
 #endif
+        break;
     default:
-        return false;
+        if (comm->flags & C_ENABLE_TELNET) {
+            // TODO: negotiate echo for network sockets
+        }
+        break;
     }
-    if (comm) {
-        if (echo)
-            comm->flags |= C_CLIENT_ECHO;
-        else
-            comm->flags &= ~C_CLIENT_ECHO;
-    }
+    if (echo)
+        comm->flags |= C_CLIENT_ECHO;
+    else
+        comm->flags &= ~C_CLIENT_ECHO;
     return true;
 }
 
