@@ -25,8 +25,8 @@
 #include "mudmux/hooks.h"
 
 extern "C" {
-    mudmux_async_api_t* mudmux_async_api {nullptr}; // global pointer to async API struct, initialized by mudmux_init()
-    mudmux_comm_api_t* mudmux_comm_api {nullptr}; // global pointer to comm API struct, initialized by mudmux_init()
+    mudmux_async_api_v1_t* mudmux_async_api_v1 {nullptr}; // global pointer to async API struct, initialized by mudmux_init()
+    mudmux_comm_api_v1_t* mudmux_comm_api_v1 {nullptr}; // global pointer to comm API struct, initialized by mudmux_init()
 }
 
 static std::thread::id mud_logic_thread_id; // thread ID of the logic layer thread (main thread)
@@ -62,7 +62,7 @@ static void guarded_call_void(const char* api_name, Fn&& fn, Args&&... args) {
 }
 
 static void init_async_api (void) {
-    static mudmux_async_api_t async_api;
+    static mudmux_async_api_v1_t async_api;
     async_api.event_init = async_event_init;
     async_api.event_destroy = async_event_destroy;
     async_api.event_set = async_event_set;
@@ -70,14 +70,14 @@ static void init_async_api (void) {
     // async_api.event_wait = async_event_wait;
     async_api.event_get_wait_handle = async_event_get_wait_handle;
 
-    mudmux_async_api = &async_api; // set global pointer to initialized struct
+    mudmux_async_api_v1 = &async_api; // set global pointer to initialized struct
 }
 
 /**
- * @brief Initialize the mudmux_comm_api struct with function pointers to the communication API.
+ * @brief Initialize the mudmux_comm_api_v1 struct with function pointers to the communication API.
  */
 static void init_comm_api (void) {
-    static mudmux_comm_api_t comm_api;
+    static mudmux_comm_api_v1_t comm_api;
     comm_api.max_slot = comm_max_slot;
     comm_api.add_bio = +[](BIO* rbio, BIO* wbio, int slot, uint32_t flags) -> int {
         return guarded_call<int>("add_bio", -1, comm_abstract_add_bio, rbio, wbio, slot, flags);
@@ -113,7 +113,7 @@ static void init_comm_api (void) {
         return guarded_call<bool>("enable_virtual_terminal", false, comm_enable_virtual_terminal, slot);
     };
 
-    mudmux_comm_api = &comm_api; // set global pointer to initialized struct
+    mudmux_comm_api_v1 = &comm_api; // set global pointer to initialized struct
 }
 
 static int context_to_slot (void* context) {
@@ -168,8 +168,8 @@ MUDMUX_EXPORT void mudmux_deinit (void) {
     enable_console = false;
     mud_logic_thread_id = std::thread::id();
     accept_names.clear();
-    memset(mudmux_comm_api, 0, sizeof(mudmux_comm_api_t));
-    memset(mudmux_async_api, 0, sizeof(mudmux_async_api_t));
+    memset(mudmux_comm_api_v1, 0, sizeof(mudmux_comm_api_v1_t));
+    memset(mudmux_async_api_v1, 0, sizeof(mudmux_async_api_v1_t));
 }
 
 MUDMUX_EXPORT int mudmux_run (void* context) {

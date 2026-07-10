@@ -82,7 +82,7 @@ void comm_flush_all (async_runtime_t *runtime);
 bool comm_close (async_runtime_t *runtime, int slot);
 ```
 
-`comm_close()` is also exposed to logic-layer code through `mudmux/comm.h` (`#define comm_close mudmux_comm_api->close`), so hooks can proactively close slots.
+`comm_close()` is also exposed to logic-layer code through `mudmux/comm.h` (`#define comm_close mudmux_comm_api_v1->close`), so hooks can proactively close slots.
 
 ### Input Mode API (`input_mode.hpp`)
 
@@ -90,9 +90,9 @@ Three functions control the input mode and echo behaviour for a slot. They are e
 
 | Macro | Binding |
 |-------|---------|
-| `comm_set_line_input(slot, echo)` | `mudmux_comm_api->set_line_input` |
-| `comm_set_char_input(slot)` | `mudmux_comm_api->set_char_input` |
-| `comm_set_echo(slot, echo)` | `mudmux_comm_api->set_echo` |
+| `comm_set_line_input(slot, echo)` | `mudmux_comm_api_v1->set_line_input` |
+| `comm_set_char_input(slot)` | `mudmux_comm_api_v1->set_char_input` |
+| `comm_set_echo(slot, echo)` | `mudmux_comm_api_v1->set_echo` |
 
 **`comm_set_line_input(slot, echo)`** — switches a slot to cooked/line-input mode (TELNET line mode, `termios` `ICANON`, Windows cooked). The `echo` parameter enables or disables local character echo. Use this as the default or to restore a slot after char-mode use.
 
@@ -104,7 +104,7 @@ All three functions support `COMM_SLOT_CONSOLE` as well as network slots and ret
 
 ### Virtual Terminal Output API (`console.hpp`)
 
-`comm_enable_virtual_terminal(slot)` enables ANSI/VT100 output processing for the slot's output side. Exposed via `mudmux_comm_api->enable_virtual_terminal`.
+`comm_enable_virtual_terminal(slot)` enables ANSI/VT100 output processing for the slot's output side. Exposed via `mudmux_comm_api_v1->enable_virtual_terminal`.
 
 - No-op on Linux/POSIX where VT output processing is always active.
 - On Windows, sets `ENABLE_VIRTUAL_TERMINAL_PROCESSING`, `ENABLE_PROCESSED_OUTPUT`, and `ENABLE_WRAP_AT_EOL_OUTPUT` on the console stdout so that ANSI escape sequences in outbound data are rendered correctly.
@@ -192,7 +192,7 @@ Outbound writes are intentionally staged and flushed after hook execution.
 `mudmux_init()` exposes outbound buffering through the runtime API table:
 
 ```c
-mudmux_comm_api->buffered_write = comm_buffered_write;
+mudmux_comm_api_v1->buffered_write = comm_buffered_write;
 ```
 
 This keeps plugin/client code using the public header while the core implementation remains internal.

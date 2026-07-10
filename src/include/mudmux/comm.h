@@ -52,29 +52,29 @@ typedef struct mudmux_comm_api_s {
     bool (*set_echo)(int slot, bool echo);
     void (*enable_prompt)(int slot, bool enable);
     bool (*enable_virtual_terminal)(int slot);
-} mudmux_comm_api_t;
+} mudmux_comm_api_v1_t;
 
 #if !defined(MUDMUX_STATIC_DEFINE) && !defined(mudmux_EXPORTS)
 /* public interface */
-#define comm_max_slot                   mudmux_comm_api->max_slot
-#define comm_abstract_add_bio           mudmux_comm_api->add_bio
-#define comm_abstract_add_file          mudmux_comm_api->add_file
-#define comm_abstract_get               mudmux_comm_api->get
-#define comm_get_flags                  mudmux_comm_api->get_flags
-#define comm_buffered_write             mudmux_comm_api->buffered_write
-#define comm_close                      mudmux_comm_api->close
-#define comm_set_line_input             mudmux_comm_api->set_line_input
-#define comm_set_char_input             mudmux_comm_api->set_char_input
-#define comm_set_echo                   mudmux_comm_api->set_echo
-#define comm_enable_prompt              mudmux_comm_api->enable_prompt
-#define comm_enable_virtual_terminal    mudmux_comm_api->enable_virtual_terminal
+#define comm_max_slot                   mudmux_comm_api_v1->max_slot
+#define comm_abstract_add_bio           mudmux_comm_api_v1->add_bio
+#define comm_abstract_add_file          mudmux_comm_api_v1->add_file
+#define comm_abstract_get               mudmux_comm_api_v1->get
+#define comm_get_flags                  mudmux_comm_api_v1->get_flags
+#define comm_buffered_write             mudmux_comm_api_v1->buffered_write
+#define comm_close                      mudmux_comm_api_v1->close
+#define comm_set_line_input             mudmux_comm_api_v1->set_line_input
+#define comm_set_char_input             mudmux_comm_api_v1->set_char_input
+#define comm_set_echo                   mudmux_comm_api_v1->set_echo
+#define comm_enable_prompt              mudmux_comm_api_v1->enable_prompt
+#define comm_enable_virtual_terminal    mudmux_comm_api_v1->enable_virtual_terminal
 #endif
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-MUDMUX_EXPORT extern mudmux_comm_api_t* mudmux_comm_api;
+MUDMUX_EXPORT extern mudmux_comm_api_v1_t* mudmux_comm_api_v1;
 
 #ifdef __cplusplus
 }
