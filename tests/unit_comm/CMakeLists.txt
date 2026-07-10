@@ -5,17 +5,14 @@ add_executable(unit_comm
 )
 
 target_include_directories(unit_comm PRIVATE ${CMAKE_SOURCE_DIR}/lib)
+target_compile_definitions(unit_comm PRIVATE MUDMUX_STATIC_DEFINE) # define to access private functions not exported in the shared library
 target_link_libraries(unit_comm PRIVATE
     spdlog::spdlog
-    mudmux::mudmux
+    mudmux::headers
+    ${MUDMUX_LIB_OBJECTS}
     OpenSSL::SSL
     OpenSSL::applink
     GTest::gtest_main
-)
-
-add_custom_command(TARGET unit_comm POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy -t $<TARGET_FILE_DIR:unit_comm> $<TARGET_RUNTIME_DLLS:unit_comm>
-    COMMAND_EXPAND_LISTS
 )
 
 gtest_discover_tests(unit_comm)

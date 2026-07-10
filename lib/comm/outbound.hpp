@@ -5,9 +5,9 @@
 
 #include "async/async_runtime.h"
 
-void comm_buffered_write (comm_abstract_t *comm, const void *buf, size_t len);
+extern "C" void comm_buffered_write (comm_abstract_t *comm, const void *buf, size_t len);
 
-void comm_free_outbound_buffers(comm_abstract_t* comm);
+void comm_free_outbound_buffers(comm_abstract_ptr& comm);
 
 /**
  * @brief Flush any buffered outbound data for the specified communication slot.
@@ -28,4 +28,4 @@ bool comm_close(async_runtime_t* runtime, int slot);
 
 int comm_invoke_disconnect (async_runtime_t* runtime, int slot);
 
-#endif /* COMM_OUTBOUND_HPP */
+#endif // COMM_OUTBOUND_HPP

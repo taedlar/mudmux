@@ -5,13 +5,13 @@ add_executable(unit_mudmux
     test_stdin.cpp
 )
 
-target_link_libraries(unit_mudmux
+target_link_libraries(unit_mudmux PRIVATE
     spdlog::spdlog
-    mudmux::mudmux
-    GTest::gtest_main
+    yaml-cpp::yaml-cpp
+    mudmux::mudmux # shared library
     OpenSSL::SSL
     OpenSSL::applink
-    yaml-cpp::yaml-cpp
+    GTest::gtest_main
 )
 
 add_custom_command(TARGET unit_mudmux POST_BUILD

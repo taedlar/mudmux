@@ -29,7 +29,7 @@ static void file_input_reader_thread (async_runtime_t* runtime, int slot, async_
     while (true) {
         size_t bytes_read = 0;
         {
-            comm_abstract_ptr comm(slot, mud_logic_mutex);
+            comm_abstract_ptr comm(slot, comm_slots_mtx);
             if (!comm || !comm->rbio) {
                 SPDLOG_ERROR ("file input reader thread exiting: invalid comm slot {}", slot);
                 break;

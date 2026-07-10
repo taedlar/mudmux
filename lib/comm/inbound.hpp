@@ -22,7 +22,7 @@ int comm_invoke_inbound_message (async_runtime_t* runtime, int slot, const void*
  */
 bool comm_refill_inbound_buffers (int slot, const char* src = nullptr, size_t size = 0);
 
-void comm_free_inbound_buffers(comm_abstract_t* comm);
+void comm_free_inbound_buffers(comm_abstract_ptr& comm);
 
 /**
  * @brief Process input data from the specified comm slot's inbound buffer.

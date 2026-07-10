@@ -7,13 +7,11 @@
 #include <openssl/bio.h>
 
 #include "comm/abstract.hpp"
-#include "mudmux/mudmux.h"
 #include "mudmux/comm.h"
 
 using namespace testing;
 
 TEST(CommTest, AbstractAddBio) {
-    mudmux_init(nullptr);
     EXPECT_EQ(comm_abstract_add_bio(nullptr, nullptr, -1, 0), -1); // both rbio and wbio are null: reject
     int slot_r = comm_abstract_add_bio(BIO_new_fp (stdin, BIO_NOCLOSE), nullptr, -1, 0);
     EXPECT_NE(slot_r, -1); // read-only: accept
@@ -32,18 +30,37 @@ TEST(CommTest, AbstractAddBio) {
     if (slot_rw >= 0) {
         EXPECT_TRUE(comm_close(nullptr, slot_rw));
     }
+    EXPECT_GE(comm_max_slot(), 3);
 }
 
 TEST(CommTest, AbstractGet) {
-    mudmux_init(nullptr);
     EXPECT_EQ(comm_abstract_get(-1), nullptr);
-    EXPECT_EQ(comm_abstract_get(100), nullptr);
+    EXPECT_EQ(comm_abstract_get(comm_max_slot()), nullptr);
+}
+
+TEST(CommTest, AbstractRAIIGuard) {
+    std::recursive_mutex mtx;
+#ifdef _WIN32
+    int slot = comm_abstract_add_bio(BIO_new_fd (_fileno(stdin), BIO_NOCLOSE), nullptr, -1, 0);
+#else
+    int slot = comm_abstract_add_bio(BIO_new_fd (STDIN_FILENO, BIO_NOCLOSE), nullptr, -1, 0);
+#endif
+    ASSERT_NE(slot, -1);
+    comm_abstract_ptr comm(slot, mtx); // for unit-testing, not actual layer guards
+    EXPECT_NE(comm.get(), nullptr);
+    EXPECT_EQ(comm.slot(), slot);
+    EXPECT_TRUE(comm.has_rbio());
+    EXPECT_FALSE(comm.has_wbio());
+    socket_fd_t fd = INVALID_SOCKET_FD;
+    EXPECT_TRUE(comm.get_rbio_fd(&fd));
+    EXPECT_NE(fd, INVALID_SOCKET_FD);
+
+    EXPECT_TRUE(comm_close(nullptr, slot));
 }
 
 TEST(CommTest, AbstractCloseInvalidSlot) {
-    mudmux_init(nullptr);
     EXPECT_TRUE(comm_close(nullptr, -1));
-    EXPECT_TRUE(comm_close(nullptr, 100));
+    EXPECT_TRUE(comm_close(nullptr, comm_max_slot()));
 }
 
 TEST(CommTest, SocketFdToBioFdRejectsInvalidSocket) {

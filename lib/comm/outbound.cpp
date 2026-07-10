@@ -51,7 +51,7 @@ static void free_outbound_buffer(outbound_buffer_t* buffer) {
 }
 
 void comm_buffered_write (comm_abstract_t *comm, const void *buf, size_t len) {
-    std::lock_guard<std::recursive_mutex> lock(mud_logic_mutex);
+    std::lock_guard<std::recursive_mutex> lock(comm_slots_mtx);
 
     if (!comm || !comm->wbio || !buf || len == 0)
         return; // invalid parameters
@@ -105,19 +105,19 @@ void comm_buffered_write (comm_abstract_t *comm, const void *buf, size_t len) {
     }
 }
 
-void comm_free_outbound_buffers(comm_abstract_t* comm) {
-    if (!comm)
-        return;
-    while (comm->outbound) {
-        outbound_buffer_t* next_buffer = comm->outbound->next;
-        free_outbound_buffer(comm->outbound);
-        comm->outbound = next_buffer;
+void comm_free_outbound_buffers(comm_abstract_ptr& comm) {
+    if (comm) {
+        while (comm->outbound) {
+            outbound_buffer_t* next_buffer = comm->outbound->next;
+            free_outbound_buffer(comm->outbound);
+            comm->outbound = next_buffer;
+        }
+        assert(comm->outbound == nullptr);
     }
-    assert(comm->outbound == nullptr);
 }
 
 void comm_flush (async_runtime_t* runtime, int slot) {
-    comm_abstract_ptr comm(slot, mud_logic_mutex);
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
     if (!comm || !comm->wbio)
         return; // invalid parameters
     outbound_buffer_t* obb = comm->outbound;
@@ -128,7 +128,7 @@ void comm_flush (async_runtime_t* runtime, int slot) {
             if (written <= 0) {
                 if (!BIO_should_retry(comm->wbio)) {
                     SPDLOG_ERROR ("BIO_write failed during flush: {}", ERR_error_string(ERR_get_error(), nullptr));
-                    comm_free_outbound_buffers(comm.get()); // drop any buffered outbound data
+                    comm_free_outbound_buffers(comm); // drop any buffered outbound data
                     comm->flags &= ~C_BUFFERED_WRITE;
                     if (!(comm->flags & C_CLOSING))
                         async_runtime_post_completion(runtime, ASYNC_IO_ERROR_KEY, static_cast<uintptr_t>(slot));
@@ -193,7 +193,7 @@ void comm_flush_all (async_runtime_t* runtime) {
 }
 
 bool comm_close (async_runtime_t* runtime, int slot) {
-    comm_abstract_ptr comm(slot, mud_logic_mutex);
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
     if (!comm)
         return true; // already removed
 

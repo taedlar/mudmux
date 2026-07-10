@@ -77,7 +77,7 @@ static bool set_console_input_mode (DWORD set_bits, DWORD clear_bits) {
 }
 
 bool comm_set_line_input (int slot, bool echo) {
-    comm_abstract_ptr comm(slot, mud_logic_mutex);
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
     switch (slot) {
     case COMM_SLOT_CONSOLE: {
         /*
@@ -106,7 +106,7 @@ bool comm_set_line_input (int slot, bool echo) {
 }
 
 bool comm_set_char_input (int slot) {
-    comm_abstract_ptr comm(slot, mud_logic_mutex);
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
     switch (slot) {
     case COMM_SLOT_CONSOLE:
         /*
@@ -136,7 +136,7 @@ bool comm_set_char_input (int slot) {
 }
 
 bool comm_set_echo (int slot, bool echo) {
-    comm_abstract_ptr comm(slot, mud_logic_mutex);
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
     bool result = false;
     switch (slot) {
     case COMM_SLOT_CONSOLE:
@@ -178,7 +178,7 @@ static void posix_tcsetattr(int fd, struct termios *tio) {
 #endif /* HAVE_TERMIOS_H */
 
 bool comm_set_line_input (int slot, bool echo) {
-    comm_abstract_ptr comm(slot, mud_logic_mutex);
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
     switch (slot) {
     case COMM_SLOT_CONSOLE:
 #ifdef HAVE_TERMIOS_H
@@ -211,7 +211,7 @@ bool comm_set_line_input (int slot, bool echo) {
 }
 
 bool comm_set_char_input(int slot) {
-    comm_abstract_ptr comm(slot, mud_logic_mutex);
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
     switch (slot) {
     case COMM_SLOT_CONSOLE:
 #ifdef HAVE_TERMIOS_H
@@ -237,7 +237,7 @@ bool comm_set_char_input(int slot) {
 }
 
 bool comm_set_echo (int slot, bool echo) {
-    comm_abstract_ptr comm(slot, mud_logic_mutex);
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
     switch (slot) {
     case COMM_SLOT_CONSOLE:
 #ifdef HAVE_TERMIOS_H

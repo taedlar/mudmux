@@ -74,8 +74,6 @@ void comm_abstract_remove_all(void);
 
 // Flag management
 uint32_t comm_get_flags (comm_abstract_t *comm);
-void comm_set_flags (comm_abstract_t *comm, uint32_t flags);
-void comm_clear_flags (comm_abstract_t *comm, uint32_t flags);
 
 // Non-blocking (buffered) write path
 void comm_buffered_write (comm_abstract_t *comm, const void *buf, size_t len);

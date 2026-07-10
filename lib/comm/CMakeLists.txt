@@ -26,6 +26,9 @@ target_compile_definitions(comm PRIVATE mudmux_EXPORTS)
 
 target_link_libraries(comm PRIVATE
     spdlog::spdlog
+)
+
+target_link_libraries(comm PUBLIC
     mudmux::async
     mudmux::headers
     OpenSSL::SSL
