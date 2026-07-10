@@ -51,7 +51,7 @@ bool comm_init_console (async_runtime_t *runtime) {
     // if COMM_SLOT_CONSOLE already exists, it could be setup to pipe/file input, we'll leave it
     // alone and only initialize the console worker to read from stdin (whatever it is) and
     // enqueue lines into console_queue.
-    comm_abstract_ptr console_comm(COMM_SLOT_CONSOLE, mud_logic_mutex);
+    comm_abstract_ptr console_comm(COMM_SLOT_CONSOLE, comm_slots_mtx);
     if (!console_comm) {
         if (comm_abstract_add_file (nullptr, nullptr, COMM_SLOT_CONSOLE, C_LINE_INPUT) < 0) { // unlike adding BIOs, null file names will use stdin/stdout
             SPDLOG_ERROR ("failed to connect console communication");
@@ -154,7 +154,7 @@ int comm_process_console_input (async_runtime_t *runtime, bool allow_reconnect) 
             disconnected = true;
         }
 
-        comm_abstract_ptr console_comm(COMM_SLOT_CONSOLE, mud_logic_mutex);
+        comm_abstract_ptr console_comm(COMM_SLOT_CONSOLE, comm_slots_mtx);
         if (!console_comm && allow_reconnect && console_ctx) {
             if (!async_queue_is_empty(console_queue)) {
                 SPDLOG_INFO ("----- reconnecting console communication");
@@ -185,7 +185,7 @@ int comm_process_console_input (async_runtime_t *runtime, bool allow_reconnect) 
     comm_process_input (runtime, COMM_SLOT_CONSOLE);
 
     if (disconnected) {
-        comm_abstract_ptr comm (COMM_SLOT_CONSOLE, mud_logic_mutex);
+        comm_abstract_ptr comm (COMM_SLOT_CONSOLE, comm_slots_mtx);
         if (comm) {
             if (!(comm->flags & C_CLOSING))
                 comm_invoke_disconnect (runtime, COMM_SLOT_CONSOLE); // invoke disconnect hook for console user

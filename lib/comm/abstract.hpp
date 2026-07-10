@@ -80,12 +80,10 @@ bool comm_abstract_get_rbio_fd (int slot, socket_fd_t* out_fd);
 bool comm_abstract_get_wbio_fd (int slot, socket_fd_t* out_fd);
 
 /* flag management (logic layer helper) */
-uint32_t comm_get_flags (comm_abstract_t *comm);
-void comm_set_flags (comm_abstract_t *comm, uint32_t flags);
-void comm_clear_flags (comm_abstract_t *comm, uint32_t flags);
+extern "C" uint32_t comm_get_flags (comm_abstract_t *comm);
 
 /**
- * comm_abstract_ptr is a RAII wrapper for comm_abstract_t that locks the mud_logic_mutex
+ * comm_abstract_ptr is a RAII wrapper for comm_abstract_t that locks the comm_slots_mtx
  * and provides safe access to the underlying comm_abstract_t for a given slot.
  */
 class comm_abstract_ptr {
@@ -123,38 +121,42 @@ public:
         return resolve_slot_unlocked(slot);
     }
 
-    inline comm_abstract_t* raw() const {
+    inline comm_abstract_t* raw() const { // RAII accessor to slot pointer (could be unused slot)
         return slot_ptr_unlocked(slot_);
     }
 
-    inline comm_abstract_t* get() const { // RAII accessor to comm_abstract_t
+    inline comm_abstract_t* get() const { // RAII accessor to valid slot pointer (returns nullptr if slot is unused)
         return resolve_slot_unlocked(slot_);
     }
 
-    inline comm_abstract_t* operator->() const {
+    inline comm_abstract_t* operator->() const { // comm_abstract_ptr->member syntax, equivalent to get()
         return get();
     }
 
-    inline explicit operator bool() const {
+    inline explicit operator bool() const { // RAII validity check, returns true if slot is valid and not unused
         return resolve_slot_unlocked(slot_) != nullptr;
     }
 
-    inline bool has_rbio() const {
+    inline int slot() const { // immutable accessor to the slot number
+        return slot_;
+    }
+
+    inline bool has_rbio() const { // RAII check if the slot has a valid read BIO
         auto* comm = resolve_slot_unlocked(slot_);
         return comm && comm->rbio;
     }
 
-    inline bool has_wbio() const {
+    inline bool has_wbio() const { // RAII check if the slot has a valid write BIO
         auto* comm = resolve_slot_unlocked(slot_);
         return comm && comm->wbio;
     }
 
-    inline bool get_rbio_fd(socket_fd_t* out_fd) const {
+    inline bool get_rbio_fd(socket_fd_t* out_fd) const { // RAII accessor to the read BIO's socket file descriptor
         auto* comm = resolve_slot_unlocked(slot_);
         return comm && comm->rbio && comm_bio_get_socket_fd(comm->rbio, out_fd);
     }
 
-    inline bool get_wbio_fd(socket_fd_t* out_fd) const {
+    inline bool get_wbio_fd(socket_fd_t* out_fd) const { // RAII accessor to the write BIO's socket file descriptor
         auto* comm = resolve_slot_unlocked(slot_);
         return comm && comm->wbio && comm_bio_get_socket_fd(comm->wbio, out_fd);
     }

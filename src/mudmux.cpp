@@ -251,7 +251,7 @@ extern "C" int mudmux_run (void* context) {
 
             int slot = context_to_slot (event.context);
             {
-                comm_abstract_ptr comm (slot, mud_logic_mutex);
+                comm_abstract_ptr comm (slot, comm_slots_mtx);
                 if (!comm) {
                     // This can happen if the comm was removed (e.g., due to disconnect) while events were still pending
                     continue;

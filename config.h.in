@@ -29,7 +29,7 @@
 
 #if defined(MUDMUX_STATIC_DEFINE) || defined(mudmux_EXPORTS)
 #include <mutex>
-extern std::recursive_mutex mud_logic_mutex; // logic layer mutex
+extern std::recursive_mutex comm_slots_mtx; // logic layer mutex
 #endif
 
 #endif /* CONFIG_H */

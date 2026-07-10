@@ -16,6 +16,8 @@
 #include "outbound.hpp"
 #include "mudmux/comm.h"
 
+std::recursive_mutex comm_slots_mtx;
+
 comm_abstract_t* comm_abstract_ptr::all_comms_ = nullptr;
 size_t comm_abstract_ptr::max_comms_ = 0;
 
@@ -72,7 +74,7 @@ void comm_abstract_ptr::reset_storage(void) {
 }
 
 int comm_max_slot (void) {
-    std::lock_guard<std::recursive_mutex> lock(mud_logic_mutex);
+    std::lock_guard<std::recursive_mutex> lock(comm_slots_mtx);
     return comm_abstract_ptr::max_slot_count();
 }
 
@@ -82,7 +84,7 @@ int comm_abstract_add_bio (BIO* rbio, BIO* wbio, int slot, uint32_t flags) {
         return -1;
     }
 
-    std::lock_guard<std::recursive_mutex> lock(mud_logic_mutex);
+    std::lock_guard<std::recursive_mutex> lock(comm_slots_mtx);
     if (comm_abstract_ptr::ensure_capacity() < 0)
         return -1;
 
@@ -125,7 +127,7 @@ int comm_abstract_add_file (const char* fn_in, const char* fn_out, int slot, uin
 }
 
 int comm_abstract_disconnect (int slot) {
-    comm_abstract_ptr comm(slot, mud_logic_mutex);
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
     if (!comm) {
         SPDLOG_WARN ("invalid slot {} in comm_abstract_disconnect()", slot);
         return -1;
@@ -138,9 +140,12 @@ int comm_abstract_disconnect (int slot) {
 }
 
 int comm_abstract_remove (int slot) {
-    comm_abstract_ptr comm(slot, mud_logic_mutex);
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
     if (!comm)
         return 0; // already removed or invalid slot
+    comm_free_inbound_buffers(comm);
+    comm_free_outbound_buffers(comm);
+
     comm_abstract_t* raw = comm.raw();
     if (!raw)
         return 0;
@@ -148,16 +153,14 @@ int comm_abstract_remove (int slot) {
         BIO_free_all (raw->rbio);
     if (raw->wbio && raw->wbio != raw->rbio)
         BIO_free_all (raw->wbio);
-    comm_free_inbound_buffers(raw); // free any remaining inbound buffers
-    comm_free_outbound_buffers(raw); // free any remaining outbound buffers
     raw->flags = 0;
-    raw->rbio = raw->wbio = nullptr;
+    raw->rbio = raw->wbio = nullptr; // makes comm_abstract_ptr::get() return nullptr for this slot
     SPDLOG_DEBUG ("removed comm slot {}", slot);
     return 0;
 }
 
 void comm_abstract_remove_all (void) {
-    std::lock_guard<std::recursive_mutex> lock(mud_logic_mutex);
+    std::lock_guard<std::recursive_mutex> lock(comm_slots_mtx);
     if (!comm_abstract_ptr::all_comms_)
         return;
     int i = 0;
@@ -173,35 +176,25 @@ comm_abstract_t* comm_abstract_get (int slot) {
 }
 
 bool comm_abstract_has_rbio (int slot) {
-    comm_abstract_ptr comm(slot, mud_logic_mutex);
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
     return comm.has_rbio();
 }
 
 bool comm_abstract_has_wbio (int slot) {
-    comm_abstract_ptr comm(slot, mud_logic_mutex);
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
     return comm.has_wbio();
 }
 
 bool comm_abstract_get_rbio_fd (int slot, socket_fd_t* out_fd) {
-    comm_abstract_ptr comm(slot, mud_logic_mutex);
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
     return comm.get_rbio_fd(out_fd);
 }
 
 bool comm_abstract_get_wbio_fd (int slot, socket_fd_t* out_fd) {
-    comm_abstract_ptr comm(slot, mud_logic_mutex);
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
     return comm.get_wbio_fd(out_fd);
 }
 
 uint32_t comm_get_flags (comm_abstract_t *comm) {
     return comm ? comm->flags : 0;
-}
-
-void comm_set_flags (comm_abstract_t *comm, uint32_t flags) {
-    if (comm)
-        comm->flags |= flags;
-}
-
-void comm_clear_flags (comm_abstract_t *comm, uint32_t flags) {
-    if (comm)
-        comm->flags &= ~flags;
 }

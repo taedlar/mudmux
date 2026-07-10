@@ -52,7 +52,7 @@ void comm_enable_prompt (int slot, bool enable) {
         return;
     }
 
-    comm_abstract_ptr comm(slot, mud_logic_mutex);
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
     if (!comm) {
         return;
     }
@@ -68,9 +68,9 @@ void comm_invoke_prompt (async_runtime_t* runtime) {
     if (!runtime)
         return;
 
-    std::lock_guard<std::recursive_mutex> lock(mud_logic_mutex);
+    std::lock_guard<std::recursive_mutex> lock(comm_slots_mtx);
     for (int max_slot = comm_max_slot(), slot = 0; slot < max_slot; ++slot) {
-        comm_abstract_ptr comm(slot, mud_logic_mutex);
+        comm_abstract_ptr comm(slot, comm_slots_mtx);
         if (!comm)
             continue;
         if (comm->flags & C_BUFFERED_WRITE)
@@ -107,7 +107,7 @@ int comm_invoke_inbound_message (async_runtime_t* runtime, int slot, const void*
         return -1;
     }
 
-    comm_abstract_ptr comm(slot, mud_logic_mutex);
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
     if (comm) {
         comm->flags &= ~C_INVOKED_PROMPT; // reset C_INVOKED_PROMPT flag on inbound message
         mudmux_invoke_hook (
@@ -120,15 +120,15 @@ int comm_invoke_inbound_message (async_runtime_t* runtime, int slot, const void*
     return 0;
 }
 
-void comm_free_inbound_buffers(comm_abstract_t* comm) {
-    if (!comm)
-        return;
-    while (comm->inbound) {
-        inbound_buffer_t* next = comm->inbound->next;
-        free_inbound_buffer(comm->inbound);
-        comm->inbound = next;
+void comm_free_inbound_buffers(comm_abstract_ptr& comm) {
+    if (comm) {
+        while (comm->inbound) {
+            inbound_buffer_t* next = comm->inbound->next;
+            free_inbound_buffer(comm->inbound);
+            comm->inbound = next;
+        }
+        assert(comm->inbound == nullptr);
     }
-    assert(comm->inbound == nullptr);
 }
 
 enum class refill_status_t {
@@ -152,19 +152,20 @@ static inbound_buffer_t* _refill_inbound_buffers (comm_abstract_ptr& comm, refil
     if (!comm)
         return nullptr;
 
-    SPDLOG_DEBUG ("refilling inbound buffers");
     inbound_buffer_t* ibb = comm->inbound;
     if (!ibb) {
         // do lazy allocation for the first inbound buffer if it doesn't exist yet
         ibb = comm->inbound = allocate_inbound_buffer();
     }
     inbound_buffer_t* head = ibb;
-    while (ibb && ibb->next) {
+    while (ibb) {
+        if (ibb->end < sizeof(ibb->buffer))
+            break; // found a buffer with space to read more data
         ibb = ibb->next; // move to the last buffer in the chain
     }
     assert ((ibb == nullptr) || (ibb->next == nullptr)); // ensure we are at the end of the chain
 
-    if (ibb->end < sizeof(ibb->buffer)) {
+    if (ibb && ibb->end < sizeof(ibb->buffer)) {
         size_t bytes_read = 0;
         if (BIO_read_ex(comm->rbio, ibb->buffer + ibb->end, sizeof(ibb->buffer) - ibb->end, &bytes_read)) {
             ibb->end += bytes_read;
@@ -176,13 +177,15 @@ static inbound_buffer_t* _refill_inbound_buffers (comm_abstract_ptr& comm, refil
         }
         SPDLOG_DEBUG ("refilled inbound buffers : total_bytes_read={}", bytes_read);
     } else {
-        SPDLOG_DEBUG ("inbound buffer chain is full");
+        SPDLOG_DEBUG ("inbound buffers are full");
+        if (status)
+            *status = refill_status_t::no_data;
     }
     return head;
 }
 
 bool comm_refill_inbound_buffers (int slot, const char* src, size_t size) {
-    comm_abstract_ptr comm(slot, mud_logic_mutex);
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
     if (!comm)
         return false;
     if (src && size > 0) {
@@ -336,7 +339,7 @@ int comm_process_input (async_runtime_t* runtime, int slot, int max_message) {
         SPDLOG_ERROR ("comm_process_input() called with invalid parameters: runtime={}, slot={}", (void*)runtime, slot);
         return -1;
     }
-    comm_abstract_ptr comm(slot, mud_logic_mutex);
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
     if (!comm)
         return 1;
     inbound_buffer_t* ibb = comm->inbound;
