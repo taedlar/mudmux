@@ -25,22 +25,22 @@ typedef struct mudmux_async_api_s {
     void (*event_reset)(async_event_t* event);
     // bool (*event_wait)(async_event_t* event, int timeout_ms);
     async_wait_handle_t (*event_get_wait_handle)(async_event_t* event);
-} mudmux_async_api_t;
+} mudmux_async_api_v1_t;
 
 #if !defined(MUDMUX_STATIC_DEFINE) && !defined(mudmux_EXPORTS)
-#define async_event_init                mudmux_async_api->event_init
-#define async_event_destroy             mudmux_async_api->event_destroy
-#define async_event_set                 mudmux_async_api->event_set
-#define async_event_reset               mudmux_async_api->event_reset
-// #define async_event_wait                mudmux_async_api->event_wait
-#define async_event_get_wait_handle     mudmux_async_api->event_get_wait_handle
+#define async_event_init                mudmux_async_api_v1->event_init
+#define async_event_destroy             mudmux_async_api_v1->event_destroy
+#define async_event_set                 mudmux_async_api_v1->event_set
+#define async_event_reset               mudmux_async_api_v1->event_reset
+// #define async_event_wait                mudmux_async_api_v1->event_wait
+#define async_event_get_wait_handle     mudmux_async_api_v1->event_get_wait_handle
 #endif
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-MUDMUX_EXPORT extern mudmux_async_api_t* mudmux_async_api;
+MUDMUX_EXPORT extern mudmux_async_api_v1_t* mudmux_async_api_v1;
 
 #ifdef __cplusplus
 }
