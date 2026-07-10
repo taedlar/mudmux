@@ -149,9 +149,8 @@ void comm_flush (async_runtime_t* runtime, int slot) {
 
     socket_fd_t fd {INVALID_SOCKET_FD};
     if (!comm_bio_get_socket_fd(comm->wbio, &fd)) {
-        // This can happen on console user because the wbio is a FILE* (stdout) and BIO does not
-        // support BIO_get_fd for FILE* BIOs. In this case, we cannot modify the async runtime
-        // events, but we can still flush the data.
+        SPDLOG_WARN ("Failed to retrieve socket fd from BIO during flush for slot {}", slot);
+        return;
     }
 
     if (comm->outbound) {
