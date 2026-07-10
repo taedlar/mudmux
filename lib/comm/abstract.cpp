@@ -9,6 +9,13 @@
 #include <vector>
 #include <type_traits>
 #include <string.h>
+#ifdef HAVE_UNISTD_H
+#include <unistd.h>
+#elif defined(_WIN32)
+#include <io.h>
+#define STDIN_FILENO    _fileno(stdin)
+#define STDOUT_FILENO   _fileno(stdout)
+#endif
 #include <openssl/bio.h>
 #include <openssl/err.h>
 
@@ -105,12 +112,12 @@ int comm_abstract_add_bio (BIO* rbio, BIO* wbio, int slot, uint32_t flags) {
 }
 
 int comm_abstract_add_file (const char* fn_in, const char* fn_out, int slot, uint32_t flags) {
-    BIO* bio_in = fn_in ? BIO_new_file(fn_in, "r") : BIO_new_fp (stdin, BIO_NOCLOSE);
+    BIO* bio_in = fn_in ? BIO_new_file(fn_in, "r") : BIO_new_fd (STDIN_FILENO, BIO_NOCLOSE);
     if (!bio_in) {
         SPDLOG_ERROR ("failed to open file {} for reading", fn_in ? fn_in : "stdin");
         return -1;
     }
-    BIO* bio_out = fn_out ? BIO_new_file(fn_out, "w") : BIO_new_fp (stdout, BIO_NOCLOSE);
+    BIO* bio_out = fn_out ? BIO_new_file(fn_out, "w") : BIO_new_fd (STDOUT_FILENO, BIO_NOCLOSE);
     if (!bio_out) {
         SPDLOG_ERROR ("failed to open file {} for writing", fn_out ? fn_out : "stdout");
         BIO_free_all(bio_in);
