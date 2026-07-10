@@ -6,6 +6,7 @@
 #include <mutex>
 #include <type_traits>
 #include <openssl/bio.h>
+#include <openssl/err.h>
 
 #include "async/async_runtime.h"
 
@@ -60,8 +61,10 @@ static inline bool comm_bio_get_socket_fd (BIO* bio, socket_fd_t* out_fd) {
         return false;
 
     int bio_fd = -1;
-    if (BIO_get_fd(bio, &bio_fd) <= 0 || bio_fd < 0)
+    if (BIO_get_fd(bio, &bio_fd) < 0 || bio_fd < 0) {
+        SPDLOG_ERROR ("BIO_get_fd() failed or returned invalid fd: {}", ERR_error_string(ERR_get_error(), nullptr));
         return false;
+    }
 
     *out_fd = comm_bio_fd_to_socket_fd(bio_fd);
     return *out_fd != INVALID_SOCKET_FD;

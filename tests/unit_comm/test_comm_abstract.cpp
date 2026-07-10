@@ -40,7 +40,11 @@ TEST(CommTest, AbstractGet) {
 
 TEST(CommTest, AbstractRAIIGuard) {
     std::recursive_mutex mtx;
-    int slot = comm_abstract_add_bio(BIO_new_fp (stdin, BIO_NOCLOSE), nullptr, -1, 0);
+#ifdef _WIN32
+    int slot = comm_abstract_add_bio(BIO_new_fd (_fileno(stdin), BIO_NOCLOSE), nullptr, -1, 0);
+#else
+    int slot = comm_abstract_add_bio(BIO_new_fd (STDIN_FILENO, BIO_NOCLOSE), nullptr, -1, 0);
+#endif
     ASSERT_NE(slot, -1);
     comm_abstract_ptr comm(slot, mtx); // for unit-testing, not actual layer guards
     EXPECT_NE(comm.get(), nullptr);

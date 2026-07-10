@@ -38,12 +38,14 @@ set (MUDMUX_LIB_OBJECTS
     mudmux::core
     mudmux::async
     mudmux::comm
-    PARENT_SCOPE # export to parent score for unit-tests
 )
 
 # shared library
 add_library(mudmux SHARED dllmain.cpp)
 target_link_libraries(mudmux PRIVATE ${MUDMUX_LIB_OBJECTS})
+
+# export to parent scope for unit-tests
+set (MUDMUX_LIB_OBJECTS ${MUDMUX_LIB_OBJECTS} PARENT_SCOPE)
 target_link_libraries(mudmux PUBLIC mudmux::headers)
 add_library(mudmux::mudmux ALIAS mudmux)
 generate_export_header(mudmux)

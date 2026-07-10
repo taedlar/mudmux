@@ -120,19 +120,19 @@ static int context_to_slot (void* context) {
     return static_cast<int>(reinterpret_cast<intptr_t>(context));
 }
 
-extern "C" void mudmux_set_log_level (int level) {
+MUDMUX_EXPORT void mudmux_set_log_level (int level) {
     spdlog::set_level(static_cast<spdlog::level::level_enum>(level));
 }
 
-extern "C" void mudmux_enable_standard_input (bool enable) {
+MUDMUX_EXPORT void mudmux_enable_standard_input (bool enable) {
     enable_standard_input = enable;
 }
 
-extern "C" void mudmux_enable_console (bool enable) {
+MUDMUX_EXPORT void mudmux_enable_console (bool enable) {
     enable_console = enable;
 }
 
-extern "C" bool mudmux_init (const char* config_yaml) {
+MUDMUX_EXPORT bool mudmux_init (const char* config_yaml) {
     if (is_running.load()) {
         SPDLOG_ERROR ("mudmux_init() called while already running");
         return false;
@@ -160,7 +160,7 @@ extern "C" bool mudmux_init (const char* config_yaml) {
     return true;
 }
 
-extern "C" void mudmux_deinit (void) {
+MUDMUX_EXPORT void mudmux_deinit (void) {
     if (is_running.load()) {
         SPDLOG_ERROR ("mudmux_deinit() called while running");
         return;
@@ -172,7 +172,7 @@ extern "C" void mudmux_deinit (void) {
     memset(mudmux_async_api, 0, sizeof(mudmux_async_api_t));
 }
 
-extern "C" int mudmux_run (void* context) {
+MUDMUX_EXPORT int mudmux_run (void* context) {
     if (is_running.exchange(true)) {
         SPDLOG_ERROR ("mudmux_run() called while already running");
         return EXIT_FAILURE;
@@ -300,7 +300,7 @@ extern "C" int mudmux_run (void* context) {
     return EXIT_SUCCESS;
 }
 
-extern "C" void mudmux_shutdown (void) {
+MUDMUX_EXPORT void mudmux_shutdown (void) {
     if (is_running.load()) {
         SPDLOG_INFO ("mudmux_shutdown() called");
         is_shutting_down.store(true);
