@@ -172,20 +172,20 @@ int comm_process_console_input (async_runtime_t *runtime, bool allow_reconnect) 
     // drain completed lines from the console queue and invoke the shared inbound hook path
     char console_line_buffer[4096];
     size_t line_len = 0;
+    comm_abstract_ptr comm(COMM_SLOT_CONSOLE, comm_slots_mtx);
     while (async_queue_dequeue (console_queue, console_line_buffer, sizeof(console_line_buffer), &line_len)) {
         if (line_len > 0 && console_line_buffer[line_len - 1] == '\0') {
             --line_len;
         }
-        if (!comm_refill_inbound_buffers (COMM_SLOT_CONSOLE, console_line_buffer, line_len)) {
+        if (!comm_refill_inbound_buffers (comm, console_line_buffer, line_len)) {
             SPDLOG_WARN ("failed to refill inbound buffers for console input");
             console_worker_set_eof (console_ctx); // signal EOF to console worker to stop reading
             break;
         }
     }
-    comm_process_input (runtime, COMM_SLOT_CONSOLE);
+    comm_process_input (runtime, comm);
 
     if (disconnected) {
-        comm_abstract_ptr comm (COMM_SLOT_CONSOLE, comm_slots_mtx);
         if (comm) {
             if (!(comm->flags & C_CLOSING))
                 comm_invoke_disconnect (runtime, COMM_SLOT_CONSOLE); // invoke disconnect hook for console user

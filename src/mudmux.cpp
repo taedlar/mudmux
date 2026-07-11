@@ -267,12 +267,12 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
                 }
                 if (event.event_type & EVENT_READ) {
 #ifdef _WIN32
-                    bool refilled = comm_refill_inbound_buffers (slot, static_cast<char*>(event.buffer), event.bytes_transferred)
+                    bool refilled = comm_refill_inbound_buffers (comm, static_cast<char*>(event.buffer), event.bytes_transferred)
                         && 0 == async_runtime_post_read (runtime, event.fd, nullptr, 0); // re-arm IOCP for next read
 #else
-                    bool refilled = comm_refill_inbound_buffers (slot); // read more data from rbio
+                    bool refilled = comm_refill_inbound_buffers (comm); // read more data from rbio
 #endif
-                    if (!refilled || comm_process_input(runtime, slot) != 0) {
+                    if (!refilled || comm_process_input(runtime, comm) != 0) {
                         (void) comm_close(runtime, slot);
                         continue;
                     }

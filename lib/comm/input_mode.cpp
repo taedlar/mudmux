@@ -125,6 +125,8 @@ bool comm_set_line_input (int slot, bool echo) {
 
 bool comm_set_char_input (int slot) {
     comm_abstract_ptr comm(slot, comm_slots_mtx);
+    if (!comm && slot != COMM_SLOT_CONSOLE)
+        return false;
     switch (slot) {
     case COMM_SLOT_CONSOLE:
         /*
@@ -159,16 +161,13 @@ bool comm_set_echo (int slot, bool echo) {
     comm_abstract_ptr comm(slot, comm_slots_mtx);
     if (!comm)
         return false;
-    bool result = false;
+    bool result = true;
     switch (slot) {
     case COMM_SLOT_CONSOLE:
         if (echo)
             result = set_console_input_mode (ENABLE_ECHO_INPUT, 0);
         else
             result = set_console_input_mode (0, ENABLE_ECHO_INPUT);
-        break;
-        if (!result)
-            return false;
         break;
     default:
         if (comm->flags & C_ENABLE_TELNET) {

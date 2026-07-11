@@ -54,7 +54,7 @@ static void free_inbound_buffer(inbound_buffer_t* buffer) {
     inbound_buffer_pool = buffer;
 }
 
-void comm_enable_prompt (int slot, bool enable) {
+extern "C" void comm_enable_prompt (int slot, bool enable) {
     if (slot < 0) {
         return;
     }
@@ -235,8 +235,7 @@ static inbound_buffer_t* _refill_inbound_buffers (comm_abstract_ptr& comm, refil
     return head;
 }
 
-bool comm_refill_inbound_buffers (int slot, const char* src, size_t size) {
-    comm_abstract_ptr comm(slot, comm_slots_mtx);
+bool comm_refill_inbound_buffers (comm_abstract_ptr& comm, const char* src, size_t size) {
     if (!comm)
         return false;
     if (src && size > 0) {
@@ -400,14 +399,9 @@ static ssize_t _find_char_input_sequence (inbound_buffer_t* ibb, uint32_t comm_f
     return static_cast<ssize_t>(ibb->start + mbc_len);
 }
 
-int comm_process_input (async_runtime_t* runtime, int slot, int max_message) {
-    if (!runtime || slot < 0) {
-        SPDLOG_ERROR ("comm_process_input() called with invalid parameters: runtime={}, slot={}", (void*)runtime, slot);
-        return -1;
-    }
-    comm_abstract_ptr comm(slot, comm_slots_mtx);
+int comm_process_input (async_runtime_t* runtime, comm_abstract_ptr& comm, int max_message) {
     if (!comm)
-        return 1;
+        return -1;
     inbound_buffer_t* ibb = comm->inbound;
     while (ibb && ibb->band != INBOUND_BAND_DATA) {
         comm->inbound = ibb->next;
