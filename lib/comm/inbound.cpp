@@ -116,22 +116,20 @@ int comm_invoke_connect (async_runtime_t* runtime, int slot, int entry_slot) {
 	);
 }
 
-int comm_invoke_inbound_message (async_runtime_t* runtime, int slot, const void* data, size_t size) {
-    if (!runtime || !data || size == 0) {
+int comm_invoke_inbound_message (async_runtime_t* runtime, comm_abstract_ptr& comm, const void* data, size_t size) {
+    if (!runtime || !comm || !data) {
         return -1;
     }
 
-    comm_abstract_ptr comm(slot, comm_slots_mtx);
-    if (comm) {
-        comm->flags &= ~C_INVOKED_PROMPT; // reset C_INVOKED_PROMPT flag on inbound message
-        mudmux_invoke_hook (
-            HOOK_MESSAGE_INBOUND,
-            async_runtime_get_context(runtime),
-            slot,
-            const_cast<void*>(data),
-            size);
-    }
-    return 0;
+    comm->flags &= ~C_INVOKED_PROMPT; // reset C_INVOKED_PROMPT flag on inbound message
+    SPDLOG_DEBUG ("invoking inbound message hook for slot {} with {} bytes of data", comm.slot(), size);
+    return mudmux_invoke_hook (
+        HOOK_MESSAGE_INBOUND,
+        async_runtime_get_context(runtime),
+        comm.slot(),
+        const_cast<void*>(data),
+        size
+    );
 }
 
 void comm_free_inbound_buffers(comm_abstract_ptr& comm) {
@@ -332,7 +330,7 @@ static ssize_t _find_newline_and_strip (inbound_buffer_t* ibb, size_t* line_len 
             while (i > ibb->start && isspace(static_cast<unsigned char>(ibb->buffer[i - 1]))) {
                 ibb->buffer[--i] = '\0';
             }
-            SPDLOG_DEBUG ("stripped line: [{}], length={}", ibb->buffer + ibb->start, i - ibb->start);
+            SPDLOG_DEBUG ("stripped line: [{}], length={}, next_line_start={}", ibb->buffer + ibb->start, i - ibb->start, ret);
             if (line_len) {
                 *line_len = i - ibb->start; // length of stripped line
             }
@@ -425,13 +423,16 @@ int comm_process_input (async_runtime_t* runtime, int slot, int max_message) {
         size_t line_len;
         while (ibb && (max_message < 0 || num_messages_processed < max_message)) {
             if ((next_line_start = _find_newline_and_strip(ibb, &line_len)) >= 0) {
+                if (comm->flags & C_ENABLE_TELNET)
+                    comm_buffered_write(comm.get(), "\n", 1); // echo newline for Telnet clients
                 // invoke inbound message hook for each complete line
-                comm_invoke_inbound_message(runtime, slot, ibb->buffer + ibb->start, line_len);
+                comm_invoke_inbound_message(runtime, comm, ibb->buffer + ibb->start, line_len);
                 ibb->start = static_cast<size_t>(next_line_start);
                 ++num_messages_processed;
                 if (!comm)
                     break; // comm slot may have been closed by the inbound message hook
             }
+            SPDLOG_DEBUG ("next_line_start={}, ibb->start={}, ibb->end={}", next_line_start, ibb->start, ibb->end);
             size_t space = sizeof(ibb->buffer) - (ibb->end - ibb->start);
             if (next_line_start < 0 && space == 0)
                 break; // partial line filled the current buffer; no forward progress is possible in this pass
@@ -512,12 +513,13 @@ int comm_process_input (async_runtime_t* runtime, int slot, int max_message) {
         while (ibb && (max_message < 0 || num_messages_processed < max_message)) {
             if ((next_char_start = _find_char_input_sequence(ibb, comm->flags, &char_len)) >= 0) {
                 // invoke inbound message hook for each complete ANSI character sequence
-                comm_invoke_inbound_message(runtime, slot, ibb->buffer + ibb->start, char_len);
+                comm_invoke_inbound_message(runtime, comm, ibb->buffer + ibb->start, char_len);
                 ibb->start = static_cast<size_t>(next_char_start);
                 ++num_messages_processed;
                 if (!comm)
                     break; // comm slot may have been closed by the inbound message hook
             }
+            SPDLOG_DEBUG ("next_char_start={}, ibb->start={}, ibb->end={}", next_char_start, ibb->start, ibb->end);
             if (next_char_start < 0)
                 break; // incomplete character sequence, wait for more data
             if (static_cast<size_t>(next_char_start) < ibb->end)
