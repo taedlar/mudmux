@@ -17,18 +17,23 @@
 
 #include "abstract.hpp"
 
+// telnet negotiation state-machine states
 #define S_TELNET_DATA       0x0
 #define S_TELNET_IAC        0x1
 #define S_TELNET_IAC_WILL   0x2
 #define S_TELNET_IAC_WONT   0x3
 #define S_TELNET_IAC_DO     0x4
 #define S_TELNET_IAC_DONT   0x5
+#define S_TELNET_SUBNEG     0x6
+#define S_TELNET_SUBNEG_IAC 0x7
 
 typedef struct comm_telnet_negotiation_s {
     uint32_t will_[8]; // bitmask of options agreed to enable
     uint32_t do_[8];   // bitmask of options requested to enable
     uint32_t wont_[8]; // bitmask of options agreed to disable
     uint32_t dont_[8]; // bitmask of options requested to disable
+    size_t sb_len;        // length of subnegotiation data in subopt_buf
+    char subopt_buf[1024];  // buffer for subnegotiation data
 } comm_telnet_negotiation_t;
 
 static_assert(std::is_trivially_default_constructible_v<comm_telnet_negotiation_t>,
@@ -59,15 +64,22 @@ void comm_enable_telnet (int slot);
  * any Telnet commands (IAC sequences) found in the data. It updates the negotiation
  * state and negotiation struct accordingly, and copies any non-Telnet data to the destination
  * buffer.
+ *
+ * If there is a Telnet subnegotiation in progress, the function will buffer the subnegotiation
+ * data until the end of the subnegotiation is reached (IAC SE). At most one subnegotiation can
+ * be in progress at a time. The function returns the number of bytes copied to the destination
+ * buffer, which will contain only non-Telnet data.
+ *
  * @param dest The destination buffer to copy non-Telnet data to.
  * @param src The source buffer containing data received from the Telnet client.
  * @param src_len The length of the source buffer.
+ * @param src_consumed A pointer to a size_t to receive the number of bytes consumed from the source buffer.
  * @param state A pointer to the current Telnet negotiation state (S_TELNET_* constants).
  * @param negotiation A pointer to a comm_telnet_negotiation_t struct to track
  * the options negotiated with the client.
  * @return The number of bytes copied to the destination buffer (non-Telnet data).
  */
-size_t comm_telnet_process_inbound (char* dest, char* src, size_t src_len,
+size_t comm_telnet_process_inbound (char* dest, char* src, size_t src_len, size_t* src_consumed,
     uint32_t* state, comm_telnet_negotiation_t* negotiation);
 
 void comm_telnet_send_will(comm_abstract_t* comm, int option);

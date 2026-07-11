@@ -23,6 +23,18 @@
 #include "async/console_worker.h"
 #include "mudmux/comm.h"
 
+static void _negotiate_telnet_line_input(comm_abstract_ptr& comm, bool enable) {
+    if (enable) {
+        // negotiate LINEMODE
+        comm_telnet_send_will(comm.raw(), TELOPT_LINEMODE);
+        comm_telnet_send_do(comm.raw(), TELOPT_LINEMODE);
+    } else {
+        // disable LINEMODE
+        comm_telnet_send_wont(comm.raw(), TELOPT_LINEMODE);
+        comm_telnet_send_dont(comm.raw(), TELOPT_LINEMODE);
+    }
+}
+
 #ifdef _WIN32
 
 static int get_console_input_mode (HANDLE *handle, DWORD *mode) {
@@ -102,7 +114,7 @@ bool comm_set_line_input (int slot, bool echo) {
     }
     default:
         if (comm->flags & C_ENABLE_TELNET) {
-            // TODO: negotiate line input mode for network sockets (e.g., TELNET LINEMODE)
+            _negotiate_telnet_line_input(comm, true);
         }
         break;
     }
@@ -134,7 +146,7 @@ bool comm_set_char_input (int slot) {
         break;
     default:
         if (comm->flags & C_ENABLE_TELNET) {
-            // TODO: negotiate character input mode for network sockets (e.g., TELNET LINEMODE)
+            _negotiate_telnet_line_input(comm, false);
         }
         break;
     }
@@ -220,7 +232,7 @@ bool comm_set_line_input (int slot, bool echo) {
         break;
     default:
         if (comm->flags & C_ENABLE_TELNET) {
-            // TODO: negotiate line input mode for network sockets (e.g., TELNET LINEMODE)
+            _negotiate_telnet_line_input(comm, true);
         }
         break;
     }

@@ -13,8 +13,15 @@ int comm_invoke_connect (async_runtime_t* runtime, int slot, int entry_slot);
 int comm_invoke_inbound_message (async_runtime_t* runtime, int slot, const void* data, size_t size);
 
 /**
- * @brief Refill the inbound buffer chain for the specified comm slot by reading from the underlying BIO.
- * If src and size are provided, data will be copied from src into the inbound buffer chain instead.
+ * @brief Refill the inbound buffer chain for the specified comm slot by reading from the
+ * underlying BIO. Process transport layer details such as TLS decryption and Telnet negotiation
+ * if applicable. If the inbound buffer is full or the underlying BIO is closed, the function will
+ * return false.
+ *
+ * If src and size are provided, data will be copied from src into the inbound buffer chain instead
+ * (to integrate with Windows IOCP or other custom data sources). In this case, the function will
+ * return true if all data was copied, or false if some data was discarded due to full buffers.
+ *
  * @param slot The comm slot to refill.
  * @param src Optional source buffer to copy data from.
  * @param size Size of the source buffer.
