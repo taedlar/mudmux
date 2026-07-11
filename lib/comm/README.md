@@ -9,7 +9,7 @@ The communication layer provides mudmux with a **unified interface for all I/O s
 | File | Purpose |
 |------|---------|
 | `abstract.hpp/cpp` | **Slot abstraction layer** — BIO-based unified I/O for all sources, slot lifecycle |
-| `inbound.hpp/cpp` | **Hook dispatch** — Route all input to `MUDMUX_HOOK_MESSAGE_INBOUND` with metadata |
+| `inbound.hpp/cpp` | **Hook dispatch** — Route all input to `HOOK_MESSAGE_INBOUND` with metadata |
 | `console.hpp/cpp` | **Console/stdin input** — Worker thread, real-time mode switching |
 | `file_input.hpp/cpp` | **File input** — Async reader thread, queue-based buffering |
 | `accept.hpp/cpp` | **Network sockets** — Listen, accept connections, dispatch inbound data |
@@ -70,14 +70,14 @@ BIO_write(wbio, data, len);
 
 ## Hook-Based Input Routing
 
-All input events — regardless of source — are delivered via `MUDMUX_HOOK_MESSAGE_INBOUND`:
+All input events — regardless of source — are delivered via `HOOK_MESSAGE_INBOUND`:
 
 ```c
 // The logic layer only sees hooks, never the transport details
-MUDMUX_HOOK_CONNECT          // New input session starts (slot=0 for console, 1+ for network)
-MUDMUX_HOOK_MESSAGE_INBOUND  // Each line received, slot identifies source
-MUDMUX_HOOK_MESSAGE_OUTBOUND // Data sent to output
-MUDMUX_HOOK_PROMPT           // Finished draining inbound data
+HOOK_CONNECT          // New input session starts (slot=0 for console, 1+ for network)
+HOOK_MESSAGE_INBOUND  // Each line received, slot identifies source
+HOOK_MESSAGE_OUTBOUND // Data sent to output
+HOOK_PROMPT           // Finished draining inbound data
 ```
 
 **Key advantage:** Logic layer logic is transport-agnostic. The same code handles console, file, and network input without modification.

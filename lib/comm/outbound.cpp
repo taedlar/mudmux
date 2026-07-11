@@ -227,7 +227,7 @@ bool comm_close (async_runtime_t* runtime, int slot) {
 }
 
 int comm_invoke_disconnect (async_runtime_t* runtime, int slot) {
-    return mudmux_invoke_hook (MUDMUX_HOOK_DISCONNECT,
+    return mudmux_invoke_hook (HOOK_DISCONNECT,
         async_runtime_get_context(runtime),
         slot,
         nullptr,
