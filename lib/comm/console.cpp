@@ -67,7 +67,7 @@ bool comm_init_console (async_runtime_t *runtime) {
     if (console_type == CONSOLE_TYPE_REAL) {
         SPDLOG_INFO ("----- connecting console user");
     }
-    comm_invoke_connect (runtime, COMM_SLOT_CONSOLE);
+    comm_invoke_connect (runtime, COMM_SLOT_CONSOLE, COMM_SLOT_CONSOLE);
     return true;
 }
 
@@ -163,7 +163,7 @@ int comm_process_console_input (async_runtime_t *runtime, bool allow_reconnect) 
                     return -1;
                 }
                 async_queue_clear (console_queue); // clear any pending lines in the queue
-                comm_invoke_connect (runtime, COMM_SLOT_CONSOLE);
+                comm_invoke_connect (runtime, COMM_SLOT_CONSOLE, COMM_SLOT_CONSOLE); // invoke connect hook for console user
                 return 0;
             }
         }

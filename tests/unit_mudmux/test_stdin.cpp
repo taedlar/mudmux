@@ -71,7 +71,7 @@ TEST_F(MudmuxStdinTest, PipeInput) {
 
     // define a hook function to validate that input is received
     stdin_hook_called = false;
-    bool result = mudmux_register_hook (MUDMUX_HOOK_MESSAGE_INBOUND, [](void* /*context*/, int slot, void* data, size_t len) -> int {
+    bool result = mudmux_register_hook (HOOK_MESSAGE_INBOUND, [](void* /*context*/, int slot, void* data, size_t len) -> int {
         EXPECT_EQ(slot, COMM_SLOT_CONSOLE);
         std::string received_message(static_cast<char*>(data), len);
         SPDLOG_INFO ("Received message: {}", received_message);

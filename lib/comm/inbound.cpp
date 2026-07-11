@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cstring>
 #include <wchar.h>
+#include <openssl/bio.h>
 
 #include "abstract.hpp"
 #include "telnet.hpp"
@@ -78,7 +79,7 @@ void comm_invoke_prompt (async_runtime_t* runtime) {
             continue; // skip comms with pending buffered write
         if ((comm->flags & C_ENABLE_PROMPT) && !(comm->flags & C_INVOKED_PROMPT)) {
             mudmux_invoke_hook (
-                MUDMUX_HOOK_PROMPT,
+                HOOK_PROMPT,
                 async_runtime_get_context(runtime),
                 slot,
                 nullptr,
@@ -89,17 +90,24 @@ void comm_invoke_prompt (async_runtime_t* runtime) {
     }
 }
 
-int comm_invoke_connect (async_runtime_t* runtime, int slot) {
-    if (!runtime || slot < 0) {
+int comm_invoke_connect (async_runtime_t* runtime, int slot, int entry_slot) {
+    if (!runtime)
         return -1;
+    const char* entry_name = (entry_slot == COMM_SLOT_CONSOLE) ? "-" : nullptr;
+    {
+        comm_abstract_ptr comm(entry_slot, comm_slots_mtx);
+        if (comm && (comm->flags & C_SOCKET_LISTENING))
+            entry_name = BIO_get_accept_name(comm->rbio);
     }
-
+    if (!entry_name)
+        entry_name = "unknown";
+    assert(entry_name != nullptr);
     return mudmux_invoke_hook (
-        MUDMUX_HOOK_CONNECT,
+        HOOK_CONNECT,
         async_runtime_get_context(runtime),
         slot,
-        nullptr,
-        0
+        static_cast<void*>(const_cast<char*>(entry_name)),
+        strlen(entry_name)
 	);
 }
 
@@ -112,7 +120,7 @@ int comm_invoke_inbound_message (async_runtime_t* runtime, int slot, const void*
     if (comm) {
         comm->flags &= ~C_INVOKED_PROMPT; // reset C_INVOKED_PROMPT flag on inbound message
         mudmux_invoke_hook (
-            MUDMUX_HOOK_MESSAGE_INBOUND,
+            HOOK_MESSAGE_INBOUND,
             async_runtime_get_context(runtime),
             slot,
             const_cast<void*>(data),

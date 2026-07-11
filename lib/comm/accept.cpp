@@ -189,7 +189,7 @@ int comm_process_listener_event (async_runtime_t* runtime, int listener_slot, so
 	}
 #endif
 
-	comm_invoke_connect (runtime, accepted_slot);
+	comm_invoke_connect (runtime, accepted_slot, listener_slot);
 
 	return accepted_slot;
 }

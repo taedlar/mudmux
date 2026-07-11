@@ -9,21 +9,22 @@ extern "C" {
 #endif
 
 enum mudmux_hook_type_t {
-    MUDMUX_HOOK_CONNECT = 1,
-    MUDMUX_HOOK_DISCONNECT = 2,
-    MUDMUX_HOOK_MESSAGE_INBOUND = 3,
-    MUDMUX_HOOK_MESSAGE_OUTBOUND = 4,
-    MUDMUX_HOOK_PROMPT = 5,
-    MUDMUX_HOOK_MAX = 255
+    HOOK_CONNECT = 1,
+    HOOK_DISCONNECT = 2,
+    HOOK_MESSAGE_INBOUND = 3,
+    HOOK_MESSAGE_OUTBOUND = 4,
+    HOOK_PROMPT = 5,
+    MAX_HOOK_TYPE
 };
+
+typedef int (*mudmux_hook_func_t)(void* ctx, int msg, void* data, size_t size);
 
 /**
  * @brief Register a hook function for a specific event.
- * @param hook_type Type of the hook (e.g., MUDMUX_HOOK_CONNECT).
+ * @param hook_type Type of the hook (e.g., HOOK_CONNECT).
  * @param hook_func Function pointer to the hook function.
  * @return true on success, false on failure.
  */
-typedef int (*mudmux_hook_func_t)(void* ctx, int msg, void* data, size_t size);
 MUDMUX_EXPORT bool mudmux_register_hook (enum mudmux_hook_type_t hook_type, mudmux_hook_func_t hook_func);
 
 MUDMUX_EXPORT int mudmux_invoke_hook (enum mudmux_hook_type_t hook_type, void* ctx, int msg, void* data, size_t size);

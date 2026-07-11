@@ -20,10 +20,13 @@ static void sigint_handler (int signal);
 
 static void process_command_line (int argc, char* argv[]);
 
-static int on_connect (void*, int slot, void*, size_t) {
+static int on_connect (void*, int slot, void* data, size_t len) {
     auto comm = comm_abstract_get(slot);
+    std::string entry_name{static_cast<const char*>(data), len};
     if (comm) {
-        comm_enable_telnet (slot); // enable Telnet negotiation for the connection
+        SPDLOG_INFO ("New connection on slot {} from entry '{}'", slot, entry_name);
+        if (entry_name != "-")
+            comm_enable_telnet (slot); // enable TELNET for non-console connections
         comm_enable_prompt (slot, true); // enable prompt for console user
         comm_set_line_input (slot, true); // enable line input mode for console user
         *comm << "Welcome to mudmux!\n\r";
@@ -72,10 +75,10 @@ int main (int argc, char* argv[]) {
     // create server context
 
     // register hooks
-    mudmux_register_hook (MUDMUX_HOOK_CONNECT, on_connect);
-    mudmux_register_hook (MUDMUX_HOOK_MESSAGE_INBOUND, on_message_inbound);
-    mudmux_register_hook (MUDMUX_HOOK_DISCONNECT, on_disconnect);
-    mudmux_register_hook (MUDMUX_HOOK_PROMPT, on_prompt);
+    mudmux_register_hook (HOOK_CONNECT, on_connect);
+    mudmux_register_hook (HOOK_MESSAGE_INBOUND, on_message_inbound);
+    mudmux_register_hook (HOOK_DISCONNECT, on_disconnect);
+    mudmux_register_hook (HOOK_PROMPT, on_prompt);
 
     // run infinite event loop until shutdown is requested
     int exit_code = mudmux_run(nullptr);

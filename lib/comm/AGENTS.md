@@ -130,7 +130,7 @@ void comm_invoke_inbound_message(async_runtime_t *runtime, int slot,
                                  const char *data, size_t len)
 {
   // 1. Construct context from slot
-  // 2. Invoke MUDMUX_HOOK_MESSAGE_INBOUND with slot number
+  // 2. Invoke HOOK_MESSAGE_INBOUND with slot number
   // 3. Logic layer receives: context=transport context, slot=source identifier
 }
 ```
@@ -148,7 +148,7 @@ int comm_invoke_inbound_message(async_runtime_t* runtime, int slot,
 int comm_process_input(async_runtime_t* runtime, const io_event_t* event, int slot);
 ```
 
-- `comm_invoke_inbound_message()`: Invokes `MUDMUX_HOOK_MESSAGE_INBOUND` for data received on a slot
+- `comm_invoke_inbound_message()`: Invokes `HOOK_MESSAGE_INBOUND` for data received on a slot
 - `comm_process_input()`: Route a transport event (socket, etc.) to message processing
 
 ## Architecture: Outbound Buffering and Flush
@@ -170,8 +170,8 @@ Outbound writes are intentionally staged and flushed after hook execution.
 
 ### Proactive Close Path (`comm_close`)
 
-- Hooks may request close directly (for example in `MUDMUX_HOOK_MESSAGE_INBOUND` after receiving `quit`).
-- `comm_close()` marks `C_CLOSING` and invokes `MUDMUX_HOOK_DISCONNECT` once on first close request.
+- Hooks may request close directly (for example in `HOOK_MESSAGE_INBOUND` after receiving `quit`).
+- `comm_close()` marks `C_CLOSING` and invokes `HOOK_DISCONNECT` once on first close request.
 - If buffered outbound bytes exist, close is deferred until flush drains; function returns `false` in this state.
 - After flush drains and no buffered data remains, runtime fd registrations are removed and the slot is removed.
 - For `COMM_SLOT_CONSOLE`, close is coordinated through console EOF signaling and may return `false` until console shutdown completes.

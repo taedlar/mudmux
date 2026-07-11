@@ -71,11 +71,11 @@ Hooks (`mudmux_hook_type_t`) let the loaded logic layer react to transport event
 
 | Hook | When fired |
 |------|-----------|
-| `MUDMUX_HOOK_CONNECT` | new connection accepted |
-| `MUDMUX_HOOK_DISCONNECT` | connection closed |
-| `MUDMUX_HOOK_MESSAGE_INBOUND` | data received from client |
-| `MUDMUX_HOOK_MESSAGE_OUTBOUND` | data sent to client |
-| `MUDMUX_HOOK_PROMPT` | finished draining inbound data |
+| `HOOK_CONNECT` | new connection accepted |
+| `HOOK_DISCONNECT` | connection closed |
+| `HOOK_MESSAGE_INBOUND` | data received from client |
+| `HOOK_MESSAGE_OUTBOUND` | data sent to client |
+| `HOOK_PROMPT` | finished draining inbound data |
 
 Register with `mudmux_register_hook()`; invoke with `mudmux_invoke_hook()`.
 
@@ -92,9 +92,9 @@ Practical rule: if logic code touches shared data from worker threads or from co
 
 Logic-layer hooks can proactively close a communication slot via `comm_close(runtime, slot)` from `mudmux/comm.h`.
 
-- Typical usage: call from `MUDMUX_HOOK_MESSAGE_INBOUND` when processing a command like `quit`/`exit` (see `src/main.cpp`).
+- Typical usage: call from `HOOK_MESSAGE_INBOUND` when processing a command like `quit`/`exit` (see `src/main.cpp`).
 - `runtime` may be `nullptr`; `comm_close()` resolves the current runtime internally.
-- First close request sets `C_CLOSING` and invokes `MUDMUX_HOOK_DISCONNECT` once, so logic code can run disconnect cleanup.
+- First close request sets `C_CLOSING` and invokes `HOOK_DISCONNECT` once, so logic code can run disconnect cleanup.
 - If outbound data is still buffered (`C_BUFFERED_WRITE`), close is deferred until flush completes; in this case `comm_close()` returns `false`.
 - For console slot (`COMM_SLOT_CONSOLE`), close is coordinated through console EOF signaling and may also return `false` until final teardown finishes.
 - When the slot is already gone or fully removed, `comm_close()` returns `true`.

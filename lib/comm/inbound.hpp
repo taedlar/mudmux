@@ -9,7 +9,7 @@
 void comm_enable_prompt (int slot, bool enable);
 void comm_invoke_prompt (async_runtime_t* runtime);
 
-int comm_invoke_connect (async_runtime_t* runtime, int slot);
+int comm_invoke_connect (async_runtime_t* runtime, int slot, int entry_slot);
 int comm_invoke_inbound_message (async_runtime_t* runtime, int slot, const void* data, size_t size);
 
 /**

@@ -94,6 +94,7 @@ void comm_telnet_send_will(comm_abstract_t* comm, int option) {
         return;
     unsigned char buf[3] = { 255, 251, static_cast<unsigned char>(option) }; // IAC WILL option
     comm_buffered_write(comm, reinterpret_cast<char*>(buf), sizeof(buf));
+    SPDLOG_DEBUG("sent: we WILL option {}", option);
 }
 
 void comm_telnet_send_wont(comm_abstract_t* comm, int option) {
@@ -101,6 +102,7 @@ void comm_telnet_send_wont(comm_abstract_t* comm, int option) {
         return;
     unsigned char buf[3] = { 255, 252, static_cast<unsigned char>(option) }; // IAC WONT option
     comm_buffered_write(comm, reinterpret_cast<char*>(buf), sizeof(buf));
+    SPDLOG_DEBUG("sent: we WONT option {}", option);
 }
 
 void comm_telnet_send_do(comm_abstract_t* comm, int option) {
@@ -108,6 +110,7 @@ void comm_telnet_send_do(comm_abstract_t* comm, int option) {
         return;
     unsigned char buf[3] = { 255, 253, static_cast<unsigned char>(option) }; // IAC DO option
     comm_buffered_write(comm, reinterpret_cast<char*>(buf), sizeof(buf));
+    SPDLOG_DEBUG("sent: please DO option {}", option);
 }
 
 void comm_telnet_send_dont(comm_abstract_t* comm, int option) {
@@ -115,4 +118,5 @@ void comm_telnet_send_dont(comm_abstract_t* comm, int option) {
         return;
     unsigned char buf[3] = { 255, 254, static_cast<unsigned char>(option) }; // IAC DONT option
     comm_buffered_write(comm, reinterpret_cast<char*>(buf), sizeof(buf));
+    SPDLOG_DEBUG("sent: please DONT option {}", option);
 }

@@ -97,7 +97,7 @@ bool comm_init_async_file_input (async_runtime_t *runtime, int slot) {
     }
     
     // invoke connect hook for file input user
-    comm_invoke_connect (runtime, slot);
+    comm_invoke_connect (runtime, slot, slot);
     
     return true;
 }
