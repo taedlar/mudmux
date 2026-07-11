@@ -2,6 +2,7 @@
 
 add_executable(unit_comm
   test_comm_abstract.cpp
+  test_comm_inbound.cpp
 )
 
 target_include_directories(unit_comm PRIVATE ${CMAKE_SOURCE_DIR}/lib)

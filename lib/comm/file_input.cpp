@@ -127,6 +127,7 @@ int comm_process_file_input (async_runtime_t *runtime, int slot, const io_event_
     char file_line_buffer[4096];
     size_t file_line_len = 0;
 
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
     while (true) {
         {
             std::lock_guard<std::mutex> lock(file_input_mutex);
@@ -141,13 +142,15 @@ int comm_process_file_input (async_runtime_t *runtime, int slot, const io_event_
         if (file_line_len > 0 && file_line_buffer[file_line_len - 1] == '\0') {
             --file_line_len;
         }
-        if (!comm_refill_inbound_buffers (slot, file_line_buffer, file_line_len)) {
-            SPDLOG_WARN ("failed to refill inbound buffers for file input slot {}", slot);
-            break;
+        {
+            if (!comm_refill_inbound_buffers (comm, file_line_buffer, file_line_len)) {
+                SPDLOG_WARN ("failed to refill inbound buffers for file input slot {}", slot);
+                break;
+            }
         }
     }
 
-    (void) comm_process_input (runtime, slot);
+    (void) comm_process_input (runtime, comm);
 
     {
         std::lock_guard<std::mutex> lock(file_input_mutex);
