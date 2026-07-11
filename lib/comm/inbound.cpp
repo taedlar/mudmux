@@ -19,13 +19,18 @@
 typedef SSIZE_T ssize_t;
 #endif
 
+#define INBOUND_BAND_DATA       0
+#define INBOUND_BAND_SUBNEG     1
+
 struct inbound_buffer_s {
     inbound_buffer_t* next{nullptr};
-    char buffer[4096];
+    unsigned int band: 4;
     size_t start{0}; // <-- async read position (data to be processed)
     size_t end{0}; // <-- append new data position (non-blocking)
+    char buffer[4096];
     inbound_buffer_t* reset () {
         next = nullptr;
+        band = INBOUND_BAND_DATA;
         start = 0;
         end = 0;
         return this;
@@ -148,9 +153,9 @@ enum class refill_status_t {
 
 /**
  * @brief Refill the inbound buffer chain for the specified comm slot by reading from the underlying BIO.
- * This function will *NOT* grow the inbound buffer chain beyond the initial buffer. If all buffers are
- * full, it will stop reading. If a comm slot needs a larger inbound buffer, setup the buffer chain explicitly
- * before calling this function.
+ * This function will grow the inbound buffer chain dynamically only for Telnet subnegotiation data. If all
+ * buffers are full, it will stop reading. If a comm slot needs a larger inbound buffer, setup the buffer
+ * chain explicitly before calling this function.
  * @param comm Reference to the comm abstract pointer.
  * @param status Optional pointer to a refill_status_t variable to receive the refill status.
  * @return Pointer to the head of the inbound buffer chain, or nullptr if no buffer is available.
@@ -177,19 +182,47 @@ static inbound_buffer_t* _refill_inbound_buffers (comm_abstract_ptr& comm, refil
     if (ibb && ibb->end < sizeof(ibb->buffer)) {
         size_t bytes_read = 0;
         if (BIO_read_ex(comm->rbio, ibb->buffer + ibb->end, sizeof(ibb->buffer) - ibb->end, &bytes_read)) {
+            size_t bytes_appended = 0;
             if (comm->flags & C_ENABLE_TELNET) {
                 // process Telnet negotiation and strip IAC sequences from the inbound buffer
                 uint32_t state = comm->flags & M_TELNET_STATE;
                 comm_telnet_negotiation_t telnet_neg;
                 memset(&telnet_neg, 0, sizeof(telnet_neg));
-                size_t processed_len = comm_telnet_process_inbound(
-                    ibb->buffer + ibb->end, ibb->buffer + ibb->end, bytes_read,
-                    &state, &telnet_neg); // process the newly read data in place
-                bytes_read = processed_len;
+                char* raw_data = ibb->buffer + ibb->end; // points to bytes_read bytes of raw data
+                while (ibb && bytes_read > 0) {
+                    inbound_buffer_t* subneg_ibb = nullptr;
+                    size_t bytes_consumed = 0;
+                    size_t appended_len = comm_telnet_process_inbound(
+                        ibb->buffer + ibb->end, raw_data, bytes_read, &bytes_consumed,
+                        &state, &telnet_neg); // process the newly read data in place
+                    raw_data += bytes_consumed;
+                    ibb->end += appended_len;
+                    if ((telnet_neg.sb_len > 0) && (subneg_ibb = allocate_inbound_buffer()) != nullptr) {
+                        subneg_ibb->next = ibb->next;
+                        ibb->next = subneg_ibb;
+                        if (ibb->end == 0)
+                            subneg_ibb = ibb;
+                        if (subneg_ibb->next && bytes_read > bytes_consumed) { // copy data after subnegotation to the next inbound buffer
+                            inbound_buffer_t* next_ibb = subneg_ibb->next;
+                            assert(next_ibb->end == 0);
+                            memcpy(next_ibb->buffer, raw_data, bytes_read - bytes_consumed);
+                            next_ibb->end += bytes_read - bytes_consumed;
+                            raw_data = next_ibb->buffer;
+                        }
+                        ibb = subneg_ibb->next; // could be nullptr if we are at the end of the chain
+                        subneg_ibb->band = INBOUND_BAND_SUBNEG;
+                        size_t copy_len = std::min(telnet_neg.sb_len, sizeof(subneg_ibb->buffer));
+                        memcpy(subneg_ibb->buffer, telnet_neg.subopt_buf, copy_len);
+                        subneg_ibb->start = 0;
+                        subneg_ibb->end = copy_len;
+                        SPDLOG_DEBUG("stored {} bytes of Telnet subnegotiation data in a new inbound buffer", copy_len);
+                    }
+                    bytes_read -= bytes_consumed;
+                    bytes_appended += appended_len;
+                }
                 comm->flags = (comm->flags & ~M_TELNET_STATE) | (state & M_TELNET_STATE);
             }
-            ibb->end += bytes_read;
-            if (bytes_read > 0 && status)
+            if (bytes_appended > 0 && status)
                 *status = refill_status_t::data;
         } else if (!BIO_should_retry(comm->rbio)) {
             if (status)
@@ -243,8 +276,9 @@ bool comm_refill_inbound_buffers (int slot, const char* src, size_t size) {
                 uint32_t state = comm->flags & M_TELNET_STATE;
                 comm_telnet_negotiation_t telnet_neg;
                 memset(&telnet_neg, 0, sizeof(telnet_neg));
+                size_t bytes_consumed = 0;
                 size_t processed_len = comm_telnet_process_inbound(
-                    ibb->buffer + ibb->end, const_cast<char*>(src), copy_len,
+                    ibb->buffer + ibb->end, const_cast<char*>(src), copy_len, &bytes_consumed,
                     &state, &telnet_neg);
                 copied = processed_len;
                 comm->flags = (comm->flags & ~M_TELNET_STATE) | (state & M_TELNET_STATE);
@@ -377,12 +411,17 @@ int comm_process_input (async_runtime_t* runtime, int slot, int max_message) {
     if (!comm)
         return 1;
     inbound_buffer_t* ibb = comm->inbound;
+    while (ibb && ibb->band != INBOUND_BAND_DATA) {
+        comm->inbound = ibb->next;
+        free_inbound_buffer(ibb);
+        ibb = comm->inbound; // skip subnegotiation buffers
+    }
     int num_messages_processed = 0;
     if (comm->flags & C_LINE_INPUT) {
         //
         // [LINE INPUT MODE] process input data line by line, invoking the inbound message hook for each complete line
         //
-        ssize_t next_line_start;
+        ssize_t next_line_start; // index of next line start, or -1 if no complete line found
         size_t line_len;
         while (ibb && (max_message < 0 || num_messages_processed < max_message)) {
             if ((next_line_start = _find_newline_and_strip(ibb, &line_len)) >= 0) {
@@ -390,39 +429,77 @@ int comm_process_input (async_runtime_t* runtime, int slot, int max_message) {
                 comm_invoke_inbound_message(runtime, slot, ibb->buffer + ibb->start, line_len);
                 ibb->start = static_cast<size_t>(next_line_start);
                 ++num_messages_processed;
+                if (!comm)
+                    break; // comm slot may have been closed by the inbound message hook
             }
-            if (ibb->end == sizeof(ibb->buffer) && ibb->next) {
-                // (current buffer is full and there is a next buffer)
-                // attempt to move data from next buffer to current buffer if there is space
-                size_t space = sizeof(ibb->buffer) - (ibb->end - ibb->start);
-                if (space > 0 && ibb->next) {
-                    size_t next_len = ibb->next->end - ibb->next->start;
-                    size_t copy_len = std::min(space, next_len);
-                    if (ibb->start > 0) {
-                        // shift existing data to the beginning of the buffer
-                        memmove(ibb->buffer, ibb->buffer + ibb->start, ibb->end - ibb->start);
-                        ibb->end -= ibb->start;
-                        ibb->start = 0;
+            size_t space = sizeof(ibb->buffer) - (ibb->end - ibb->start);
+            if (next_line_start < 0 && space == 0)
+                break; // partial line filled the current buffer; no forward progress is possible in this pass
+            if (next_line_start < 0 || static_cast<size_t>(next_line_start) < ibb->end) {
+                // (the line is not complete, or there is still data in the current buffer)
+                // attempt to refill current buffer from the next buffer in the chain if available
+                if (ibb->next && (ibb->next->end - ibb->next->start) > 0) { // data available in next buffer
+                    inbound_buffer_t* next_buffer = ibb->next;
+                    switch (next_buffer->band) {
+                    case INBOUND_BAND_DATA: {
+                        size_t next_len = next_buffer->end - next_buffer->start;
+                        size_t copy_len = std::min(space, next_len);
+                        if (ibb->start > 0) {
+                            // shift existing data to the beginning of the buffer
+                            memmove(ibb->buffer, ibb->buffer + ibb->start, ibb->end - ibb->start);
+                            ibb->end -= ibb->start;
+                            ibb->start = 0;
+                        }
+                        // fill the remaining space in the current buffer with data from the next buffer
+                        memcpy(ibb->buffer + ibb->end, next_buffer->buffer + next_buffer->start, copy_len);
+                        ibb->end += copy_len;
+                        next_buffer->start += copy_len;
+                        if (next_buffer->start == next_buffer->end) {
+                            // (next buffer is now empty)
+                            // move next buffer to the tail of chain, keeping size of chain unchanged
+                            inbound_buffer_t* empty_buffer = next_buffer;
+                            ibb->next = empty_buffer->next;
+                            inbound_buffer_t** tail = &comm->inbound;
+                            while (*tail)
+                                tail = &(*tail)->next;
+                            *tail = empty_buffer->reset();
+                        }
+                        continue; // try to find a complete line again after moving data from next buffer
                     }
-                    // fill the remaining space in the current buffer with data from the next buffer
-                    memcpy(ibb->buffer + ibb->end, ibb->next->buffer + ibb->next->start, copy_len);
-                    ibb->end += copy_len;
-                    ibb->next->start += copy_len;
-                    if (ibb->next->start == ibb->next->end) {
-                        // (next buffer is now empty)
-                        // move next buffer to the tail of chain, keeping size of chain unchanged
-                        inbound_buffer_t* empty_buffer = ibb->next;
-                        ibb->next = empty_buffer->next;
-                        while (ibb->next)
-                            ibb = ibb->next;
-                        ibb->next = empty_buffer->reset();
+                    case INBOUND_BAND_SUBNEG:
+                    default:
+                        // skip subnegotiation buffer and continue processing the next data buffer
+                        ibb->next = next_buffer->next;
+                        free_inbound_buffer(next_buffer);
+                        continue;
                     }
-                    continue; // try to find a complete line again after moving data from next buffer
                 }
+                if (next_line_start < 0)
+                    break; // no complete line and no way to make progress this round
             }
             else {
-                // no complete line found, break to read more data
-                break;
+                // recycle current buffer by moving it to the tail of the chain, keeping size of chain unchanged
+                comm->inbound = ibb->next;
+                inbound_buffer_t** tail = &comm->inbound;
+                while (*tail)
+                    tail = &(*tail)->next;
+                assert(*tail == nullptr);
+                *tail = ibb->reset();
+
+                ibb = comm->inbound; // move to the next buffer in the chain
+                if (!ibb || ibb->end <= ibb->start)
+                    break; // no more data in the current buffer, wait for more data
+                switch (ibb->band) {
+                case INBOUND_BAND_DATA:
+                    continue; // continue processing the next data buffer
+                case INBOUND_BAND_SUBNEG:
+                default:
+                    // skip subnegotiation buffer and continue processing the next data buffer
+                    comm->inbound = ibb->next;
+                    free_inbound_buffer(ibb);
+                    ibb = comm->inbound;
+                    continue;
+                }
             }
         }
     }
@@ -430,7 +507,7 @@ int comm_process_input (async_runtime_t* runtime, int slot, int max_message) {
         //
         // [CHAR MODE] process input data as single character (or ANSI control sequence, UTF-8 character)
         //
-        ssize_t next_char_start;
+        ssize_t next_char_start; // index of next character start, or -1 if no complete character sequence found
         size_t char_len;
         while (ibb && (max_message < 0 || num_messages_processed < max_message)) {
             if ((next_char_start = _find_char_input_sequence(ibb, comm->flags, &char_len)) >= 0) {
@@ -438,10 +515,35 @@ int comm_process_input (async_runtime_t* runtime, int slot, int max_message) {
                 comm_invoke_inbound_message(runtime, slot, ibb->buffer + ibb->start, char_len);
                 ibb->start = static_cast<size_t>(next_char_start);
                 ++num_messages_processed;
+                if (!comm)
+                    break; // comm slot may have been closed by the inbound message hook
             }
-            else {
-                // no complete ANSI character sequence found, break to read more data
-                break;
+            if (next_char_start < 0)
+                break; // incomplete character sequence, wait for more data
+            if (static_cast<size_t>(next_char_start) < ibb->end)
+                break; // there is still data in the current buffer, but no complete character sequence found
+
+            // recycle current buffer by moving it to the tail of the chain, keeping size of chain unchanged
+            comm->inbound = ibb->next;
+            inbound_buffer_t** tail = &comm->inbound;
+            while (*tail)
+                tail = &(*tail)->next;
+            assert(*tail == nullptr);
+            *tail = ibb->reset();
+
+            ibb = comm->inbound; // move to the next buffer in the chain
+            if (!ibb || ibb->end <= ibb->start)
+                break; // no more data in the current buffer, wait for more data
+            switch (ibb->band) {
+            case INBOUND_BAND_DATA:
+                continue; // continue processing the next data buffer
+            case INBOUND_BAND_SUBNEG:
+            default:
+                // skip subnegotiation buffer and continue processing the next data buffer
+                comm->inbound = ibb->next;
+                free_inbound_buffer(ibb);
+                ibb = comm->inbound;
+                continue;
             }
         }
     }
