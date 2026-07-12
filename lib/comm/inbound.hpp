@@ -19,13 +19,13 @@ int comm_invoke_inbound_message (async_runtime_t* runtime, comm_abstract_ptr& co
  * if applicable. If the inbound buffer is full or the underlying BIO is closed, the function will
  * return false.
  *
- * If src and size are provided, data will be copied from src into the inbound buffer chain instead
+ * If src (and size) are provided, data will be copied from src into the inbound buffer chain instead
  * (to integrate with Windows IOCP or other custom data sources). In this case, the function will
- * return true if all data was copied, or false if some data was discarded due to full buffers.
+ * return true if all data was copied, or false if some data was discarded due to buffers capacity.
  *
  * @param comm The comm object to refill.
- * @param src Optional source buffer to copy data from.
- * @param size Size of the source buffer.
+ * @param src Optional source buffer to copy raw data from.
+ * @param size Size of the source raw data buffer.
  * @return true on success, false on error.
  */
 bool comm_refill_inbound_buffers (comm_abstract_ptr& comm, const char* src = nullptr, size_t size = 0);
