@@ -353,15 +353,34 @@ static ssize_t _find_char_input_sequence (inbound_buffer_t* ibb, uint32_t comm_f
     return static_cast<ssize_t>(ibb->start + mbc_len);
 }
 
-int comm_process_input (async_runtime_t* runtime, comm_abstract_ptr& comm, int max_message) {
-    if (!comm)
-        return -1;
-    inbound_buffer_t* ibb = comm->inbound;
+static inbound_buffer_t* _skip_non_data_head_buffers(comm_abstract_ptr& comm) {
+    inbound_buffer_t* ibb = comm ? comm->inbound : nullptr;
     while (ibb && ibb->band != INBOUND_BAND_DATA) {
         comm->inbound = ibb->next;
         free_inbound_buffer(ibb);
-        ibb = comm->inbound; // skip subnegotiation buffers
+        ibb = comm->inbound;
     }
+    return ibb;
+}
+
+static inbound_buffer_t* _recycle_current_inbound_buffer(comm_abstract_ptr& comm, inbound_buffer_t* ibb) {
+    if (!comm || !ibb)
+        return nullptr;
+
+    // recycle current buffer by moving it to the tail of the chain, keeping size of chain unchanged
+    comm->inbound = ibb->next;
+    inbound_buffer_t** tail = &comm->inbound;
+    while (*tail)
+        tail = &(*tail)->next;
+    assert(*tail == nullptr);
+    *tail = ibb->reset();
+    return _skip_non_data_head_buffers(comm);
+}
+
+int comm_process_input (async_runtime_t* runtime, comm_abstract_ptr& comm, int max_message) {
+    if (!comm)
+        return -1;
+    inbound_buffer_t* ibb = _skip_non_data_head_buffers(comm);
     int num_messages_processed = 0;
     if (comm->flags & C_LINE_INPUT) {
         //
@@ -427,28 +446,10 @@ int comm_process_input (async_runtime_t* runtime, comm_abstract_ptr& comm, int m
                     break; // no complete line and no way to make progress this round
             }
             else {
-                // recycle current buffer by moving it to the tail of the chain, keeping size of chain unchanged
-                comm->inbound = ibb->next;
-                inbound_buffer_t** tail = &comm->inbound;
-                while (*tail)
-                    tail = &(*tail)->next;
-                assert(*tail == nullptr);
-                *tail = ibb->reset();
-
-                ibb = comm->inbound; // move to the next buffer in the chain
+                ibb = _recycle_current_inbound_buffer(comm, ibb); // move to the next data buffer in the chain
                 if (!ibb || ibb->end <= ibb->start)
                     break; // no more data in the current buffer, wait for more data
-                switch (ibb->band) {
-                case INBOUND_BAND_DATA:
-                    continue; // continue processing the next data buffer
-                case INBOUND_BAND_SUBNEG:
-                default:
-                    // skip subnegotiation buffer and continue processing the next data buffer
-                    comm->inbound = ibb->next;
-                    free_inbound_buffer(ibb);
-                    ibb = comm->inbound;
-                    continue;
-                }
+                continue;
             }
         }
     }
@@ -471,30 +472,12 @@ int comm_process_input (async_runtime_t* runtime, comm_abstract_ptr& comm, int m
             if (next_char_start < 0)
                 break; // incomplete character sequence, wait for more data
             if (static_cast<size_t>(next_char_start) < ibb->end)
-                break; // there is still data in the current buffer, but no complete character sequence found
+                continue; // there is still data in the current buffer, continue until max_message
 
-            // recycle current buffer by moving it to the tail of the chain, keeping size of chain unchanged
-            comm->inbound = ibb->next;
-            inbound_buffer_t** tail = &comm->inbound;
-            while (*tail)
-                tail = &(*tail)->next;
-            assert(*tail == nullptr);
-            *tail = ibb->reset();
-
-            ibb = comm->inbound; // move to the next buffer in the chain
+            ibb = _recycle_current_inbound_buffer(comm, ibb); // move to the next data buffer in the chain
             if (!ibb || ibb->end <= ibb->start)
                 break; // no more data in the current buffer, wait for more data
-            switch (ibb->band) {
-            case INBOUND_BAND_DATA:
-                continue; // continue processing the next data buffer
-            case INBOUND_BAND_SUBNEG:
-            default:
-                // skip subnegotiation buffer and continue processing the next data buffer
-                comm->inbound = ibb->next;
-                free_inbound_buffer(ibb);
-                ibb = comm->inbound;
-                continue;
-            }
+            continue;
         }
     }
 

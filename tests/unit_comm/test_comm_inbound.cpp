@@ -119,8 +119,8 @@ TEST_F(CommInboundTest, ProcessCharInputModeDispatchesOneCharacterAtATime) {
 
     const char* data = "ab";
     ASSERT_TRUE(comm_refill_inbound_buffers(comm, data, strlen(data)));
-    EXPECT_EQ(comm_process_input(runtime, comm, -1), 0);
-    EXPECT_EQ(comm_process_input(runtime, comm, -1), 0);
+    EXPECT_EQ(comm_process_input(runtime, comm, 1), 0);
+    EXPECT_EQ(comm_process_input(runtime, comm, 1), 0);
 
     ASSERT_EQ(inbound_messages.size(), 2u);
     EXPECT_EQ(inbound_messages[0], "a");
@@ -144,11 +144,11 @@ TEST_F(CommInboundTest, ProcessCharInputModeTreatsAnsiSequenceAsSingleMessage) {
     const char* data = "\x1B[Ax";
     ASSERT_TRUE(comm_refill_inbound_buffers(comm, data, strlen(data)));
 
-    EXPECT_EQ(comm_process_input(runtime, comm, -1), 0);
+    EXPECT_EQ(comm_process_input(runtime, comm, 1), 0);
     ASSERT_EQ(inbound_messages.size(), 1u);
     EXPECT_EQ(inbound_messages[0], "\x1B[A");
 
-    EXPECT_EQ(comm_process_input(runtime, comm, -1), 0);
+    EXPECT_EQ(comm_process_input(runtime, comm, 1), 0);
     ASSERT_EQ(inbound_messages.size(), 2u);
     EXPECT_EQ(inbound_messages[1], "x");
 
