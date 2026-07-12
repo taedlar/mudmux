@@ -22,7 +22,6 @@ protected:
         mudmux_set_log_level(0);
         SPDLOG_DEBUG("CTEST_FULL_OUTPUT");
         ASSERT_TRUE(mudmux_init(nullptr)); // Initialize mudmux for testing
-        ASSERT_EQ(comm_abstract_add_file (nullptr, nullptr, 0, C_LINE_INPUT), 0); // Add a console slot for testing
     }
     void TearDown() override {
         // Cleanup code after each test
@@ -59,30 +58,29 @@ TEST_F(CommInboundTest, RefillInboundBuffers) {
     async_runtime_t* runtime = async_runtime_init(this);
     ASSERT_NE(runtime, nullptr);
 
-    comm_abstract_ptr comm(0, comm_slots_mtx); // Assuming slot 0 for testing
-    const char* test_data = "Test data\n";
-    size_t test_size = strlen(test_data);
+    const int slot = add_memory_comm(C_LINE_INPUT); // Add a memory comm slot with line input mode
+    ASSERT_NE(slot, -1);
+    comm_abstract_ptr comm(slot, comm_slots_mtx); // Assuming slot 0 for testing
+    ASSERT_TRUE(comm);
 
-    bool result = comm_refill_inbound_buffers(comm, test_data, test_size);
-    EXPECT_TRUE(result);
-
-    comm_set_line_input(0, true); // Set line input mode for the comm slot
+    inbound_messages.clear();
     mudmux_register_hook(HOOK_MESSAGE_INBOUND, CommInboundTest::hook_message_inbound);
-    int ret = comm_process_input(runtime, comm, 1);
-    EXPECT_EQ(ret, 0); // Expect success
+
+    const char* test_data = "Test data\n";
+    ASSERT_TRUE(comm_refill_inbound_buffers(comm, test_data, strlen(test_data)));
+    EXPECT_EQ(comm_process_input(runtime, comm, 1), 0);
+
+    EXPECT_EQ(inbound_messages.size(), 1u); // Expect one inbound message
+    EXPECT_EQ(inbound_messages[0], "Test data");
 
     async_runtime_deinit(runtime);
-
-    EXPECT_EQ(inbound_messages.size(), 1); // Expect one inbound message
-    ASSERT_FALSE(inbound_messages.empty());
-    EXPECT_EQ(inbound_messages[0], "Test data");
 }
 
 TEST_F(CommInboundTest, ProcessLineInputModeDispatchesCompleteLines) {
     async_runtime_t* runtime = async_runtime_init(this);
     ASSERT_NE(runtime, nullptr);
 
-    const int slot = add_memory_comm(C_LINE_INPUT);
+    const int slot = add_memory_comm(C_LINE_INPUT); // Add a memory comm slot with line input mode
     ASSERT_NE(slot, -1);
     comm_abstract_ptr comm(slot, comm_slots_mtx);
     ASSERT_TRUE(comm);
@@ -111,7 +109,7 @@ TEST_F(CommInboundTest, ProcessCharInputModeDispatchesOneCharacterAtATime) {
     async_runtime_t* runtime = async_runtime_init(this);
     ASSERT_NE(runtime, nullptr);
 
-    const int slot = add_memory_comm(0);
+    const int slot = add_memory_comm(0); // Add a memory comm slot with character input mode
     ASSERT_NE(slot, -1);
     comm_abstract_ptr comm(slot, comm_slots_mtx);
     ASSERT_TRUE(comm);
@@ -135,7 +133,7 @@ TEST_F(CommInboundTest, ProcessCharInputModeTreatsAnsiSequenceAsSingleMessage) {
     async_runtime_t* runtime = async_runtime_init(this);
     ASSERT_NE(runtime, nullptr);
 
-    const int slot = add_memory_comm(C_ENABLE_ANSI);
+    const int slot = add_memory_comm(C_ENABLE_ANSI); // Add a memory comm slot with ANSI support
     ASSERT_NE(slot, -1);
     comm_abstract_ptr comm(slot, comm_slots_mtx);
     ASSERT_TRUE(comm);
@@ -180,6 +178,34 @@ TEST_F(CommInboundTest, ProcessCharInputModeWaitsForCompleteAnsiSequence) {
 
     ASSERT_EQ(inbound_messages.size(), 1u);
     EXPECT_EQ(inbound_messages[0], "\x1B[31~");
+
+    async_runtime_deinit(runtime);
+}
+
+TEST_F(CommInboundTest, RefillInboundBuffersFromBioPreservesTelnetAndDataOrder) {
+    async_runtime_t* runtime = async_runtime_init(this);
+    ASSERT_NE(runtime, nullptr);
+
+    const int slot = add_memory_comm(C_ENABLE_TELNET | C_LINE_INPUT);
+    ASSERT_NE(slot, -1);
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
+    ASSERT_TRUE(comm);
+
+    inbound_messages.clear();
+    mudmux_register_hook(HOOK_MESSAGE_INBOUND, CommInboundTest::hook_message_inbound);
+
+    const unsigned char payload[] = {
+        'h', 'e', 'l', 'l', 'o',
+        255, 250, 31, 'a', 'b', 255, 240,
+        'w', 'o', 'r', 'l', 'd', '\n'
+    };
+    ASSERT_EQ(BIO_write(comm->rbio, payload, sizeof(payload)), static_cast<int>(sizeof(payload)));
+
+    ASSERT_TRUE(comm_refill_inbound_buffers(comm));
+    EXPECT_EQ(comm_process_input(runtime, comm, -1), 0);
+
+    ASSERT_EQ(inbound_messages.size(), 1u);
+    EXPECT_EQ(inbound_messages[0], "helloworld");
 
     async_runtime_deinit(runtime);
 }

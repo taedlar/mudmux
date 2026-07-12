@@ -6,6 +6,7 @@
 #include "inbound.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <wchar.h>
 #include <openssl/bio.h>
@@ -149,152 +150,105 @@ enum class refill_status_t {
     closed
 };
 
-/**
- * @brief Refill the inbound buffer chain for the specified comm slot by reading from the underlying BIO.
- * This function will grow the inbound buffer chain dynamically only for Telnet subnegotiation data. If all
- * buffers are full, it will stop reading. If a comm slot needs a larger inbound buffer, setup the buffer
- * chain explicitly before calling this function.
- * @param comm Reference to the comm abstract pointer.
- * @param status Optional pointer to a refill_status_t variable to receive the refill status.
- * @return Pointer to the head of the inbound buffer chain, or nullptr if no buffer is available.
- */
-static inbound_buffer_t* _refill_inbound_buffers (comm_abstract_ptr& comm, refill_status_t* status = nullptr) {
-    if (status)
-        *status = refill_status_t::no_data;
+static bool _refill_inbound_buffers_from_src(comm_abstract_ptr& comm, const char* src, size_t size) {
     if (!comm)
-        return nullptr;
+        return false;
 
+    size_t remaining = size;
     inbound_buffer_t* ibb = comm->inbound;
     if (!ibb) {
-        // do lazy allocation for the first inbound buffer if it doesn't exist yet
+        // lazy allocation for the first inbound buffer if it doesn't exist yet
+        // (this is not freed until the comm slot is closed or explicitly freed)
         ibb = comm->inbound = allocate_inbound_buffer();
-    }
-    inbound_buffer_t* head = ibb;
-    while (ibb) {
-        if (ibb->end < sizeof(ibb->buffer))
-            break; // found a buffer with space to read more data
-        ibb = ibb->next; // move to the last buffer in the chain
-    }
-    assert ((ibb == nullptr) || (ibb->next == nullptr)); // ensure we are at the end of the chain
-
-    if (ibb && ibb->end < sizeof(ibb->buffer)) {
-        size_t bytes_read = 0;
-        if (BIO_read_ex(comm->rbio, ibb->buffer + ibb->end, sizeof(ibb->buffer) - ibb->end, &bytes_read)) {
-            size_t bytes_appended = 0;
-            if (comm->flags & C_ENABLE_TELNET) {
-                // process Telnet negotiation and strip IAC sequences from the inbound buffer
-                uint32_t state = comm->flags & M_TELNET_STATE;
-                comm_telnet_negotiation_t telnet_neg;
-                memset(&telnet_neg, 0, sizeof(telnet_neg));
-                char* raw_data = ibb->buffer + ibb->end; // points to bytes_read bytes of raw data
-                while (ibb && bytes_read > 0) {
-                    inbound_buffer_t* subneg_ibb = nullptr;
-                    size_t bytes_consumed = 0;
-                    size_t appended_len = comm_telnet_process_inbound(
-                        ibb->buffer + ibb->end, raw_data, bytes_read, &bytes_consumed,
-                        &state, &telnet_neg); // process the newly read data in place
-                    raw_data += bytes_consumed;
-                    ibb->end += appended_len;
-                    if ((telnet_neg.sb_len > 0) && (subneg_ibb = allocate_inbound_buffer()) != nullptr) {
-                        subneg_ibb->next = ibb->next;
-                        ibb->next = subneg_ibb;
-                        if (ibb->end == 0)
-                            subneg_ibb = ibb;
-                        if (subneg_ibb->next && bytes_read > bytes_consumed) { // copy data after subnegotation to the next inbound buffer
-                            inbound_buffer_t* next_ibb = subneg_ibb->next;
-                            assert(next_ibb->end == 0);
-                            memcpy(next_ibb->buffer, raw_data, bytes_read - bytes_consumed);
-                            next_ibb->end += bytes_read - bytes_consumed;
-                            raw_data = next_ibb->buffer;
-                        }
-                        ibb = subneg_ibb->next; // could be nullptr if we are at the end of the chain
-                        subneg_ibb->band = INBOUND_BAND_SUBNEG;
-                        size_t copy_len = std::min(telnet_neg.sb_len, sizeof(subneg_ibb->buffer));
-                        memcpy(subneg_ibb->buffer, telnet_neg.subopt_buf, copy_len);
-                        subneg_ibb->start = 0;
-                        subneg_ibb->end = copy_len;
-                        SPDLOG_DEBUG("stored {} bytes of Telnet subnegotiation data in a new inbound buffer", copy_len);
-                    }
-                    bytes_read -= bytes_consumed;
-                    bytes_appended += appended_len;
-                }
-                comm->flags = (comm->flags & ~M_TELNET_STATE) | (state & M_TELNET_STATE);
-            }
-            if (bytes_appended > 0 && status)
-                *status = refill_status_t::data;
-        } else if (!BIO_should_retry(comm->rbio)) {
-            if (status)
-                *status = refill_status_t::closed;
-        }
-        SPDLOG_DEBUG ("refilled inbound buffers : total_bytes_read={}", bytes_read);
     } else {
-        SPDLOG_DEBUG ("inbound buffers are full");
-        if (status)
-            *status = refill_status_t::no_data;
+        // find first empty buffer or the last buffer in the chain to append data
+        while (ibb && ibb->next) {
+            if (ibb->end == ibb->start)
+                break;
+            ibb = ibb->next; // move to the last buffer in the chain
+        }
     }
-    return head;
+    assert ((ibb == nullptr) || (ibb->next == nullptr) || (ibb->end == ibb->start));
+
+    // fill inbound buffer with data from src, growing the buffer chain only for
+    // non-data bands (e.g. Telnet subnegotiation) data
+    while (ibb && remaining > 0) {
+        if (ibb->start >= ibb->end)
+            ibb->start = ibb->end = 0; // reset empty buffer
+        if (ibb->end == sizeof(ibb->buffer) && ibb->start > 0) {
+            memmove(ibb->buffer, ibb->buffer + ibb->start, ibb->end - ibb->start);
+            ibb->end -= ibb->start;
+            ibb->start = 0; // make room from a partially consumed buffer by shifting data to the beginning of the buffer
+        }
+        if (ibb->band != INBOUND_BAND_DATA) {
+            ibb = ibb->next;
+            continue;
+        }
+        assert (ibb->band == INBOUND_BAND_DATA);
+        size_t bytes_to_copy = std::min(remaining, sizeof(ibb->buffer) - ibb->end);
+        if (!bytes_to_copy)
+            break; // no more space to copy data into the current buffer
+        size_t bytes_copied = 0;
+        if (comm->flags & C_ENABLE_TELNET) {
+            // copy telnet data from src, preserving telnet state in comm flags
+            uint32_t state = comm->flags & M_TELNET_STATE; // restore saved telnet state from comm flags
+            comm_telnet_negotiation_t telnet_neg;
+            memset(&telnet_neg, 0, sizeof(telnet_neg));
+            size_t bytes_consumed = 0;
+            bytes_copied = comm_telnet_process_inbound(
+                ibb->buffer + ibb->end, const_cast<char*>(src), bytes_to_copy, &bytes_consumed,
+                &state, &telnet_neg);
+            bytes_to_copy = bytes_consumed; // actual number of raw data consumed from src
+            comm->flags = (comm->flags & ~M_TELNET_STATE) | (state & M_TELNET_STATE); // save telnet state back to comm flags
+
+            if (telnet_neg.sb_len > 0) {
+                inbound_buffer_t* subneg_ibb = allocate_inbound_buffer();
+                if (subneg_ibb) {
+                    subneg_ibb->next = ibb->next;
+                    ibb->next = subneg_ibb;
+                    if (subneg_ibb->next && remaining > bytes_consumed) { // copy data after subnegotiation to the next inbound buffer
+                        inbound_buffer_t* next_ibb = subneg_ibb->next;
+                        assert(next_ibb->end == 0);
+                        memcpy(next_ibb->buffer, src + bytes_consumed, remaining - bytes_consumed);
+                        next_ibb->end += remaining - bytes_consumed;
+                    }
+                    subneg_ibb->band = INBOUND_BAND_SUBNEG;
+                    size_t copy_len = std::min(telnet_neg.sb_len, sizeof(subneg_ibb->buffer));
+                    memcpy(subneg_ibb->buffer, telnet_neg.subopt_buf, copy_len);
+                    subneg_ibb->start = 0;
+                    subneg_ibb->end = copy_len;
+                    SPDLOG_DEBUG("stored {} bytes of Telnet subnegotiation data in a new inbound buffer", copy_len);
+                }
+            }
+        } else {
+            // default: copy raw data bytes
+            memcpy(ibb->buffer + ibb->end, src, bytes_to_copy);
+            bytes_copied = bytes_to_copy;
+        }
+        ibb->end += bytes_copied; // actually copied bytes into the inbound buffer
+        src += bytes_to_copy; // advance source pointer by the number of bytes consumed
+        remaining -= bytes_to_copy; // decrease remaining bytes to copy from source
+    }
+    if (remaining > 0)
+        SPDLOG_WARN ("inbound buffers full, {} bytes discarded", remaining);
+    return (remaining == 0);
 }
 
 bool comm_refill_inbound_buffers (comm_abstract_ptr& comm, const char* src, size_t size) {
     if (!comm)
         return false;
-    if (src && size > 0) {
-        // copy data from src into the inbound buffer chain
-        size_t remaining = size;
-        inbound_buffer_t* ibb = comm->inbound;
-        if (!ibb) {
-            ibb = comm->inbound = allocate_inbound_buffer();
-        }
-        while (ibb && ibb->next) {
-            ibb = ibb->next; // move to the last buffer in the chain
-        }
-        while (ibb && remaining > 0) {
-            if (ibb->start == ibb->end) {
-                ibb->start = 0;
-                ibb->end = 0;
-            } else if (ibb->end == sizeof(ibb->buffer) && ibb->start > 0) {
-                memmove(ibb->buffer, ibb->buffer + ibb->start, ibb->end - ibb->start);
-                ibb->end -= ibb->start;
-                ibb->start = 0;
-            }
-            if (ibb->end == sizeof(ibb->buffer) && ibb->next) {
-                ibb = ibb->next;
-                continue;
-            }
-            if (ibb->end == sizeof(ibb->buffer)) {
-                // current buffer is full and there is no next buffer, cannot read more data
-                SPDLOG_WARN ("inbound buffer chain is full, discarded {} bytes of data", remaining);
-                break;
-            }
-            const size_t copy_len = std::min(remaining, sizeof(ibb->buffer) - ibb->end);
-            size_t copied = 0;
-            if (comm->flags & C_ENABLE_TELNET) {
-                // process Telnet negotiation and strip IAC sequences from the source data
-                uint32_t state = comm->flags & M_TELNET_STATE;
-                comm_telnet_negotiation_t telnet_neg;
-                memset(&telnet_neg, 0, sizeof(telnet_neg));
-                size_t bytes_consumed = 0;
-                size_t processed_len = comm_telnet_process_inbound(
-                    ibb->buffer + ibb->end, const_cast<char*>(src), copy_len, &bytes_consumed,
-                    &state, &telnet_neg);
-                copied = processed_len;
-                comm->flags = (comm->flags & ~M_TELNET_STATE) | (state & M_TELNET_STATE);
-            } else {
-                memcpy(ibb->buffer + ibb->end, src, copy_len);
-                copied = copy_len;
-            }
-            ibb->end += copied;
-            src += copy_len;
-            remaining -= copy_len;
-            ibb = ibb->next; // move to the next buffer in the chain if available
-        }
-        return (remaining == 0); // return true if all data copied, false if some data was discarded
-    }
+    if (src)
+        return _refill_inbound_buffers_from_src(comm, src, size);
 
     // refill from underlying BIO if src is nullptr
-    refill_status_t status = refill_status_t::no_data;
-    _refill_inbound_buffers(comm, &status);
-    return (status != refill_status_t::closed); // return true if data read or no data, false if connection closed
+    std::array<char, 4096> raw_data{};
+    size_t bytes_read = 0;
+    if (BIO_read_ex(comm->rbio, raw_data.data(), sizeof(raw_data), &bytes_read)) {
+        if (bytes_read > 0)
+            return comm_refill_inbound_buffers(comm, raw_data.data(), bytes_read);
+        return true;
+    }
+    return BIO_should_retry(comm->rbio); // return true if data read or no data, false if connection closed
 }
 
 /**
