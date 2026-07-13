@@ -24,14 +24,28 @@
 #include "mudmux/comm.h"
 
 static void _negotiate_telnet_line_input(comm_abstract_ptr& comm, bool enable) {
+    // RFC 1184: LINEMODE option negotiation
     if (enable) {
         // negotiate LINEMODE
-        comm_telnet_send_will(comm.raw(), TELOPT_LINEMODE);
-        comm_telnet_send_do(comm.raw(), TELOPT_LINEMODE);
+        if (comm->caps.telnet_linemode) {
+            // client supports LINEMODE, request it
+            char lm_mode_request[3] = { 1, 1, 0 }; // LM_MODE subnegotiation: 1=MODE, 1=EDIT
+            comm_telnet_send_subnegotiation(comm.raw(), TELOPT_LINEMODE, lm_mode_request, sizeof(lm_mode_request));
+        }
+        else {
+            // fallback to Kludge line mode (using TELOPT_ECHO)
+        }
     } else {
-        // disable LINEMODE
-        comm_telnet_send_wont(comm.raw(), TELOPT_LINEMODE);
-        comm_telnet_send_dont(comm.raw(), TELOPT_LINEMODE);
+        // negotiate CHARACTER mode
+        if (comm->caps.telnet_linemode) {
+            // client supports LINEMODE, request character mode by turn off local editing
+            char lm_mode_request[3] = { 1, 0, 0 }; // LM_MODE subnegotiation: 1=MODE, 0=CHAR
+            comm_telnet_send_subnegotiation(comm.raw(), TELOPT_LINEMODE, lm_mode_request, sizeof(lm_mode_request));
+            comm_telnet_send_will(comm.raw(), TELOPT_ECHO); // take control of local echo for character mode
+        }
+        else {
+            // fallback to Kludge character mode (using TELOPT_ECHO).
+        }
     }
 }
 
@@ -171,7 +185,6 @@ bool comm_set_echo (int slot, bool echo) {
         break;
     default:
         if (comm->flags & C_ENABLE_TELNET) {
-            // we never echo input data to the client.
             // - when we claim won't echo, the client is expected to echo locally (e.g., for line input)
             // - when we claim will echo, the client is expected to suppress local echo (e.g., for password input)
             if (echo && !(comm->flags & C_CLIENT_ECHO))
@@ -261,7 +274,9 @@ bool comm_set_char_input(int slot) {
         break;
     default:
         if (comm->flags & C_ENABLE_TELNET) {
-            // TODO: negotiate character input mode for network sockets (e.g., TELNET LINEMODE)
+            // we never echo input data to the client when in line input mode.
+            // when in char input mode, we take control of local echo and do echoing ourselves.
+            comm_telnet_send_will(comm.raw(), TELOPT_ECHO);
         }
         break;
     }
@@ -288,7 +303,12 @@ bool comm_set_echo (int slot, bool echo) {
         break;
     default:
         if (comm->flags & C_ENABLE_TELNET) {
-            // TODO: negotiate echo for network sockets
+            // - when we claim won't echo, the client is expected to echo locally (e.g., for line input)
+            // - when we claim will echo, the client is expected to suppress local echo (e.g., for password input)
+            if (echo && !(comm->flags & C_CLIENT_ECHO))
+                comm_telnet_send_wont(comm.raw(), TELOPT_ECHO);
+            else if (!echo && (comm->flags & C_CLIENT_ECHO))
+                comm_telnet_send_will(comm.raw(), TELOPT_ECHO);
         }
         break;
     }

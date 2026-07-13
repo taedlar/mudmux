@@ -16,10 +16,18 @@ void comm_enable_telnet (int slot) {
         return;
     comm->flags |= C_ENABLE_TELNET;
     SPDLOG_DEBUG ("enabled TELNET for comm slot {}", slot);
-    // comm_telnet_send_will(comm.raw(), TELOPT_BINARY);
+
+    // Suppress obsolete Go Ahead (SGA), we are capable of full-duplex
     comm_telnet_send_will(comm.raw(), TELOPT_SGA);
-    comm_telnet_send_do(comm.raw(), TELOPT_SGA);
+
+    // We don't want to echo back what the client types (this will be used in password input)
+    // Keeping WONT ECHO also enables Kludge line mode fallback for clients that don't support
+    // LINEMODE (e.g., old tintin++, PuTTY, Windows Telnet).
     comm_telnet_send_wont(comm.raw(), TELOPT_ECHO);
+
+    // Negotiate LINEMODE for clients that support it (RFC 1184). This is the preferred mode
+    // for line input, as it allows the client to handle local echo and line editing.
+    comm_telnet_send_do(comm.raw(), TELOPT_LINEMODE);
 }
 
 size_t comm_telnet_process_inbound (char* dest, char* src, size_t src_len, size_t* src_consumed,
@@ -71,21 +79,25 @@ size_t comm_telnet_process_inbound (char* dest, char* src, size_t src_len, size_
                 break;
             case S_TELNET_IAC_WILL:
                 negotiation->will_[byte >> 5] |= (1 << (byte & 31));
+                negotiation->wont_[byte >> 5] &= ~(1 << (byte & 31)); // clear WONT if previously set
                 *state = S_TELNET_DATA;
                 SPDLOG_DEBUG("received: they WILL option {}", byte);
                 break;
             case S_TELNET_IAC_WONT:
                 negotiation->wont_[byte >> 5] |= (1 << (byte & 31));
+                negotiation->will_[byte >> 5] &= ~(1 << (byte & 31)); // clear WILL if previously set
                 *state = S_TELNET_DATA;
                 SPDLOG_DEBUG("received: they WONT option {}", byte);
                 break;
             case S_TELNET_IAC_DO:
                 negotiation->do_[byte >> 5] |= (1 << (byte & 31));
+                negotiation->dont_[byte >> 5] &= ~(1 << (byte & 31)); // clear DONT if previously set
                 *state = S_TELNET_DATA;
                 SPDLOG_DEBUG("received: please DO option {}", byte);
                 break;
             case S_TELNET_IAC_DONT:
                 negotiation->dont_[byte >> 5] |= (1 << (byte & 31));
+                negotiation->do_[byte >> 5] &= ~(1 << (byte & 31)); // clear DO if previously set
                 *state = S_TELNET_DATA;
                 SPDLOG_DEBUG("received: please DONT option {}", byte);
                 break;
@@ -156,4 +168,16 @@ void comm_telnet_send_dont(comm_abstract_t* comm, int option) {
     unsigned char buf[3] = { 255, 254, static_cast<unsigned char>(option) }; // IAC DONT option
     comm_buffered_write(comm, reinterpret_cast<char*>(buf), sizeof(buf));
     SPDLOG_DEBUG("sent: please DONT option {}", option);
+}
+
+void comm_telnet_send_subnegotiation(comm_abstract_t* comm, int option, const char* data, size_t len) {
+    if (!comm || !comm->wbio || !data || len == 0)
+        return;
+    // Send IAC SB option ... IAC SE
+    unsigned char iac_sb[3] = { 255, 250, static_cast<unsigned char>(option) }; // IAC SB option
+    unsigned char iac_se[2] = { 255, 240 }; // IAC SE
+    comm_buffered_write(comm, reinterpret_cast<char*>(iac_sb), sizeof(iac_sb));
+    comm_buffered_write(comm, data, len);
+    comm_buffered_write(comm, reinterpret_cast<char*>(iac_se), sizeof(iac_se));
+    SPDLOG_DEBUG("sent: subnegotiation for option {} with {} bytes of data", option, len);
 }

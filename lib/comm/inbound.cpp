@@ -144,6 +144,32 @@ void comm_free_inbound_buffers(comm_abstract_ptr& comm) {
     }
 }
 
+/**
+ * Handles WILL/WONT claims from the client and updates the client capabilities accordingly.
+ * This function should be called after processing inbound Telnet data to update the capabilities
+ * based on the options negotiated with the client.
+ */
+static void _process_telnet_options (comm_abstract_ptr& comm, comm_telnet_negotiation_t* negotiation) {
+    if (!comm || !negotiation)
+        return;
+    if (THEY_WILL(negotiation, TELOPT_LINEMODE)) {
+        comm->caps.telnet_linemode = 1;
+        SPDLOG_DEBUG ("client capabilities updated: TELNET LINEMODE enabled for slot {}", comm.slot());
+        if (comm->flags & C_LINE_INPUT) {
+            char lm_mode_request[3] = { 1, 1, 0 }; // LM_MODE subnegotiation: 1=MODE, 1=EDIT
+            comm_telnet_send_subnegotiation(comm.raw(), TELOPT_LINEMODE, lm_mode_request, sizeof(lm_mode_request));
+        }
+    }
+    else if (THEY_WONT(negotiation, TELOPT_LINEMODE)) {
+        comm->caps.telnet_linemode = 0;
+        SPDLOG_DEBUG ("client capabilities updated: TELNET LINEMODE disabled for slot {}", comm.slot());
+        if (comm->flags & C_LINE_INPUT) {
+            // If the client refuses LINEMODE, we can fall back to Kludge line mode with WONT ECHO declared
+            // when enable telnet on the slot.
+        }
+    }
+}
+
 enum class refill_status_t {
     no_data,
     data,
@@ -200,6 +226,9 @@ static bool _refill_inbound_buffers_from_src(comm_abstract_ptr& comm, const char
                 &state, &telnet_neg);
             bytes_to_copy = bytes_consumed; // actual number of raw data consumed from src
             comm->flags = (comm->flags & ~M_TELNET_STATE) | (state & M_TELNET_STATE); // save telnet state back to comm flags
+            if (bytes_consumed > bytes_copied) {
+                _process_telnet_options(comm, &telnet_neg); // update client capabilities based on WILL/WONT claims
+            }
 
             if (telnet_neg.sb_len > 0) {
                 inbound_buffer_t* subneg_ibb = allocate_inbound_buffer();

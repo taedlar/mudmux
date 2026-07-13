@@ -19,6 +19,13 @@ typedef struct comm_abstract_s {
     inbound_buffer_t* inbound;
     outbound_buffer_t* outbound;
     uint32_t flags;
+    struct client_capabilities_s { // bitfields of client capabilities (negotiated via TELNET or other protocols)
+        uint32_t telnet_linemode : 1; // client says WILL TELOPT_LINEMODE (RFC 1184)
+        uint32_t telnet_naws : 1; // client says WILL TELOPT_NAWS (RFC 1073)
+        uint32_t telnet_ttype : 1; // client says WILL TELOPT_TTYPE (RFC 930)
+        uint32_t telnet_tspeed : 1; // client says WILL TELOPT_TSPEED (RFC 1079)
+        uint32_t telnet_new_environ : 1; // client says WILL TELOPT_NEW_ENVIRON (RFC 1572)
+    } caps;
 } comm_abstract_t;
 
 static_assert(std::is_trivially_default_constructible_v<comm_abstract_t>,
