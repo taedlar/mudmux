@@ -36,6 +36,11 @@ typedef struct comm_telnet_negotiation_s {
     char subopt_buf[1024];  // buffer for subnegotiation data
 } comm_telnet_negotiation_t;
 
+#define THEY_WILL(negotiation, option) ((negotiation)->will_[(option) >> 5] & (1 << ((option) & 31)))
+#define PLEASE_DO(negotiation, option)   ((negotiation)->do_[(option) >> 5] & (1 << ((option) & 31)))
+#define THEY_WONT(negotiation, option) ((negotiation)->wont_[(option) >> 5] & (1 << ((option) & 31)))
+#define PLEASE_DONT(negotiation, option) ((negotiation)->dont_[(option) >> 5] & (1 << ((option) & 31)))
+
 static_assert(std::is_trivially_default_constructible_v<comm_telnet_negotiation_t>,
     "comm_telnet_negotiation_t must be trivially default constructible"); // for std::calloc to work correctly
 static_assert(std::is_trivially_copyable_v<comm_telnet_negotiation_t>,
@@ -67,13 +72,19 @@ void comm_enable_telnet (int slot);
  *
  * If there is a Telnet subnegotiation in progress, the function will buffer the subnegotiation
  * data until the end of the subnegotiation is reached (IAC SE). At most one subnegotiation can
- * be in progress at a time. The function returns the number of bytes copied to the destination
- * buffer, which will contain only non-Telnet data.
+ * be returned at a time. The function returns the number of bytes copied to the destination
+ * buffer, which will contain only non-Telnet data. Presence of subnegotiation data can be
+ * detected by checking if the sb_len field in the negotiation struct is greater than zero after
+ * the function returns. The caller is responsible for handling the subnegotiation data in the
+ * negotiation struct and call this function multiple times if necessary to process all inbound
+ * data.
  *
  * @param dest The destination buffer to copy non-Telnet data to.
  * @param src The source buffer containing data received from the Telnet client.
  * @param src_len The length of the source buffer.
  * @param src_consumed A pointer to a size_t to receive the number of bytes consumed from the source buffer.
+ *      If a subnegotiation is completed, this will include the IAC SE byte. If no subnegotiation is completed,
+ *      this will be set to src_len to indicate all source bytes were processed.
  * @param state A pointer to the current Telnet negotiation state (S_TELNET_* constants).
  * @param negotiation A pointer to a comm_telnet_negotiation_t struct to track
  * the options negotiated with the client.
@@ -86,5 +97,6 @@ void comm_telnet_send_will(comm_abstract_t* comm, int option);
 void comm_telnet_send_wont(comm_abstract_t* comm, int option);
 void comm_telnet_send_do(comm_abstract_t* comm, int option);
 void comm_telnet_send_dont(comm_abstract_t* comm, int option);
+void comm_telnet_send_subnegotiation(comm_abstract_t* comm, int option, const char* data, size_t len);
 
 #endif // COMM_TELNET_HPP
