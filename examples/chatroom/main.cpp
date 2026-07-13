@@ -3,8 +3,10 @@
 #include <csignal>
 #include <iostream>
 #include <fstream>
+#include <memory>
 #include <sstream>
 #include <string>
+#include <vector>
 #include <argparse/argparse.hpp>
 #include <spdlog/spdlog.h>
 #ifdef _WIN32
@@ -15,46 +17,50 @@
 #include "mudmux/comm.h"
 #include "mudmux/hooks.h"
 #include "mudmux/mudmux.h"
+#include "user.hpp"
+
+std::vector<std::shared_ptr<User>> users; // store connected users
 
 static void sigint_handler (int signal);
-
 static void process_command_line (int argc, char* argv[]);
 
 static int on_connect (void*, int slot, void* data, size_t len) {
     auto comm = comm_abstract_get(slot);
     std::string entry_name{static_cast<const char*>(data), len};
+    SPDLOG_INFO ("New connection on slot {} from entry '{}'", slot, entry_name);
     if (comm) {
-        SPDLOG_INFO ("New connection on slot {} from entry '{}'", slot, entry_name);
+        while (slot >= static_cast<int>(users.size()))
+            users.resize(slot + 32);
+        users[slot] = std::make_shared<User>(slot);
         if (entry_name != "-")
             comm_enable_telnet (slot); // enable TELNET for non-console connections
         comm_enable_prompt (slot, true); // enable prompt for console user
         comm_set_line_input (slot, true); // enable line input mode for console user
-        *comm << "Welcome to mudmux!\n\r";
+        users[slot]->logon(); // prompt for username
     }
     return 0;
 }
 
 static int on_message_inbound (void*, int slot, void* data, size_t size) {
     std::string message(static_cast<char*>(data), size);
-    auto comm = comm_abstract_get(slot);
-    if (comm)
-        *comm << "Received message: [" << message << "]\n\r";
-    if (message == "quit" || message == "exit")
-        comm_close(nullptr, slot); // close the connection on "quit" or "exit"
+    if (slot < static_cast<int>(users.size()) && users[slot]) {
+        users[slot]->dispatchInboundMessage(message);
+    }
     return 0;
 }
 
 static int on_prompt (void*, int slot, void*, size_t) {
-    auto comm = comm_abstract_get(slot);
-    if (comm)
-        *comm << "> "; // display prompt for user input
+    if (slot < static_cast<int>(users.size()) && users[slot]) {
+        users[slot]->prompt(); // display prompt for user input
+    }
     return 0;
 }
 
 static int on_disconnect (void*, int slot, void*, size_t) {
-    auto comm = comm_abstract_get(slot);
-    if (comm)
-        *comm << "Bye!" << "\n\r";
+    if (slot < static_cast<int>(users.size()) && users[slot]) {
+        users[slot]->disconnect(); // mark user as disconnected
+        users[slot].reset(); // remove user from the list
+    }
     return 0;
 }
 
