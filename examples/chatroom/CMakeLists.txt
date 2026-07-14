@@ -6,6 +6,8 @@ add_executable(chatroom
     user.hpp
     command.cpp
     command.hpp
+    menu.cpp
+    menu.hpp
 )
 
 target_link_libraries(chatroom PRIVATE

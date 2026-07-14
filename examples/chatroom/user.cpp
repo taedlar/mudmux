@@ -28,6 +28,10 @@ void User::disconnect() {
 }
 
 void User::prompt() {
+    if (prompt_handler) {
+        (this->*prompt_handler)(); // call the prompt handler function
+        return;
+    }
     if (inbound_handler) {
         // If an inbound handler is set, we don't display the prompt to avoid confusion
         return;
@@ -81,5 +85,22 @@ void User::receiveUsername(const std::string& name) {
         *comm << fmt::format("Welcome, {}!\n\r", username);
         *comm << "You are now logged in. Type your messages to chat with others.\n\r";
         *comm << "You can also use slash commands like /help, /quit, etc. to interact with the chatroom.\n\r";
+    }
+}
+
+void User::receiveExitConfirmation(const std::string& message) {
+    auto comm = comm_abstract_get(comm_slot);
+    if (!comm)
+        return;
+    if (menu) {
+        menu->receiveCharInput(message); // process the menu input
+        if (menu->getSelectedIndex() == 0) { // "Yes" option
+            closeComm(); // close the communication slot
+        }
+        else if (menu->getSelectedIndex() == 1) { // "No" option
+            menu.reset(); // clear the menu
+            prompt_handler = nullptr; // reset the prompt handler
+            inbound_handler = nullptr; // reset the inbound handler
+        }
     }
 }
