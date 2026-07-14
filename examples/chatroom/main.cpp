@@ -19,8 +19,6 @@
 #include "mudmux/mudmux.h"
 #include "user.hpp"
 
-std::vector<std::shared_ptr<User>> users; // store connected users
-
 static void sigint_handler (int signal);
 static void process_command_line (int argc, char* argv[]);
 
@@ -29,37 +27,37 @@ static int on_connect (void*, int slot, void* data, size_t len) {
     std::string entry_name{static_cast<const char*>(data), len};
     SPDLOG_INFO ("New connection on slot {} from entry '{}'", slot, entry_name);
     if (comm) {
-        while (slot >= static_cast<int>(users.size()))
-            users.resize(slot + 32);
-        users[slot] = std::make_shared<User>(slot);
+        while (slot >= static_cast<int>(User::slots.size()))
+            User::slots.resize(slot + 32);
+        User::slots[slot] = std::make_shared<User>(slot);
         if (entry_name != "-")
             comm_enable_telnet (slot); // enable TELNET for non-console connections
         comm_enable_prompt (slot, true); // enable prompt for console user
         comm_set_line_input (slot, true); // enable line input mode for console user
-        users[slot]->logon(); // prompt for username
+        User::slots[slot]->logon(); // prompt for username
     }
     return 0;
 }
 
 static int on_message_inbound (void*, int slot, void* data, size_t size) {
     std::string message(static_cast<char*>(data), size);
-    if (slot < static_cast<int>(users.size()) && users[slot]) {
-        users[slot]->dispatchInboundMessage(message);
+    if (slot < static_cast<int>(User::slots.size()) && User::slots[slot]) {
+        User::slots[slot]->dispatchInboundMessage(message);
     }
     return 0;
 }
 
 static int on_prompt (void*, int slot, void*, size_t) {
-    if (slot < static_cast<int>(users.size()) && users[slot]) {
-        users[slot]->prompt(); // display prompt for user input
+    if (slot < static_cast<int>(User::slots.size()) && User::slots[slot]) {
+        User::slots[slot]->prompt(); // display prompt for user input
     }
     return 0;
 }
 
 static int on_disconnect (void*, int slot, void*, size_t) {
-    if (slot < static_cast<int>(users.size()) && users[slot]) {
-        users[slot]->disconnect(); // mark user as disconnected
-        users[slot].reset(); // remove user from the list
+    if (slot < static_cast<int>(User::slots.size()) && User::slots[slot]) {
+        User::slots[slot]->disconnect(); // mark user as disconnected
+        User::slots[slot].reset(); // remove user from the list
     }
     return 0;
 }

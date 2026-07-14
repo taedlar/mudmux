@@ -1,7 +1,9 @@
 #ifndef CHATROOM_USER_HPP
 #define CHATROOM_USER_HPP
 
+#include <memory>
 #include <string>
+#include <vector>
 
 enum class UserState {
     Disconnected,
@@ -18,6 +20,8 @@ private:
     void (User::* inbound_handler)(const std::string& message) = nullptr;
 
 public:
+    static std::vector<std::shared_ptr<User>> slots; // mapping of comm slots to User instances
+
     User(int slot) : comm_slot(slot), state(UserState::Disconnected) {}
 
     const std::string& getUsername() const {
