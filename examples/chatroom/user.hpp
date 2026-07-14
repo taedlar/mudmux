@@ -4,6 +4,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include "mudmux/comm.h"
 
 enum class UserState {
     Disconnected,
@@ -12,7 +13,7 @@ enum class UserState {
     LoggedIn
 };
 
-class User {
+class User: public std::enable_shared_from_this<User> {
 private:
     std::string username;
     int comm_slot;
@@ -34,6 +35,10 @@ public:
 
     inline comm_abstract_t* getComm() const {
         return comm_abstract_get(comm_slot);
+    }
+
+    void closeComm() {
+        comm_close(nullptr, comm_slot);
     }
 
     void logon();

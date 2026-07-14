@@ -17,6 +17,7 @@
 #include "mudmux/comm.h"
 #include "mudmux/hooks.h"
 #include "mudmux/mudmux.h"
+#include "command.hpp"
 #include "user.hpp"
 
 static void sigint_handler (int signal);
@@ -83,6 +84,9 @@ int main (int argc, char* argv[]) {
     mudmux_register_hook (HOOK_MESSAGE_INBOUND, on_message_inbound);
     mudmux_register_hook (HOOK_DISCONNECT, on_disconnect);
     mudmux_register_hook (HOOK_PROMPT, on_prompt);
+
+    // initialize chatroom command handlers
+    Command::initialize();
 
     // run infinite event loop until shutdown is requested
     int exit_code = mudmux_run(nullptr);
