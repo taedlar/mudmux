@@ -118,12 +118,21 @@ bool comm_enable_virtual_terminal (int slot) {
         SPDLOG_WARN ("SetConsoleMode() failed for console stdout: {}", GetLastError());
         return false;
     }
-    return true;
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
+    if (comm) {
+        comm->flags |= C_ENABLE_ANSI;
+        return true;
+    }
+    return false;
 }
 #else
 bool comm_enable_virtual_terminal (int slot) {
-    (void)slot;
-    return true; // no-op on Linux/Unix, ANSI escape sequences are always supported
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
+    if (comm) {
+        comm->flags |= C_ENABLE_ANSI;
+        return true; // no-op on Linux/Unix, ANSI escape sequences are always supported
+    }
+    return false; // if comm is null, return false
 }
 #endif
 

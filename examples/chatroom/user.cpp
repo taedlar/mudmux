@@ -93,7 +93,7 @@ void User::receiveExitConfirmation(const std::string& message) {
     if (!comm)
         return;
     if (menu) {
-        menu->receiveCharInput(message); // process the menu input
+        menu->receiveCharInput(comm, message); // process the menu input
         if (menu->getSelectedIndex() == 0) { // "Yes" option
             closeComm(); // close the communication slot
         }
@@ -101,6 +101,7 @@ void User::receiveExitConfirmation(const std::string& message) {
             menu.reset(); // clear the menu
             prompt_handler = nullptr; // reset the prompt handler
             inbound_handler = nullptr; // reset the inbound handler
+            comm_set_line_input(comm_slot, true); // set line input mode back to normal
         }
     }
 }
