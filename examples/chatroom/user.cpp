@@ -5,6 +5,7 @@
 #include <spdlog/spdlog.h>
 
 #include "mudmux/comm.h"
+#include "command.hpp"
 #include "user.hpp"
 
 std::vector<std::shared_ptr<User>> User::slots; // mapping of comm slots to User instances
@@ -27,6 +28,10 @@ void User::disconnect() {
 }
 
 void User::prompt() {
+    if (prompt_handler) {
+        (this->*prompt_handler)(); // call the prompt handler function
+        return;
+    }
     if (inbound_handler) {
         // If an inbound handler is set, we don't display the prompt to avoid confusion
         return;
@@ -46,15 +51,8 @@ void User::dispatchInboundMessage(const std::string& message) {
             return;
         if (message.front() == '/') {
             // Handle slash commands
-            if (message == "/help") {
-                *comm << "Available commands:\n\r";
-                *comm << "/help - Show this help message\n\r";
-                *comm << "/quit - Disconnect from the chatroom\n\r";
-                *comm << "/exit - Disconnect from the chatroom\n\r";
-            } else if (message == "/quit" || message == "/exit") {
-                comm_close(nullptr, comm_slot); // close the connection on "quit" or "exit"
-            } else {
-                *comm << "Unknown command: " << message << "\n\r";
+            if (!Command::find_and_execute(message.substr(1), shared_from_this())) { // remove the leading '/' before searching for the command
+                *comm << "Unknown slash command: " << message << "\n\r";
             }
         } else {
             // Handle regular chat messages
@@ -73,13 +71,37 @@ void User::dispatchInboundMessage(const std::string& message) {
 }
 
 void User::receiveUsername(const std::string& name) {
+    auto comm = comm_abstract_get(comm_slot);
+    if (name.length() < 3 || name.length() > 16) {
+        if (comm) {
+            *comm << "Username must be between 3 and 16 characters. Please enter a valid username: ";
+        }
+        return; // do not proceed if the username is invalid
+    }
     username = name;
     state = UserState::LoggedIn; // set state to LoggedIn after receiving the username
     inbound_handler = nullptr; // reset the inbound handler to nullptr since we no longer need it
-    auto comm = comm_abstract_get(comm_slot);
     if (comm) {
         *comm << fmt::format("Welcome, {}!\n\r", username);
         *comm << "You are now logged in. Type your messages to chat with others.\n\r";
         *comm << "You can also use slash commands like /help, /quit, etc. to interact with the chatroom.\n\r";
+    }
+}
+
+void User::receiveExitConfirmation(const std::string& message) {
+    auto comm = comm_abstract_get(comm_slot);
+    if (!comm)
+        return;
+    if (menu) {
+        menu->receiveCharInput(comm, message); // process the menu input
+        if (menu->getSelectedIndex() == 0) { // "Yes" option
+            closeComm(); // close the communication slot
+        }
+        else if (menu->getSelectedIndex() == 1) { // "No" option
+            menu.reset(); // clear the menu
+            prompt_handler = nullptr; // reset the prompt handler
+            inbound_handler = nullptr; // reset the inbound handler
+            comm_set_line_input(comm_slot, true); // set line input mode back to normal
+        }
     }
 }

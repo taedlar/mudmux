@@ -1,7 +1,14 @@
 # examples/chatroom/CMakeLists.txt
 
-add_executable(chatroom main.cpp
-    user.cpp)
+add_executable(chatroom
+    main.cpp
+    user.cpp
+    user.hpp
+    command.cpp
+    command.hpp
+    menu.cpp
+    menu.hpp
+)
 
 target_link_libraries(chatroom PRIVATE
     spdlog::spdlog

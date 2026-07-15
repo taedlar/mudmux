@@ -17,6 +17,7 @@
 #include "mudmux/comm.h"
 #include "mudmux/hooks.h"
 #include "mudmux/mudmux.h"
+#include "command.hpp"
 #include "user.hpp"
 
 static void sigint_handler (int signal);
@@ -32,6 +33,7 @@ static int on_connect (void*, int slot, void* data, size_t len) {
         User::slots[slot] = std::make_shared<User>(slot);
         if (entry_name != "-")
             comm_enable_telnet (slot); // enable TELNET for non-console connections
+        comm_enable_virtual_terminal (slot); // enable ANSI/VT100 processing for console and TELNET connections
         comm_enable_prompt (slot, true); // enable prompt for console user
         comm_set_line_input (slot, true); // enable line input mode for console user
         User::slots[slot]->logon(); // prompt for username
@@ -83,6 +85,9 @@ int main (int argc, char* argv[]) {
     mudmux_register_hook (HOOK_MESSAGE_INBOUND, on_message_inbound);
     mudmux_register_hook (HOOK_DISCONNECT, on_disconnect);
     mudmux_register_hook (HOOK_PROMPT, on_prompt);
+
+    // initialize chatroom command handlers
+    Command::initialize();
 
     // run infinite event loop until shutdown is requested
     int exit_code = mudmux_run(nullptr);
