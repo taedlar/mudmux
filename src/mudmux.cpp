@@ -38,6 +38,9 @@ static bool enable_standard_input{false};
 static bool enable_console{false};
 static std::vector<std::string> accept_names; // array of names for BIO_set_accept_name()
 
+static std::filesystem::path server_certificate_path; // path to server certificate file (PEM format)
+static std::filesystem::path server_private_key_path; // path to server private key file (PEM format)
+
 static bool comm_api_thread_guard(const char* api_name) {
     if (mud_logic_thread_id == std::thread::id())
         return true; // logic thread not bound yet (before mudmux_run)
@@ -154,6 +157,10 @@ MUDMUX_EXPORT bool mudmux_init (const char* config_yaml) {
             for (const auto& name : transport["accept"]) {
                 accept_names.push_back(name.as<std::string>());
             }
+        }
+        if (transport["ssl"].IsDefined()) {
+            server_certificate_path = transport["ssl"]["certificate"].as<std::string>();
+            server_private_key_path = transport["ssl"]["private_key"].as<std::string>();
         }
         is_shutting_down.store(false);
     }

@@ -9,6 +9,8 @@ add_library(comm OBJECT
     inbound.cpp
     outbound.cpp
     telnet.cpp
+    ssl.cpp
+    ssl.hpp
 )
 add_library(mudmux::comm ALIAS comm)
 target_sources(comm INTERFACE
