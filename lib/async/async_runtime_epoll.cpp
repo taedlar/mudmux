@@ -19,6 +19,7 @@
 #include <errno.h>
 #include <unistd.h>
 #include <atomic>
+#include <vector>
 
 #include "console_worker.h"
 
@@ -28,6 +29,7 @@ struct async_runtime_s {
     void* context;  /* User-defined context pointer */
     int epoll_fd;
     int event_fd;  /* For worker completions */
+    std::vector<void*> fd_contexts; /* fd -> user context mapping */
     console_type_t console_type;  /* Detected console type */
 };
 
@@ -115,28 +117,40 @@ extern "C" void async_runtime_deinit(async_runtime_t* runtime) {
 
 extern "C" int async_runtime_add(async_runtime_t* runtime, socket_fd_t fd, uint32_t events, void* context) {
     if (!runtime || fd < 0) return -1;
+
+    if (runtime->fd_contexts.size() <= static_cast<size_t>(fd))
+        runtime->fd_contexts.resize(static_cast<size_t>(fd) + 1, nullptr);
+    runtime->fd_contexts[static_cast<size_t>(fd)] = context;
     
     struct epoll_event ev;
     memset(&ev, 0, sizeof(ev));
     ev.events = events_to_epoll(events);
-    ev.data.ptr = context;
+    ev.data.fd = fd;
     
     return epoll_ctl(runtime->epoll_fd, EPOLL_CTL_ADD, fd, &ev);
 }
 
 extern "C" int async_runtime_modify(async_runtime_t* runtime, socket_fd_t fd, uint32_t events, void* context) {
     if (!runtime || fd < 0) return -1;
+
+    if (runtime->fd_contexts.size() <= static_cast<size_t>(fd))
+        runtime->fd_contexts.resize(static_cast<size_t>(fd) + 1, nullptr);
+    if (context != nullptr)
+        runtime->fd_contexts[static_cast<size_t>(fd)] = context;
     
     struct epoll_event ev;
     memset(&ev, 0, sizeof(ev));
     ev.events = events_to_epoll(events);
-    ev.data.ptr = context;  /* Preserve context pointer when modifying events */
+    ev.data.fd = fd;
     
     return epoll_ctl(runtime->epoll_fd, EPOLL_CTL_MOD, fd, &ev);
 }
 
 extern "C" int async_runtime_remove(async_runtime_t* runtime, socket_fd_t fd) {
     if (!runtime || fd < 0) return -1;
+
+    if (runtime->fd_contexts.size() > static_cast<size_t>(fd))
+        runtime->fd_contexts[static_cast<size_t>(fd)] = nullptr;
     
     return epoll_ctl(runtime->epoll_fd, EPOLL_CTL_DEL, fd, NULL);
 }
@@ -197,7 +211,10 @@ extern "C" int async_runtime_wait(async_runtime_t* runtime, io_event_t* events,
             /* Regular I/O event */
             events[event_count].fd = epoll_events[i].data.fd;
             events[event_count].completion_key = 0;
-            events[event_count].context = epoll_events[i].data.ptr;
+            if (events[event_count].fd >= 0 && runtime->fd_contexts.size() > static_cast<size_t>(events[event_count].fd))
+                events[event_count].context = runtime->fd_contexts[static_cast<size_t>(events[event_count].fd)];
+            else
+                events[event_count].context = nullptr;
             events[event_count].event_type = epoll_to_events(epoll_events[i].events);
             events[event_count].bytes_transferred = 0;
             events[event_count].buffer = NULL;

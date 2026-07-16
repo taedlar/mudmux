@@ -275,30 +275,64 @@ bool comm_refill_inbound_buffers (comm_abstract_ptr& comm, const char* src, size
             return false;
         }
 
-        if (src && size > 0) {
+        const bool tls_rbio_is_mem = (BIO_method_type(tls_rbio) == BIO_TYPE_MEM);
+
+        bool fed_tls_ciphertext = false;
+
+        if (src && size > 0 && tls_rbio_is_mem) {
             const int written = BIO_write(tls_rbio, src, static_cast<int>(size));
             if (written <= 0 && !BIO_should_retry(tls_rbio)) {
                 SPDLOG_ERROR("failed to feed TLS ciphertext into SSL rbio for slot {}", comm.slot());
                 return false;
             }
-        } else if (!src) {
+            fed_tls_ciphertext = (written > 0);
+        } else if (!src && tls_rbio_is_mem) {
             std::array<char, 4096> cipher_data{};
-            size_t bytes_read = 0;
-            if (BIO_read_ex(comm->rbio, cipher_data.data(), sizeof(cipher_data), &bytes_read) && bytes_read > 0) {
+            for (;;) {
+                size_t bytes_read = 0;
+                if (!BIO_read_ex(comm->rbio, cipher_data.data(), sizeof(cipher_data), &bytes_read)) {
+                    if (!BIO_should_retry(comm->rbio))
+                        return false;
+                    break;
+                }
+                if (bytes_read == 0)
+                    break;
+
                 const int written = BIO_write(tls_rbio, cipher_data.data(), static_cast<int>(bytes_read));
                 if (written <= 0 && !BIO_should_retry(tls_rbio)) {
                     SPDLOG_ERROR("failed to queue transport bytes into TLS rbio for slot {}", comm.slot());
                     return false;
                 }
+                if (written > 0)
+                    fed_tls_ciphertext = true;
             }
         }
 
-        async_runtime_t* runtime = async_get_current_runtime();
-        int hs = comm_tls_handshake_step(runtime, comm.slot());
-        if (hs < 0)
-            return false;
-        if (hs == 0)
+        // Avoid retrying SSL_do_handshake() in a no-progress loop when there is no
+        // new ciphertext available on the read path for memory-BIO transport mode;
+        // writable events drive WANT_WRITE.
+        if (tls_rbio_is_mem && !fed_tls_ciphertext && !src && !(comm->flags & C_TLS_ESTABLISHED))
             return true;
+
+        async_runtime_t* runtime = async_get_current_runtime();
+        if (!(comm->flags & C_TLS_ESTABLISHED)) {
+            for (;;) {
+                int hs = comm_tls_handshake_step(runtime, comm.slot());
+                if (hs < 0)
+                    return false;
+                if (hs == 1)
+                    break;
+
+                if (comm->wbio)
+                    BIO_flush(comm->wbio);
+
+                // Keep stepping while there is still buffered ciphertext in SSL rbio;
+                // this avoids stalling when one SSL_do_handshake() call does not
+                // consume all bytes fed from the transport.
+                if (BIO_ctrl_pending(tls_rbio) == 0)
+                    return true;
+            }
+        }
 
         std::array<char, 4096> plain_data{};
         for (;;) {
@@ -309,6 +343,12 @@ bool comm_refill_inbound_buffers (comm_abstract_ptr& comm, const char* src, size
                     return true;
                 if (!_refill_inbound_buffers_from_src(comm, plain_data.data(), out_len))
                     return false;
+
+                // Keep draining only decrypted bytes already buffered in SSL.
+                // If none are pending, return to the event loop instead of issuing
+                // another transport read from this call path.
+                if (!SSL_has_pending(comm->ssl))
+                    return true;
                 continue;
             }
 
@@ -475,6 +515,8 @@ int comm_process_input (async_runtime_t* runtime, comm_abstract_ptr& comm, int m
         ssize_t next_line_start; // index of next line start, or -1 if no complete line found
         size_t line_len;
         while (ibb && (max_message < 0 || num_messages_processed < max_message)) {
+            if (ibb->end <= ibb->start)
+                break; // no more data in the current buffer, wait for more data
             if ((next_line_start = _find_newline_and_strip(ibb, &line_len)) >= 0) {
                 if (comm->flags & C_ENABLE_TELNET)
                     comm_buffered_write(comm.get(), "\n", 1); // echo newline for Telnet clients

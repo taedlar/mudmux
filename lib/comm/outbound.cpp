@@ -103,6 +103,19 @@ void comm_buffered_write (comm_abstract_t *comm, const void *buf, size_t len) {
             obb->end += len;
         }
         comm->flags |= C_BUFFERED_WRITE; // data written for flush
+
+        // Ensure the event loop is notified to flush buffered data even when
+        // no readable events are pending.
+        if (!(comm->flags & C_SOCKET_WRITABLE)) {
+            socket_fd_t fd {INVALID_SOCKET_FD};
+            if (comm_bio_get_socket_fd(comm->wbio, &fd) && fd != INVALID_SOCKET_FD) {
+                async_runtime_t* runtime = async_get_current_runtime();
+                if (runtime) {
+                    if (async_runtime_modify(runtime, fd, EVENT_READ | EVENT_WRITE, nullptr) == 0)
+                        comm->flags |= C_SOCKET_WRITABLE;
+                }
+            }
+        }
     }
 }
 
@@ -123,15 +136,17 @@ void comm_flush (async_runtime_t* runtime, int slot) {
         return; // invalid parameters
 
     // EVENT_WRITE should also drive TLS handshaking until the session is ready.
-    if (comm->ssl && !SSL_is_init_finished(comm->ssl)) {
+    if (comm->ssl && !(comm->flags & C_TLS_ESTABLISHED)) {
         int hs = comm_tls_handshake_step(runtime, slot);
         if (hs < 0) {
             if (!(comm->flags & C_CLOSING))
                 async_runtime_post_completion(runtime, ASYNC_IO_ERROR_KEY, static_cast<uintptr_t>(slot));
             return;
         }
-        if (hs == 0)
+        if (hs == 0) {
+            BIO_flush(comm->wbio);
             return;
+        }
     }
 
     outbound_buffer_t* obb = comm->outbound;
@@ -206,9 +221,10 @@ void comm_flush (async_runtime_t* runtime, int slot) {
         comm->flags &= ~C_BUFFERED_WRITE;
 
         if (comm->flags & C_CLOSING) {
-            socket_fd_t fd {INVALID_SOCKET_FD};
-            if (comm->wbio && comm_bio_get_socket_fd(comm->wbio, &fd)) {
-                SPDLOG_DEBUG ("comm slot has C_CLOSING flag set, sending shutdown signal to peer");
+            SPDLOG_DEBUG ("comm slot has C_CLOSING flag set, sending shutdown signal to peer");
+            if (comm->ssl && (comm->flags & C_TLS_ESTABLISHED)) {
+                (void) SSL_shutdown(comm->ssl);
+            } else {
                 BIO_shutdown_wr(comm->wbio); // shutdown write side of the socket and expect the peer to close the connection
             }
         }
@@ -238,8 +254,26 @@ bool comm_close (async_runtime_t* runtime, int slot) {
     }
 
     if (comm->flags & C_BUFFERED_WRITE) {
-        SPDLOG_DEBUG("comm slot {} has buffered data, will flush before disconnecting", slot);
-        return false;
+        // If TLS is not established yet, buffered plaintext cannot be flushed safely.
+        // Drop pending data and close immediately to avoid close/flush deadlock.
+        if (comm->ssl && !(comm->flags & C_TLS_ESTABLISHED)) {
+            SPDLOG_DEBUG("comm slot {} dropping buffered data during pre-handshake close", slot);
+            comm_free_outbound_buffers(comm);
+            comm->flags &= ~C_BUFFERED_WRITE;
+        } else {
+            SPDLOG_DEBUG("comm slot {} has buffered data, will flush before disconnecting", slot);
+            return false;
+        }
+    }
+
+    if (comm->ssl && (comm->flags & C_TLS_ESTABLISHED)) {
+        // Best-effort TLS close_notify before tearing down transport.
+        const int shutdown_rc = SSL_shutdown(comm->ssl);
+        if (shutdown_rc < 0) {
+            const int ssl_err = SSL_get_error(comm->ssl, shutdown_rc);
+            if (ssl_err != SSL_ERROR_WANT_READ && ssl_err != SSL_ERROR_WANT_WRITE)
+                SPDLOG_DEBUG("SSL_shutdown failed during close on slot {} (ssl_err={})", slot, ssl_err);
+        }
     }
 
     socket_fd_t fd {INVALID_SOCKET_FD};

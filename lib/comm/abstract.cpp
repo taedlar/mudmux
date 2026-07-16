@@ -153,6 +153,11 @@ int comm_abstract_remove (int slot) {
     comm_free_inbound_buffers(comm);
     comm_free_outbound_buffers(comm);
 
+    if (comm->ssl) {
+        SSL_free(comm->ssl);
+        comm->ssl = nullptr;
+    }
+
     comm_abstract_t* raw = comm.raw();
     if (!raw)
         return 0;

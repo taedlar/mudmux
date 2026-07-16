@@ -112,6 +112,12 @@ static void init_comm_api (void) {
     comm_api.set_echo = +[](int slot, bool echo) -> bool {
         return guarded_call<bool>("set_echo", false, comm_set_echo, slot, echo);
     };
+    comm_api.ssl_init = +[](const char* certificate_path, const char* private_key_path) -> bool {
+        return guarded_call<bool>("ssl_init", false, comm_ssl_init, certificate_path, private_key_path);
+    };
+    comm_api.ssl_deinit = +[]() {
+        guarded_call_void("ssl_deinit", comm_ssl_deinit);
+    };
     comm_api.enable_prompt = +[](int slot, bool enable) {
         guarded_call_void("enable_prompt", comm_enable_prompt, slot, enable);
     };
@@ -120,6 +126,9 @@ static void init_comm_api (void) {
     };
     comm_api.enable_virtual_terminal = +[](int slot) -> bool {
         return guarded_call<bool>("enable_virtual_terminal", false, comm_enable_virtual_terminal, slot);
+    };
+    comm_api.enable_tls = +[](int slot) {
+        guarded_call_void("enable_tls", comm_enable_tls, slot);
     };
 
     mudmux_comm_api_v1 = &comm_api; // set global pointer to initialized struct
@@ -163,6 +172,10 @@ MUDMUX_EXPORT bool mudmux_init (const char* config_yaml) {
         if (transport["ssl"].IsDefined()) {
             server_certificate_path = transport["ssl"]["certificate"].as<std::string>();
             server_private_key_path = transport["ssl"]["private_key"].as<std::string>();
+            if (!comm_ssl_init(server_certificate_path, server_private_key_path)) {
+                SPDLOG_ERROR ("failed to initialize SSL with certificate {} and private key {}", server_certificate_path.string(), server_private_key_path.string());
+                return false;
+            }
         }
         is_shutting_down.store(false);
     }
@@ -183,6 +196,7 @@ MUDMUX_EXPORT void mudmux_deinit (void) {
     accept_names.clear();
     memset(mudmux_comm_api_v1, 0, sizeof(mudmux_comm_api_v1_t));
     memset(mudmux_async_api_v1, 0, sizeof(mudmux_async_api_v1_t));
+    comm_ssl_deinit();
 }
 
 MUDMUX_EXPORT int mudmux_run (void* context) {
@@ -269,7 +283,7 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
                     // This can happen if the comm was removed (e.g., due to disconnect) while events were still pending
                     continue;
                 }
-                SPDLOG_DEBUG ("processing event for slot {} (event.fd={})", slot, event.fd);
+                SPDLOG_DEBUG ("processing event for slot {} (event.fd={}, type=0x{:x})", slot, event.fd, event.event_type);
                 if (comm->flags & C_SOCKET_LISTENING) {
                     comm_process_listener_event (runtime, slot, event.fd);
                     continue;

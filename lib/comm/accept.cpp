@@ -97,7 +97,11 @@ static int _accept_new_comm (int slot, socket_fd_t event_fd) {
             SPDLOG_ERROR("failed to create BIO for accepted window socket {}", event_fd);
             return -1;
         }
-        BIO_set_nbio (accepted_bio, 1); // set accepted socket to non-blocking mode
+		if (BIO_set_nbio (accepted_bio, 1) <= 0) { // set accepted socket to non-blocking mode
+			SPDLOG_ERROR("failed to set accepted socket non-blocking on slot {}", slot);
+			BIO_free (accepted_bio);
+			return -1;
+		}
 		int accepted_slot = comm_abstract_add_bio (accepted_bio, accepted_bio, -1, C_SOCKET_READABLE);
 		if (accepted_slot < 0) {
 			BIO_free (accepted_bio);

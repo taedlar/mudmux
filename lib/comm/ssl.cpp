@@ -121,56 +121,35 @@ void comm_enable_tls (int slot) {
 		return;
 	}
 
-	BIO* tls_in_bio = BIO_new(BIO_s_mem());
-	if (!tls_in_bio) {
-		log_openssl_error("BIO_new(BIO_s_mem)");
+	BIO* transport_rbio = comm->rbio;
+	if (!transport_rbio || BIO_up_ref(transport_rbio) != 1) {
+		SPDLOG_ERROR("BIO_up_ref failed for TLS transport read BIO on slot {}", slot);
 		SSL_free(ssl);
 		return;
 	}
-	BIO_set_mem_eof_return(tls_in_bio, -1); // non-blocking semantics: empty mem BIO => retry
 
 	BIO* transport_wbio = comm->wbio;
 	if (!transport_wbio || BIO_up_ref(transport_wbio) != 1) {
 		SPDLOG_ERROR("BIO_up_ref failed for TLS transport write BIO on slot {}", slot);
-		BIO_free_all(tls_in_bio);
+		BIO_free_all(transport_rbio);
 		SSL_free(ssl);
 		return;
 	}
 
 	SSL_set_accept_state(ssl);
 	SSL_set_mode(ssl, SSL_MODE_ENABLE_PARTIAL_WRITE | SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
-	SSL_set_bio(ssl, tls_in_bio, transport_wbio); // SSL owns both BIO refs
+	SSL_set_bio(ssl, transport_rbio, transport_wbio); // SSL owns both BIO refs
 	comm->ssl = ssl;
+	comm->flags &= ~C_TLS_ESTABLISHED;
 
-	const int handshake_result = SSL_do_handshake(comm->ssl);
-	if (handshake_result == 1) {
-		SPDLOG_INFO("TLS handshake completed immediately for slot {}", slot);
-		socket_fd_t fd {INVALID_SOCKET_FD};
-		if (comm->rbio) {
-			int bio_fd = -1;
-			if (BIO_get_fd(comm->rbio, &bio_fd) >= 0 && bio_fd >= 0)
-				fd = comm_bio_fd_to_socket_fd(bio_fd);
-		}
-		update_slot_event_interest(async_get_current_runtime(), comm, fd, false);
-		return;
+	socket_fd_t fd {INVALID_SOCKET_FD};
+	if (comm->rbio) {
+		int bio_fd = -1;
+		if (BIO_get_fd(comm->rbio, &bio_fd) >= 0 && bio_fd >= 0)
+			fd = comm_bio_fd_to_socket_fd(bio_fd);
 	}
-
-	const int ssl_err = SSL_get_error(comm->ssl, handshake_result);
-	if (ssl_err == SSL_ERROR_WANT_READ || ssl_err == SSL_ERROR_WANT_WRITE) {
-		socket_fd_t fd {INVALID_SOCKET_FD};
-		if (comm->rbio) {
-			int bio_fd = -1;
-			if (BIO_get_fd(comm->rbio, &bio_fd) >= 0 && bio_fd >= 0)
-				fd = comm_bio_fd_to_socket_fd(bio_fd);
-		}
-		update_slot_event_interest(async_get_current_runtime(), comm, fd, ssl_err == SSL_ERROR_WANT_WRITE);
-		SPDLOG_DEBUG("TLS handshake started for slot {} (pending {} )", slot,
-			ssl_err == SSL_ERROR_WANT_READ ? "read" : "write");
-		return;
-	}
-
-	log_openssl_error("SSL_do_handshake");
-	SPDLOG_ERROR("TLS handshake failed to start cleanly for slot {} (ssl_err={})", slot, ssl_err);
+	update_slot_event_interest(async_get_current_runtime(), comm, fd, false);
+	SPDLOG_DEBUG("TLS enabled on slot {} (handshake deferred to event loop)", slot);
 }
 
 static void update_slot_event_interest(async_runtime_t* runtime, comm_abstract_ptr& comm, socket_fd_t fd, bool want_write) {
@@ -186,7 +165,11 @@ static void update_slot_event_interest(async_runtime_t* runtime, comm_abstract_p
 }
 
 int comm_tls_handshake_step (async_runtime_t* runtime, int slot) {
-	if (!runtime || slot < 0)
+	if (slot < 0)
+		return -1;
+	if (!runtime)
+		runtime = async_get_current_runtime();
+	if (!runtime)
 		return -1;
 
 	comm_abstract_ptr comm(slot, comm_slots_mtx);
@@ -194,12 +177,17 @@ int comm_tls_handshake_step (async_runtime_t* runtime, int slot) {
 		return -1;
 	if (!comm->ssl)
 		return 1;
-
-	if (SSL_is_init_finished(comm->ssl))
+	if (comm->flags & C_TLS_ESTABLISHED)
 		return 1;
+
+	if (SSL_is_init_finished(comm->ssl)) {
+		comm->flags |= C_TLS_ESTABLISHED;
+		return 1;
+	}
 
 	const int ret = SSL_do_handshake(comm->ssl);
 	if (ret == 1) {
+		comm->flags |= C_TLS_ESTABLISHED;
 		socket_fd_t fd {INVALID_SOCKET_FD};
 		if (comm->rbio) {
 			int bio_fd = -1;
