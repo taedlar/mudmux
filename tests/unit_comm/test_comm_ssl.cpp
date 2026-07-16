@@ -29,23 +29,17 @@ std::string random_suffix() {
 }
 
 bool write_test_cert_and_key(const std::filesystem::path& cert_path, const std::filesystem::path& key_path) {
-    EVP_PKEY* pkey = EVP_PKEY_new();
-    RSA* rsa = RSA_new();
+    EVP_PKEY* pkey = EVP_RSA_gen(4096);
     BIGNUM* e = BN_new();
     X509* x509 = X509_new();
     X509_NAME* name = X509_NAME_new();
     BIO* cert_bio = nullptr;
     BIO* key_bio = nullptr;
 
-    if (!pkey || !rsa || !e || !x509 || !name)
+    if (!pkey || !e || !x509 || !name)
         goto fail;
     if (BN_set_word(e, RSA_F4) != 1)
         goto fail;
-    if (RSA_generate_key_ex(rsa, 2048, e, nullptr) != 1)
-        goto fail;
-    if (EVP_PKEY_assign_RSA(pkey, rsa) != 1)
-        goto fail;
-    rsa = nullptr; // ownership transferred to pkey
 
     if (X509_set_version(x509, 2) != 1)
         goto fail;
@@ -96,8 +90,6 @@ fail:
         X509_NAME_free(name);
     if (pkey)
         EVP_PKEY_free(pkey);
-    if (rsa)
-        RSA_free(rsa);
     if (e)
         BN_free(e);
     return false;
@@ -140,6 +132,7 @@ struct inbound_collector_t {
     }
 };
 
+#ifdef _WIN32
 static bool feed_tls_from_src_fragments(comm_abstract_ptr& comm, async_runtime_t* runtime, size_t fragment_size) {
     if (!comm || !comm->rbio)
         return false;
@@ -160,6 +153,7 @@ static bool feed_tls_from_src_fragments(comm_abstract_ptr& comm, async_runtime_t
     int hs = comm_tls_handshake_step(runtime, comm.slot());
     return hs >= 0;
 }
+#endif
 
 } // namespace
 
