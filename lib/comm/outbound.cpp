@@ -9,6 +9,7 @@
 #include <openssl/err.h>
 
 #include "console.hpp"
+#include "ssl.hpp"
 #include "mudmux/comm.h"
 #include "mudmux/hooks.h"
 
@@ -120,22 +121,53 @@ void comm_flush (async_runtime_t* runtime, int slot) {
     comm_abstract_ptr comm(slot, comm_slots_mtx);
     if (!comm || !comm->wbio)
         return; // invalid parameters
+
+    // EVENT_WRITE should also drive TLS handshaking until the session is ready.
+    if (comm->ssl && !SSL_is_init_finished(comm->ssl)) {
+        int hs = comm_tls_handshake_step(runtime, slot);
+        if (hs < 0) {
+            if (!(comm->flags & C_CLOSING))
+                async_runtime_post_completion(runtime, ASYNC_IO_ERROR_KEY, static_cast<uintptr_t>(slot));
+            return;
+        }
+        if (hs == 0)
+            return;
+    }
+
     outbound_buffer_t* obb = comm->outbound;
     while (obb) {
         size_t data_len = obb->end - obb->start;
         if (data_len > 0) {
-            int written = BIO_write(comm->wbio, obb->buffer + obb->start, static_cast<int>(data_len));
-            if (written <= 0) {
-                if (!BIO_should_retry(comm->wbio)) {
-                    SPDLOG_ERROR ("BIO_write failed during flush: {}", ERR_error_string(ERR_get_error(), nullptr));
-                    comm_free_outbound_buffers(comm); // drop any buffered outbound data
-                    comm->flags &= ~C_BUFFERED_WRITE;
-                    if (!(comm->flags & C_CLOSING))
-                        async_runtime_post_completion(runtime, ASYNC_IO_ERROR_KEY, static_cast<uintptr_t>(slot));
+            if (comm->ssl) {
+                size_t written = 0;
+                int ok = SSL_write_ex(comm->ssl, obb->buffer + obb->start, data_len, &written);
+                if (ok != 1) {
+                    const int ssl_err = SSL_get_error(comm->ssl, ok);
+                    if (ssl_err != SSL_ERROR_WANT_READ && ssl_err != SSL_ERROR_WANT_WRITE) {
+                        SPDLOG_ERROR("SSL_write_ex failed during flush for slot {} (ssl_err={})", slot, ssl_err);
+                        comm_free_outbound_buffers(comm); // drop any buffered outbound data
+                        comm->flags &= ~C_BUFFERED_WRITE;
+                        if (!(comm->flags & C_CLOSING))
+                            async_runtime_post_completion(runtime, ASYNC_IO_ERROR_KEY, static_cast<uintptr_t>(slot));
+                    }
+                    break;
                 }
-                break;
+                obb->start += written;
             }
-            obb->start += static_cast<size_t>(written);
+            else {
+                int written = BIO_write(comm->wbio, obb->buffer + obb->start, static_cast<int>(data_len));
+                if (written <= 0) {
+                    if (!BIO_should_retry(comm->wbio)) {
+                        SPDLOG_ERROR ("BIO_write failed during flush: {}", ERR_error_string(ERR_get_error(), nullptr));
+                        comm_free_outbound_buffers(comm); // drop any buffered outbound data
+                        comm->flags &= ~C_BUFFERED_WRITE;
+                        if (!(comm->flags & C_CLOSING))
+                            async_runtime_post_completion(runtime, ASYNC_IO_ERROR_KEY, static_cast<uintptr_t>(slot));
+                    }
+                    break;
+                }
+                obb->start += static_cast<size_t>(written);
+            }
             if (obb->start < obb->end)
                 continue; // more data to write
         }

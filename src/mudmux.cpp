@@ -20,6 +20,8 @@
 #include "comm/file_input.hpp"
 #include "comm/inbound.hpp"
 #include "comm/input_mode.hpp"
+#include "comm/outbound.hpp"
+#include "comm/ssl.hpp"
 #include "comm/telnet.hpp"
 #include "mudmux/async.h"
 #include "mudmux/comm.h"
@@ -272,6 +274,7 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
                     comm_process_listener_event (runtime, slot, event.fd);
                     continue;
                 }
+
                 if (event.event_type & EVENT_READ) {
 #ifdef _WIN32
                     bool refilled = comm_refill_inbound_buffers (comm, static_cast<char*>(event.buffer), event.bytes_transferred)
@@ -283,7 +286,10 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
                         (void) comm_close(runtime, slot);
                         continue;
                     }
-                    continue;
+                }
+
+                if (event.event_type & EVENT_WRITE) {
+                    comm_flush(runtime, slot);
                 }
 
                 if (event.event_type & (EVENT_CLOSE | EVENT_ERROR)) {
@@ -299,6 +305,7 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
             }
         }
         comm_invoke_prompt(runtime); // invoke prompt hook for all comms with C_ENABLE_PROMPT flag set
+        comm_flush_all(runtime); // advance buffered writes and TLS state in non-blocking mode
     }
     SPDLOG_INFO ("===== exited event loop =====");
 

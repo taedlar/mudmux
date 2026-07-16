@@ -12,6 +12,7 @@
 #include <openssl/bio.h>
 
 #include "abstract.hpp"
+#include "ssl.hpp"
 #include "telnet.hpp"
 #include "mudmux/comm.h"
 #include "mudmux/hooks.h"
@@ -266,6 +267,62 @@ static bool _refill_inbound_buffers_from_src(comm_abstract_ptr& comm, const char
 bool comm_refill_inbound_buffers (comm_abstract_ptr& comm, const char* src, size_t size) {
     if (!comm)
         return false;
+
+    if (comm->ssl) {
+        BIO* tls_rbio = SSL_get_rbio(comm->ssl);
+        if (!tls_rbio) {
+            SPDLOG_ERROR("TLS enabled slot {} has no SSL rbio", comm.slot());
+            return false;
+        }
+
+        if (src && size > 0) {
+            const int written = BIO_write(tls_rbio, src, static_cast<int>(size));
+            if (written <= 0 && !BIO_should_retry(tls_rbio)) {
+                SPDLOG_ERROR("failed to feed TLS ciphertext into SSL rbio for slot {}", comm.slot());
+                return false;
+            }
+        } else if (!src) {
+            std::array<char, 4096> cipher_data{};
+            size_t bytes_read = 0;
+            if (BIO_read_ex(comm->rbio, cipher_data.data(), sizeof(cipher_data), &bytes_read) && bytes_read > 0) {
+                const int written = BIO_write(tls_rbio, cipher_data.data(), static_cast<int>(bytes_read));
+                if (written <= 0 && !BIO_should_retry(tls_rbio)) {
+                    SPDLOG_ERROR("failed to queue transport bytes into TLS rbio for slot {}", comm.slot());
+                    return false;
+                }
+            }
+        }
+
+        async_runtime_t* runtime = async_get_current_runtime();
+        int hs = comm_tls_handshake_step(runtime, comm.slot());
+        if (hs < 0)
+            return false;
+        if (hs == 0)
+            return true;
+
+        std::array<char, 4096> plain_data{};
+        for (;;) {
+            size_t out_len = 0;
+            int ret = SSL_read_ex(comm->ssl, plain_data.data(), plain_data.size(), &out_len);
+            if (ret == 1) {
+                if (out_len == 0)
+                    return true;
+                if (!_refill_inbound_buffers_from_src(comm, plain_data.data(), out_len))
+                    return false;
+                continue;
+            }
+
+            const int ssl_err = SSL_get_error(comm->ssl, ret);
+            if (ssl_err == SSL_ERROR_WANT_READ || ssl_err == SSL_ERROR_WANT_WRITE)
+                return true;
+            if (ssl_err == SSL_ERROR_ZERO_RETURN)
+                return false;
+
+            SPDLOG_ERROR("SSL_read_ex failed for slot {} (ssl_err={})", comm.slot(), ssl_err);
+            return false;
+        }
+    }
+
     if (src)
         return _refill_inbound_buffers_from_src(comm, src, size);
 
