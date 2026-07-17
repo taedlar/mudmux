@@ -7,6 +7,7 @@
 #include <type_traits>
 #include <openssl/bio.h>
 #include <openssl/err.h>
+#include <openssl/ssl.h>
 
 #include "async/async_runtime.h"
 
@@ -16,6 +17,7 @@ typedef struct outbound_buffer_s outbound_buffer_t;
 typedef struct comm_abstract_s {
     BIO *rbio; // could be null or equal to wbio for bidirectional sockets
     BIO *wbio; // could be null or equal to rbio for bidirectional sockets
+    SSL *ssl; // could be null if SSL/TLS is not enabled for this comm
     inbound_buffer_t* inbound;
     outbound_buffer_t* outbound;
     uint32_t flags;

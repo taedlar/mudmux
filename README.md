@@ -44,3 +44,41 @@ cmake --build --preset dev-linux-gcc
 # Use corresponding `unit-*` preset for configured platform
 ctest --preset units-linux-gcc
 ```
+
+# Examples
+
+## Simple Chatroom
+
+The [chatroom](examples/chatroom/) example server provides a simple demonstration for using `mudmux` to create a chatroom server.
+
+The example enables both TELNET and TLS/SSL in its connection hook function:
+```c++
+comm_enable_telnet(slot);
+comm_enable_tls(slot);
+```
+
+To run the example, you'll need to prepare a server certificate and the private key (using `openssl`, for example) and setup in the configuration file `mud.conf`.
+
+You also need a telnet client with SSL support (on Ubuntu: `sudo apt-get install telnet-ssl`):
+```bash
+# start the example chatroom server
+$ chatroom -f mud.conf
+
+# then, in another terminal, connect to the chatroom server
+$ telnet -zssl localhost 4000
+Trying 127.0.0.1...
+SSL: Server has a self-signed certificate
+SSL: unknown Issuer: /C=US/ST=CA/O=Mudmux
+Connected to localhost.
+Escape character is '^]'.
+Please enter your username: Annihilator^M
+Welcome, Annihilator!
+You are now logged in. Type your messages to chat with others.
+You can also use slash commands like /help, /quit, etc. to interact with the chatroom.
+[Annihilator] hi
+You said: hi
+[Annihilator] /quit
+Bye!
+Connection closed by foreign host.
+```
+

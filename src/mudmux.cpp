@@ -20,6 +20,8 @@
 #include "comm/file_input.hpp"
 #include "comm/inbound.hpp"
 #include "comm/input_mode.hpp"
+#include "comm/outbound.hpp"
+#include "comm/ssl.hpp"
 #include "comm/telnet.hpp"
 #include "mudmux/async.h"
 #include "mudmux/comm.h"
@@ -37,6 +39,9 @@ static std::atomic<bool> is_shutting_down{false};
 static bool enable_standard_input{false};
 static bool enable_console{false};
 static std::vector<std::string> accept_names; // array of names for BIO_set_accept_name()
+
+static std::filesystem::path server_certificate_path; // path to server certificate file (PEM format)
+static std::filesystem::path server_private_key_path; // path to server private key file (PEM format)
 
 static bool comm_api_thread_guard(const char* api_name) {
     if (mud_logic_thread_id == std::thread::id())
@@ -107,6 +112,12 @@ static void init_comm_api (void) {
     comm_api.set_echo = +[](int slot, bool echo) -> bool {
         return guarded_call<bool>("set_echo", false, comm_set_echo, slot, echo);
     };
+    comm_api.ssl_init = +[](const char* certificate_path, const char* private_key_path) -> bool {
+        return guarded_call<bool>("ssl_init", false, comm_ssl_init, certificate_path, private_key_path);
+    };
+    comm_api.ssl_deinit = +[]() {
+        guarded_call_void("ssl_deinit", comm_ssl_deinit);
+    };
     comm_api.enable_prompt = +[](int slot, bool enable) {
         guarded_call_void("enable_prompt", comm_enable_prompt, slot, enable);
     };
@@ -115,6 +126,9 @@ static void init_comm_api (void) {
     };
     comm_api.enable_virtual_terminal = +[](int slot) -> bool {
         return guarded_call<bool>("enable_virtual_terminal", false, comm_enable_virtual_terminal, slot);
+    };
+    comm_api.enable_tls = +[](int slot) {
+        guarded_call_void("enable_tls", comm_enable_tls, slot);
     };
 
     mudmux_comm_api_v1 = &comm_api; // set global pointer to initialized struct
@@ -155,6 +169,14 @@ MUDMUX_EXPORT bool mudmux_init (const char* config_yaml) {
                 accept_names.push_back(name.as<std::string>());
             }
         }
+        if (transport["ssl"].IsDefined()) {
+            server_certificate_path = transport["ssl"]["certificate"].as<std::string>();
+            server_private_key_path = transport["ssl"]["private_key"].as<std::string>();
+            if (!comm_ssl_init(server_certificate_path, server_private_key_path)) {
+                SPDLOG_ERROR ("failed to initialize SSL with certificate {} and private key {}", server_certificate_path.string(), server_private_key_path.string());
+                return false;
+            }
+        }
         is_shutting_down.store(false);
     }
     catch (const YAML::Exception& e) {
@@ -174,6 +196,7 @@ MUDMUX_EXPORT void mudmux_deinit (void) {
     accept_names.clear();
     memset(mudmux_comm_api_v1, 0, sizeof(mudmux_comm_api_v1_t));
     memset(mudmux_async_api_v1, 0, sizeof(mudmux_async_api_v1_t));
+    comm_ssl_deinit();
 }
 
 MUDMUX_EXPORT int mudmux_run (void* context) {
@@ -260,11 +283,12 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
                     // This can happen if the comm was removed (e.g., due to disconnect) while events were still pending
                     continue;
                 }
-                SPDLOG_DEBUG ("processing event for slot {} (event.fd={})", slot, event.fd);
+                SPDLOG_DEBUG ("processing event for slot {} (event.fd={}, type=0x{:x})", slot, event.fd, event.event_type);
                 if (comm->flags & C_SOCKET_LISTENING) {
                     comm_process_listener_event (runtime, slot, event.fd);
                     continue;
                 }
+
                 if (event.event_type & EVENT_READ) {
 #ifdef _WIN32
                     bool refilled = comm_refill_inbound_buffers (comm, static_cast<char*>(event.buffer), event.bytes_transferred)
@@ -276,7 +300,10 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
                         (void) comm_close(runtime, slot);
                         continue;
                     }
-                    continue;
+                }
+
+                if (event.event_type & EVENT_WRITE) {
+                    comm_flush(runtime, slot);
                 }
 
                 if (event.event_type & (EVENT_CLOSE | EVENT_ERROR)) {
@@ -292,6 +319,7 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
             }
         }
         comm_invoke_prompt(runtime); // invoke prompt hook for all comms with C_ENABLE_PROMPT flag set
+        comm_flush_all(runtime); // advance buffered writes and TLS state in non-blocking mode
     }
     SPDLOG_INFO ("===== exited event loop =====");
 

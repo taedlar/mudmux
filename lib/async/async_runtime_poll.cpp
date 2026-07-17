@@ -207,7 +207,8 @@ extern "C" int async_runtime_modify(async_runtime_t* runtime, socket_fd_t fd, ui
     
     runtime->pollfds[idx].events = events_to_poll(events);
     runtime->mappings[idx].events = events;
-    runtime->mappings[idx].context = context;  /* Update context when modifying events */
+    if (context != NULL)
+        runtime->mappings[idx].context = context;  /* Preserve existing context when caller passes NULL */
     
     return 0;
 }

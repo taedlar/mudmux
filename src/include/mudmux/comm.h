@@ -19,6 +19,7 @@
 #define C_ENABLE_PROMPT     0x00040000
 #define C_INVOKED_PROMPT    0x00020000
 #define C_BUFFERED_WRITE    0x00010000
+#define C_TLS_ESTABLISHED   0x00008000
 #define M_TELNET_STATE      0x0000000f      /* used by TELNET */
 
 typedef struct comm_abstract_s comm_abstract_t;
@@ -51,9 +52,12 @@ typedef struct mudmux_comm_api_s {
     bool (*set_line_input)(int slot, bool echo);
     bool (*set_char_input)(int slot);
     bool (*set_echo)(int slot, bool echo);
+    bool (*ssl_init)(const char* certificate_path, const char* private_key_path);
+    void (*ssl_deinit)(void);
     void (*enable_telnet)(int slot);
     void (*enable_prompt)(int slot, bool enable);
     bool (*enable_virtual_terminal)(int slot);
+    void (*enable_tls)(int slot);
 } mudmux_comm_api_v1_t;
 
 #if !defined(MUDMUX_STATIC_DEFINE) && !defined(mudmux_EXPORTS)
@@ -68,9 +72,12 @@ typedef struct mudmux_comm_api_s {
 #define comm_set_line_input             mudmux_comm_api_v1->set_line_input
 #define comm_set_char_input             mudmux_comm_api_v1->set_char_input
 #define comm_set_echo                   mudmux_comm_api_v1->set_echo
+#define comm_ssl_init                   mudmux_comm_api_v1->ssl_init
+#define comm_ssl_deinit                 mudmux_comm_api_v1->ssl_deinit
 #define comm_enable_prompt              mudmux_comm_api_v1->enable_prompt
 #define comm_enable_telnet              mudmux_comm_api_v1->enable_telnet
 #define comm_enable_virtual_terminal    mudmux_comm_api_v1->enable_virtual_terminal
+#define comm_enable_tls                 mudmux_comm_api_v1->enable_tls
 #endif
 
 #ifdef __cplusplus
