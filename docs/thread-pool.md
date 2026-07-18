@@ -16,7 +16,9 @@ The thread pool is configured through `mudmux_init()` via YAML config.
 
 - `thread_pool_size: N` where `N > 1`
   - Enables parallel processing for higher throughput.
-  - Determinism is not guaranteed across independent tasks/slots.
+  - Determinism is not guaranteed across independent slots/tasks.
+  - Per-slot inbound processing remains strict FIFO: messages for a slot are processed exactly in arrival order.
+  - Hook callbacks may run concurrently; callers are expected to opt into this behavior by configuring `size > 1`.
   - Safety invariants must still hold (no data races, no deadlocks, valid slot lifetime handling).
 
 ### Backward Compatibility
@@ -41,7 +43,7 @@ transport:
 - If missing: use default `size = 1`.
 - If `size < 1`: reject configuration and fail init.
 - If `size == 1`: deterministic mode.
-- If `size > 1`: relaxed mode (non-deterministic ordering allowed).
+- If `size > 1`: relaxed mode (cross-slot ordering may be non-deterministic; per-slot FIFO is still strict; hooks may run concurrently).
 
 ### Runtime State
 
@@ -86,7 +88,8 @@ If work item side effects must touch comm state, the side-effect APIs acquire pe
 
 4. Hook serialization lock
    - Preserved for strict deterministic mode semantics.
-   - Can be conditionally relaxed only under documented relaxed mode behavior.
+  - In relaxed mode (`size > 1`), use relaxed locking and do not globally serialize hooks.
+  - In relaxed mode, guarantee API thread-safety for concurrent hook function execution.
 
 ### Lock Rules
 
@@ -117,7 +120,7 @@ Replace pointer-based external contracts with slot-id based contracts.
 
 3. Keep temporary compatibility wrappers during transition.
 
-4. Remove pointer-escaping contract at major-version boundary.
+4. Remove pointer-returning APIs entirely once slot-id migration is complete and example code adoption is complete.
 
 ### Compatibility Recommendation
 
@@ -178,12 +181,14 @@ Exit criteria:
 Exit criteria:
 
 - Core examples compile and run without pointer-return dependency.
+- Tests validate slot-id API coverage for migrated call paths.
 
 ## Phase 5: Thread Pool Execution Policy
 
 - Add worker pool init/deinit based on `thread_pool_size`.
 - In strict mode: single worker semantics preserve deterministic ordering.
-- In relaxed mode: allow concurrent work execution with documented non-determinism.
+- In relaxed mode: allow concurrent work execution across slots while preserving strict per-slot FIFO inbound ordering.
+- In relaxed mode: hook callbacks may execute concurrently; only API thread-safety is guaranteed for concurrent runs.
 
 Exit criteria:
 
@@ -192,7 +197,7 @@ Exit criteria:
 
 ## Phase 6: Hardening and Removal
 
-- Remove or fence remaining pointer-escaping paths.
+- Remove remaining pointer-returning APIs entirely after slot-id migration and example adoption are complete.
 - Finalize API docs and migration notes.
 - Add stress suites for deadlock/race detection.
 
@@ -215,17 +220,17 @@ Exit criteria:
   - no deadlocks
   - no slot lifetime violations
   - correct eventual outcomes
-- Avoid tests that require exact global ordering.
+- Enforce per-slot ordering assertions: inbound messages per slot are processed exactly in arrival order.
+- Avoid tests that require exact global cross-slot ordering.
 
 ## Open Questions
 
-- Should per-slot ordering remain strict in relaxed mode while cross-slot ordering is relaxed?
-- Should hook serialization lock be always enabled in strict mode and partially relaxed in relaxed mode?
-- Should pointer-return APIs be compile-time disabled under a feature flag once slot-id migration is complete?
+- None currently.
 
 ## Recommended Defaults
 
 - Default config: `thread_pool_size: 1`
 - Default mode: strict deterministic
 - Explicit log warning when `thread_pool_size > 1`:
-  - deterministic ordering not guaranteed
+  - global cross-slot deterministic ordering not guaranteed; per-slot inbound ordering remains strict FIFO
+  - hook callbacks may execute concurrently; API thread-safety is guaranteed for concurrent execution
