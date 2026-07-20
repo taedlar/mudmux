@@ -81,12 +81,14 @@ Register with `mudmux_register_hook()`; invoke with `mudmux_invoke_hook()`.
 
 ### Hook API Protection and Threading Model
 
-During hook invocation, the event-loop thread enters the logic layer while holding the MUD logic mutex. This protects comm API usage inside hooks so slot/state mutations remain deterministic from the logic layer point of view.
+In strict mode, the event-loop thread enters the logic layer while holding the MUD logic mutex. This preserves the original serialized behavior for comm API usage inside hooks.
 
-- In hook callbacks: treat comm API calls as part of a serialized critical section on the main event-loop thread.
-- Outside that locked hook region: the server is fully multi-threaded. Any logic-layer shared state must use proper synchronization (mutexes/atomics/queues) to avoid races.
+In relaxed mode, hook callbacks may run concurrently on worker threads. The comm API is expected to remain safe for these callbacks through its own internal synchronization, without relying on a global hook mutex.
 
-Practical rule: if logic code touches shared data from worker threads or from code paths not running under hook dispatch, synchronization is required even if comm APIs are protected during hooks.
+- In strict-mode hook callbacks: treat comm API calls as part of a serialized critical section on the main event-loop thread.
+- Outside the documented API path, or when touching logic-layer shared state from multiple threads, use proper synchronization (mutexes/atomics/queues) to avoid races.
+
+Practical rule: if logic code touches shared data from worker threads or from code paths not running under the documented comm API, synchronization is required.
 
 ### Proactive Slot Closing (`comm_close`)
 
