@@ -25,8 +25,11 @@ int mudmux_invoke_registered_hook(enum mudmux_hook_type_t hook_type, void* ctx, 
         return 0;
 
     int ret = 0;
-    {
+    if (mudmux_execution_mode() == MUDMUX_DETERMINISM_STRICT) {
         std::lock_guard<std::recursive_mutex> lock(comm_slots_mtx);
+        ret = hook_func(ctx, msg, data, size);
+    }
+    else {
         ret = hook_func(ctx, msg, data, size);
     }
 
