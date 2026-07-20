@@ -32,6 +32,29 @@ TEST(MudmuxTest, InitializationWithIncorrectConfig) {
     ASSERT_FALSE(mudmux_init(incorrect_config));
 }
 
+TEST(MudmuxTest, InitializationWithInvalidThreadPoolSize) {
+    const char* incorrect_config = R"({
+        "transport": {
+            "thread_pool": {
+                "size": 0
+            }
+        }
+    })";
+    ASSERT_FALSE(mudmux_init(incorrect_config));
+}
+
+TEST(MudmuxTest, InitializationWithThreadPoolSize) {
+    const char* config = R"({
+        "transport": {
+            "thread_pool": {
+                "size": 2
+            }
+        }
+    })";
+    ASSERT_TRUE(mudmux_init(config));
+    ASSERT_NO_FATAL_FAILURE(mudmux_deinit());
+}
+
 TEST(MudmuxTest, EventLoopRun) {
     // Test that the mudmux event loop can run and shutdown correctly
     ASSERT_TRUE(mudmux_init(nullptr));
