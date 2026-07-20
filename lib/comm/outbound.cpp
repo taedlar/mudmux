@@ -9,6 +9,7 @@
 #include <openssl/err.h>
 
 #include "console.hpp"
+#include "hooks.hpp"
 #include "ssl.hpp"
 #include "mudmux/comm.h"
 #include "mudmux/hooks.h"
@@ -293,7 +294,7 @@ bool comm_close (async_runtime_t* runtime, int slot) {
 }
 
 int comm_invoke_disconnect (async_runtime_t* runtime, int slot) {
-    return mudmux_invoke_hook (HOOK_DISCONNECT,
+    return mudmux_dispatch_hook (HOOK_DISCONNECT,
         async_runtime_get_context(runtime),
         slot,
         nullptr,

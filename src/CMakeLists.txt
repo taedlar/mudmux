@@ -19,6 +19,7 @@ target_sources(mudmux_headers PUBLIC
 # main objects
 add_library(mudmux_core OBJECT
     mudmux.cpp
+    execution.cpp
     hooks.cpp
 )
 add_library(mudmux::core ALIAS mudmux_core)

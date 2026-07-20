@@ -14,7 +14,6 @@
 
 #include "async/async_event.h"
 #include "async/console_worker.h"
-#include "async/thread_pool.hpp"
 #include "comm/accept.hpp"
 #include "comm/abstract.hpp"
 #include "comm/console.hpp"
@@ -24,6 +23,7 @@
 #include "comm/outbound.hpp"
 #include "comm/ssl.hpp"
 #include "comm/telnet.hpp"
+#include "execution.hpp"
 #include "mudmux/async.h"
 #include "mudmux/comm.h"
 #include "mudmux/hooks.h"
@@ -37,39 +37,19 @@ static std::thread::id mud_logic_thread_id; // thread ID of the logic layer thre
 static std::atomic<bool> is_running{false};
 static std::atomic<bool> is_shutting_down{false};
 
-enum determinism_mode_t {
-    DETERMINISM_STRICT = 0,
-    DETERMINISM_RELAXED = 1,
-};
-
-struct execution_policy_t {
-    int thread_pool_size;
-    determinism_mode_t determinism_mode;
-};
-
 static bool enable_standard_input{false};
 static bool enable_console{false};
 static std::vector<std::string> accept_names; // array of names for BIO_set_accept_name()
 
-static execution_policy_t execution_policy{1, DETERMINISM_STRICT};
-static async_thread_pool_t worker_pool;
-
 static std::filesystem::path server_certificate_path; // path to server certificate file (PEM format)
 static std::filesystem::path server_private_key_path; // path to server private key file (PEM format)
-
-static void set_thread_pool_size(int size) {
-    execution_policy.thread_pool_size = size;
-    execution_policy.determinism_mode = (size == 1) ? DETERMINISM_STRICT : DETERMINISM_RELAXED;
-}
-
-static const char* determinism_mode_name() {
-    return execution_policy.determinism_mode == DETERMINISM_STRICT ? "strict" : "relaxed";
-}
 
 static bool comm_api_thread_guard(const char* api_name) {
     if (mud_logic_thread_id == std::thread::id())
         return true; // logic thread not bound yet (before mudmux_run)
     if (std::this_thread::get_id() == mud_logic_thread_id)
+        return true;
+    if (mudmux_execution_is_worker_thread())
         return true;
 
     SPDLOG_CRITICAL("comm API {} called from non-logic thread", api_name);
@@ -178,7 +158,7 @@ MUDMUX_EXPORT bool mudmux_init (const char* config_yaml) {
         SPDLOG_ERROR ("mudmux_init() called while already running");
         return false;
     }
-    set_thread_pool_size(1);
+    mudmux_execution_configure(1);
     init_async_api();
     init_comm_api();
     try {
@@ -199,7 +179,7 @@ MUDMUX_EXPORT bool mudmux_init (const char* config_yaml) {
                 SPDLOG_ERROR ("transport.thread_pool.size must be at least 1");
                 return false;
             }
-            set_thread_pool_size(thread_pool_size);
+            mudmux_execution_configure(thread_pool_size);
         }
         if (transport["ssl"].IsDefined()) {
             server_certificate_path = transport["ssl"]["certificate"].as<std::string>();
@@ -225,7 +205,7 @@ MUDMUX_EXPORT void mudmux_deinit (void) {
     }
     enable_console = false;
     mud_logic_thread_id = std::thread::id();
-    set_thread_pool_size(1);
+    mudmux_execution_configure(1);
     accept_names.clear();
     memset(mudmux_comm_api_v1, 0, sizeof(mudmux_comm_api_v1_t));
     memset(mudmux_async_api_v1, 0, sizeof(mudmux_async_api_v1_t));
@@ -276,8 +256,8 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
         return EXIT_FAILURE;
     }
 
-    if (!worker_pool.start(static_cast<std::size_t>(execution_policy.thread_pool_size))) {
-        SPDLOG_ERROR ("failed to start thread pool with {} workers", execution_policy.thread_pool_size);
+    if (!mudmux_execution_start()) {
+        SPDLOG_ERROR ("failed to start thread pool with {} workers", mudmux_execution_thread_pool_size());
         async_runtime_deinit(runtime);
         is_running.store(false);
         return EXIT_FAILURE;
@@ -285,9 +265,9 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
 
     SPDLOG_INFO (
         "thread pool execution configured: size={} mode={}",
-        execution_policy.thread_pool_size,
-        determinism_mode_name());
-    if (execution_policy.determinism_mode == DETERMINISM_RELAXED) {
+        mudmux_execution_thread_pool_size(),
+        mudmux_execution_mode_name());
+    if (mudmux_execution_mode() == MUDMUX_DETERMINISM_RELAXED) {
         SPDLOG_WARN (
             "relaxed mode enabled: cross-slot ordering is not guaranteed; per-slot FIFO and API thread safety remain required");
     }
@@ -345,7 +325,8 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
 #else
                     bool refilled = comm_refill_inbound_buffers (comm); // read more data from rbio
 #endif
-                    if (!refilled || comm_process_input(runtime, comm) != 0) {
+                    const comm_process_result_t process_result = comm_process_input(runtime, comm);
+                    if (!refilled || process_result == COMM_PROCESS_ERROR || process_result == COMM_PROCESS_CLOSED) {
                         (void) comm_close(runtime, slot);
                         continue;
                     }
@@ -367,6 +348,8 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
                 }
             }
         }
+        if (comm_has_deferred_input())
+            comm_resume_deferred_input(runtime);
         comm_invoke_prompt(runtime); // invoke prompt hook for all comms with C_ENABLE_PROMPT flag set
         comm_flush_all(runtime); // advance buffered writes and TLS state in non-blocking mode
     }
@@ -374,7 +357,7 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
 
     // cleanup communications and teardown subsystems
     comm_shutdown_console (runtime);
-    worker_pool.stop();
+    mudmux_execution_stop();
     async_runtime_deinit (runtime);
     is_running.store(false);
     mud_logic_thread_id = std::thread::id();

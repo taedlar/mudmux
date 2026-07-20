@@ -13,6 +13,9 @@ add_library(comm OBJECT
     ssl.hpp
 )
 add_library(mudmux::comm ALIAS comm)
+target_include_directories(comm PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+)
 target_sources(comm INTERFACE
     FILE_SET HEADERS
     BASE_DIRS ${CMAKE_SOURCE_DIR}/lib

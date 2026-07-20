@@ -6,9 +6,18 @@
 
 #include <stddef.h>
 
+enum comm_process_result_t {
+	COMM_PROCESS_ERROR = -1,
+	COMM_PROCESS_OK = 0,
+	COMM_PROCESS_CLOSED = 1,
+	COMM_PROCESS_DEFERRED = 2,
+};
+
 extern "C" void comm_enable_prompt (int slot, bool enable);
 
 void comm_invoke_prompt (async_runtime_t* runtime);
+bool comm_has_deferred_input (void);
+void comm_resume_deferred_input (async_runtime_t* runtime);
 
 int comm_invoke_connect (async_runtime_t* runtime, int slot, int entry_slot);
 int comm_invoke_inbound_message (async_runtime_t* runtime, comm_abstract_ptr& comm, const void* data, size_t size);
@@ -40,6 +49,6 @@ void comm_free_inbound_buffers (comm_abstract_ptr& comm);
  * @param max_message Optional maximum number of messages to process; -1 for no limit.
  * @return 0 on success, 1 if the connection was closed, -1 on error.
  */
-int comm_process_input (async_runtime_t* runtime, comm_abstract_ptr& comm, int max_message = -1);
+comm_process_result_t comm_process_input (async_runtime_t* runtime, comm_abstract_ptr& comm, int max_message = -1);
 
 #endif /* COMM_INBOUND_HPP */

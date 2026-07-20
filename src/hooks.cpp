@@ -2,13 +2,38 @@
 #include "config.h"
 #endif
 
+#include <cstring>
 #include <mutex>
+#include <vector>
 
+#include "execution.hpp"
 #include "mudmux/mudmux.h"
 #include "mudmux/hooks.h"
 #include "comm/outbound.hpp"
+#include "hooks.hpp"
 
 static mudmux_hook_func_t all_hooks[MAX_HOOK_TYPE] = {nullptr}; // array of hook functions
+
+int mudmux_invoke_registered_hook(enum mudmux_hook_type_t hook_type, void* ctx, int msg, void* data, size_t size, bool flush_after) {
+    if (hook_type <= 0 || hook_type >= MAX_HOOK_TYPE) {
+        SPDLOG_ERROR ("mudmux_invoke_hook() called with invalid hook_type");
+        return -1;
+    }
+
+    mudmux_hook_func_t hook_func = all_hooks[hook_type];
+    if (!hook_func)
+        return 0;
+
+    int ret = 0;
+    {
+        std::lock_guard<std::recursive_mutex> lock(comm_slots_mtx);
+        ret = hook_func(ctx, msg, data, size);
+    }
+
+    if (flush_after)
+        comm_flush_all(async_get_current_runtime());
+    return ret;
+}
 
 MUDMUX_EXPORT bool mudmux_register_hook (enum mudmux_hook_type_t hook_type, mudmux_hook_func_t hook_func) {
     if (hook_type <= 0 || hook_type >= MAX_HOOK_TYPE || !hook_func) {
@@ -20,22 +45,16 @@ MUDMUX_EXPORT bool mudmux_register_hook (enum mudmux_hook_type_t hook_type, mudm
 }
 
 MUDMUX_EXPORT int mudmux_invoke_hook (enum mudmux_hook_type_t hook_type, void* ctx, int msg, void* data, size_t size) {
-    if (hook_type <= 0 || hook_type >= MAX_HOOK_TYPE) {
-        SPDLOG_ERROR ("mudmux_invoke_hook() called with invalid hook_type");
-        return -1;
-    }
-    mudmux_hook_func_t hook_func = all_hooks[hook_type];
-    if (!hook_func)
-        return 0; // no-op if no hook is registered for this type
+    return mudmux_invoke_registered_hook(hook_type, ctx, msg, data, size, true);
+}
 
-    // ===== ENTERING LOGIC LAYER =====
-    int ret = 0;
-    {
-        std::lock_guard<std::recursive_mutex> lock(comm_slots_mtx);
-        ret = hook_func(ctx, msg, data, size);
-    }
-    // ===== EXITING LOGIC LAYER =====
+mudmux_dispatch_result_t mudmux_dispatch_hook(enum mudmux_hook_type_t hook_type, void* ctx, int msg, const void* data, size_t size) {
+    if (!mudmux_execution_should_dispatch_async(hook_type))
+        return static_cast<mudmux_dispatch_result_t>(mudmux_invoke_hook(hook_type, ctx, msg, const_cast<void*>(data), size) < 0 ? MUDMUX_DISPATCH_ERROR : MUDMUX_DISPATCH_OK);
 
-    comm_flush_all (async_get_current_runtime()); // flush any buffered output after hook invocation
-    return ret;
+    if (hook_type == HOOK_TELNET_SUBNEG) {
+        return MUDMUX_DISPATCH_ERROR;
+    }
+
+    return mudmux_execution_enqueue_hook(hook_type, ctx, msg, data, size);
 }

@@ -52,6 +52,15 @@ public:
         }
         return 0; // Indicate success
     }
+
+    static int hook_telnet_subneg(void* ctx, int option, void* data, size_t len) {
+        CommInboundTest* test_instance = static_cast<CommInboundTest*>(ctx);
+        if (test_instance) {
+            std::string payload(static_cast<char*>(data), len);
+            test_instance->inbound_messages.push_back(std::string("subneg:") + std::to_string(option) + ":" + payload);
+        }
+        return 0;
+    }
 };
 
 TEST_F(CommInboundTest, RefillInboundBuffers) {
@@ -206,6 +215,36 @@ TEST_F(CommInboundTest, RefillInboundBuffersFromBioPreservesTelnetAndDataOrder) 
 
     ASSERT_EQ(inbound_messages.size(), 1u);
     EXPECT_EQ(inbound_messages[0], "helloworld");
+
+    async_runtime_deinit(runtime);
+}
+
+TEST_F(CommInboundTest, TelnetSubnegHookDispatchesBeforeSubsequentLineInput) {
+    async_runtime_t* runtime = async_runtime_init(this);
+    ASSERT_NE(runtime, nullptr);
+
+    const int slot = add_memory_comm(C_ENABLE_TELNET | C_LINE_INPUT);
+    ASSERT_NE(slot, -1);
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
+    ASSERT_TRUE(comm);
+
+    inbound_messages.clear();
+    mudmux_register_hook(HOOK_MESSAGE_INBOUND, CommInboundTest::hook_message_inbound);
+    mudmux_register_hook(HOOK_TELNET_SUBNEG, CommInboundTest::hook_telnet_subneg);
+
+    const unsigned char payload[] = {
+        'f', 'o', 'o',
+        255, 250, 24, 'x', 'y', 255, 240,
+        'b', 'a', 'r', '\n'
+    };
+    ASSERT_EQ(BIO_write(comm->rbio, payload, sizeof(payload)), static_cast<int>(sizeof(payload)));
+
+    ASSERT_TRUE(comm_refill_inbound_buffers(comm));
+    EXPECT_EQ(comm_process_input(runtime, comm, -1), 0);
+
+    ASSERT_EQ(inbound_messages.size(), 2u);
+    EXPECT_EQ(inbound_messages[0], "subneg:24:xy");
+    EXPECT_EQ(inbound_messages[1], "foobar");
 
     async_runtime_deinit(runtime);
 }
