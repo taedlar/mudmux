@@ -10,7 +10,7 @@ std::map<std::string, Command::CommandHandler> Command::command_map; // mapping 
 static void write_slot_text(int slot, const std::string& text) {
     if (slot < 0)
         return;
-    comm_buffered_write_slot(slot, text.c_str(), text.size());
+    comm_buffered_write(slot, text.c_str(), text.size());
 }
 
 static void command_quit (std::shared_ptr<User> user, const std::string& args);

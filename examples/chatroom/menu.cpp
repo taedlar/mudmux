@@ -9,7 +9,7 @@
 #define CUU(x) fmt::format(CSI "{}A", x) // Cursor Up
 
 static void write_slot_text(int slot, const std::string& text) {
-    comm_buffered_write_slot(slot, text.c_str(), text.size());
+    comm_buffered_write(slot, text.c_str(), text.size());
 }
 
 void Menu::writeMenu (int slot) const {

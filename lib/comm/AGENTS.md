@@ -73,10 +73,10 @@ int comm_abstract_remove(int slot);
 void comm_abstract_remove_all(void);
 
 // Flag management
-uint32_t comm_get_flags (comm_abstract_t *comm);
+uint32_t comm_get_flags (int slot);
 
 // Non-blocking (buffered) write path
-void comm_buffered_write (comm_abstract_t *comm, const void *buf, size_t len);
+void comm_buffered_write (int slot, const void *buf, size_t len);
 void comm_flush (async_runtime_t *runtime, int slot);
 void comm_flush_all (async_runtime_t *runtime);
 bool comm_close (async_runtime_t *runtime, int slot);
@@ -110,16 +110,20 @@ All three functions support `COMM_SLOT_CONSOLE` as well as network slots and ret
 - On Windows, sets `ENABLE_VIRTUAL_TERMINAL_PROCESSING`, `ENABLE_PROCESSED_OUTPUT`, and `ENABLE_WRAP_AT_EOL_OUTPUT` on the console stdout so that ANSI escape sequences in outbound data are rendered correctly.
 - Supports `COMM_SLOT_CONSOLE` as well as network slots; returns `true` on success.
 
-### C++ Convenience Writer (`mudmux/comm.h`)
+### Internal Helper Contract Pattern
 
-`chatroom` uses the slot stream-style writer:
+For internal helpers that operate on slot state, prefer stack-scoped `comm_abstract_ptr&` contracts over raw `comm_abstract_t*`:
 
 ```cpp
-auto comm = comm_abstract_get(slot);
-*comm << "Welcome to mudmux!\r\n";
+comm_abstract_ptr comm(slot, comm_slots_mtx);
+if (!comm) return;
+comm_buffered_write_comm(comm, payload, payload_len);
 ```
 
-`operator<<` appends to the per-slot outbound buffer via `comm_buffered_write()`. It does **not** perform immediate blocking socket writes.
+Rules:
+- Acquire the guard at the boundary and pass the same `comm_abstract_ptr&` through helper calls.
+- Keep the guard stack-scoped; do not store it or cross async/thread boundaries with it.
+- Use raw `comm_abstract_t*` only in tightly local leaf code where lock ownership cannot escape.
 
 ## Architecture: Hook Dispatch System
 

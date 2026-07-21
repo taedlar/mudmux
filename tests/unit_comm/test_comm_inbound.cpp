@@ -109,14 +109,14 @@ int thread_pool_stress_hook(void*, int slot, void* data, size_t len) {
 }
 
 int concurrent_comm_api_hook(void*, int slot, void*, size_t) {
-    if (mudmux_comm_api_v1->get_flags_slot(slot) == 0u)
+    if (mudmux_comm_api_v1->get_flags(slot) == 0u)
         return -1;
 
     mudmux_comm_api_v1->set_echo(slot, false);
     mudmux_comm_api_v1->set_char_input(slot);
     mudmux_comm_api_v1->set_line_input(slot, true);
     mudmux_comm_api_v1->enable_prompt(slot, true);
-    mudmux_comm_api_v1->buffered_write_slot(slot, "ok", 2);
+    mudmux_comm_api_v1->buffered_write(slot, "ok", 2);
 
     if (slot == comm_api_blocked_slot) {
         if (comm_api_blocked_slot_entered_ptr)

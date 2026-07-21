@@ -93,10 +93,10 @@ void comm_enable_telnet (int slot);
 size_t comm_telnet_process_inbound (char* dest, char* src, size_t src_len, size_t* src_consumed,
     uint32_t* state, comm_telnet_negotiation_t* negotiation);
 
-void comm_telnet_send_will(comm_abstract_t* comm, int option);
-void comm_telnet_send_wont(comm_abstract_t* comm, int option);
-void comm_telnet_send_do(comm_abstract_t* comm, int option);
-void comm_telnet_send_dont(comm_abstract_t* comm, int option);
-void comm_telnet_send_subnegotiation(comm_abstract_t* comm, int option, const char* data, size_t len);
+void comm_telnet_send_will(comm_abstract_ptr& comm, int option);
+void comm_telnet_send_wont(comm_abstract_ptr& comm, int option);
+void comm_telnet_send_do(comm_abstract_ptr& comm, int option);
+void comm_telnet_send_dont(comm_abstract_ptr& comm, int option);
+void comm_telnet_send_subnegotiation(comm_abstract_ptr& comm, int option, const char* data, size_t len);
 
 #endif // COMM_TELNET_HPP

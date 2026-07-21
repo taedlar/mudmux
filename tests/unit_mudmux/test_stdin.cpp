@@ -89,7 +89,7 @@ static int close_console_with_pending_output_on_quit(void*, int slot, void* data
     std::string message(static_cast<char*>(data), len);
     if (message == "/quit") {
         const char* pending = "pending before close\n";
-        comm_buffered_write_slot(slot, pending, strlen(pending));
+        comm_buffered_write(slot, pending, strlen(pending));
         (void)comm_close(nullptr, slot);
         if (quit_close_done_promise_ptr)
             quit_close_done_promise_ptr->set_value();

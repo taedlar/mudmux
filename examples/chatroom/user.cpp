@@ -13,7 +13,7 @@ std::vector<std::shared_ptr<User>> User::slots; // mapping of comm slots to User
 static void write_slot_text(int slot, const std::string& text) {
     if (slot < 0)
         return;
-    comm_buffered_write_slot(slot, text.c_str(), text.size());
+    comm_buffered_write(slot, text.c_str(), text.size());
 }
 
 void User::logon() {

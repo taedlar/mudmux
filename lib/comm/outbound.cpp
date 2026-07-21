@@ -54,9 +54,7 @@ static void free_outbound_buffer(outbound_buffer_t* buffer) {
     outbound_buffer_pool = buffer;
 }
 
-void comm_buffered_write (comm_abstract_t *comm, const void *buf, size_t len) {
-    std::lock_guard<std::recursive_mutex> lock(comm_slots_mtx);
-
+void comm_buffered_write_comm (comm_abstract_ptr& comm, const void *buf, size_t len) {
     if (!comm || !comm->wbio || !buf || len == 0)
         return; // invalid parameters
     if (len > sizeof(outbound_buffer_t::buffer) * MAX_OUTBOUND_BUFFERS_PER_SLOT) {
@@ -122,11 +120,11 @@ void comm_buffered_write (comm_abstract_t *comm, const void *buf, size_t len) {
     }
 }
 
-void comm_buffered_write_slot (int slot, const void *buf, size_t len) {
+void comm_buffered_write (int slot, const void *buf, size_t len) {
     comm_abstract_ptr comm(slot, comm_slots_mtx);
     if (!comm)
         return;
-    comm_buffered_write(comm.get(), buf, len);
+    comm_buffered_write_comm(comm, buf, len);
 }
 
 void comm_free_outbound_buffers(comm_abstract_ptr& comm) {

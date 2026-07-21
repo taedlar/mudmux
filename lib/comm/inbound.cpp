@@ -229,7 +229,7 @@ static void _process_telnet_options (comm_abstract_ptr& comm, comm_telnet_negoti
         SPDLOG_DEBUG ("client capabilities updated: TELNET LINEMODE enabled for slot {}", comm.slot());
         if (comm->flags & C_LINE_INPUT) {
             char lm_mode_request[3] = { 1, 1, 0 }; // LM_MODE subnegotiation: 1=MODE, 1=EDIT
-            comm_telnet_send_subnegotiation(comm.raw(), TELOPT_LINEMODE, lm_mode_request, sizeof(lm_mode_request));
+            comm_telnet_send_subnegotiation(comm, TELOPT_LINEMODE, lm_mode_request, sizeof(lm_mode_request));
         }
     }
     else if (THEY_WONT(negotiation, TELOPT_LINEMODE)) {
@@ -584,7 +584,7 @@ comm_process_result_t comm_process_input (async_runtime_t* runtime, comm_abstrac
                 break; // no more data in the current buffer, wait for more data
             if ((next_line_start = _find_newline_and_strip(ibb, &line_len)) >= 0) {
                 if (comm->flags & C_ENABLE_TELNET)
-                    comm_buffered_write(comm.get(), "\n", 1); // echo newline for Telnet clients
+                    comm_buffered_write_comm(comm, "\n", 1); // echo newline for Telnet clients
                 // invoke inbound message hook for each complete line
                 const mudmux_dispatch_result_t dispatch_result = static_cast<mudmux_dispatch_result_t>(
                     comm_invoke_inbound_message(runtime, comm, ibb->buffer + ibb->start, line_len));

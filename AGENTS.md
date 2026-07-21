@@ -65,6 +65,14 @@ System deps: **OpenSSL** (required), **Boost.JSON** (optional, via `find_boost`)
 - Logging: `SPDLOG_*` macros. In Debug builds `SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE` is set at compile time.
 - Configuration is YAML, passed as a string to `mudmux_init()`; see `src/mud.conf` for an example.
 
+### Internal Comm Helper Contract
+
+For `lib/comm` internal helper functions that operate on slot state, prefer a stack-scoped `comm_abstract_ptr&` parameter over raw `comm_abstract_t*`.
+
+- Acquire `comm_abstract_ptr comm(slot, comm_slots_mtx);` at the boundary, then pass `comm` down helper calls.
+- Do not store `comm_abstract_ptr` beyond the current stack frame or pass it across async/thread boundaries.
+- Use raw `comm_abstract_t*` only for tightly local leaf code where lock ownership is unambiguous and cannot escape.
+
 ## Hook System
 
 Hooks (`mudmux_hook_type_t`) let the loaded logic layer react to transport events:

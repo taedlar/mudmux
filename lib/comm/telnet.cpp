@@ -18,16 +18,16 @@ void comm_enable_telnet (int slot) {
     SPDLOG_DEBUG ("enabled TELNET for comm slot {}", slot);
 
     // Suppress obsolete Go Ahead (SGA), we are capable of full-duplex
-    comm_telnet_send_will(comm.raw(), TELOPT_SGA);
+    comm_telnet_send_will(comm, TELOPT_SGA);
 
     // We don't want to echo back what the client types (this will be used in password input)
     // Keeping WONT ECHO also enables Kludge line mode fallback for clients that don't support
     // LINEMODE (e.g., old tintin++, PuTTY, Windows Telnet).
-    comm_telnet_send_wont(comm.raw(), TELOPT_ECHO);
+    comm_telnet_send_wont(comm, TELOPT_ECHO);
 
     // Negotiate LINEMODE for clients that support it (RFC 1184). This is the preferred mode
     // for line input, as it allows the client to handle local echo and line editing.
-    comm_telnet_send_do(comm.raw(), TELOPT_LINEMODE);
+    comm_telnet_send_do(comm, TELOPT_LINEMODE);
 }
 
 size_t comm_telnet_process_inbound (char* dest, char* src, size_t src_len, size_t* src_consumed,
@@ -138,46 +138,46 @@ size_t comm_telnet_process_inbound (char* dest, char* src, size_t src_len, size_
     return dest_index;
 }
 
-void comm_telnet_send_will(comm_abstract_t* comm, int option) {
+void comm_telnet_send_will(comm_abstract_ptr& comm, int option) {
     if (!comm || !comm->wbio)
         return;
     unsigned char buf[3] = { 255, 251, static_cast<unsigned char>(option) }; // IAC WILL option
-    comm_buffered_write(comm, reinterpret_cast<char*>(buf), sizeof(buf));
+    comm_buffered_write_comm(comm, reinterpret_cast<char*>(buf), sizeof(buf));
     SPDLOG_DEBUG("sent: we WILL option {}", option);
 }
 
-void comm_telnet_send_wont(comm_abstract_t* comm, int option) {
+void comm_telnet_send_wont(comm_abstract_ptr& comm, int option) {
     if (!comm || !comm->wbio)
         return;
     unsigned char buf[3] = { 255, 252, static_cast<unsigned char>(option) }; // IAC WONT option
-    comm_buffered_write(comm, reinterpret_cast<char*>(buf), sizeof(buf));
+    comm_buffered_write_comm(comm, reinterpret_cast<char*>(buf), sizeof(buf));
     SPDLOG_DEBUG("sent: we WONT option {}", option);
 }
 
-void comm_telnet_send_do(comm_abstract_t* comm, int option) {
+void comm_telnet_send_do(comm_abstract_ptr& comm, int option) {
     if (!comm || !comm->wbio)
         return;
     unsigned char buf[3] = { 255, 253, static_cast<unsigned char>(option) }; // IAC DO option
-    comm_buffered_write(comm, reinterpret_cast<char*>(buf), sizeof(buf));
+    comm_buffered_write_comm(comm, reinterpret_cast<char*>(buf), sizeof(buf));
     SPDLOG_DEBUG("sent: please DO option {}", option);
 }
 
-void comm_telnet_send_dont(comm_abstract_t* comm, int option) {
+void comm_telnet_send_dont(comm_abstract_ptr& comm, int option) {
     if (!comm || !comm->wbio)
         return;
     unsigned char buf[3] = { 255, 254, static_cast<unsigned char>(option) }; // IAC DONT option
-    comm_buffered_write(comm, reinterpret_cast<char*>(buf), sizeof(buf));
+    comm_buffered_write_comm(comm, reinterpret_cast<char*>(buf), sizeof(buf));
     SPDLOG_DEBUG("sent: please DONT option {}", option);
 }
 
-void comm_telnet_send_subnegotiation(comm_abstract_t* comm, int option, const char* data, size_t len) {
+void comm_telnet_send_subnegotiation(comm_abstract_ptr& comm, int option, const char* data, size_t len) {
     if (!comm || !comm->wbio || !data || len == 0)
         return;
     // Send IAC SB option ... IAC SE
     unsigned char iac_sb[3] = { 255, 250, static_cast<unsigned char>(option) }; // IAC SB option
     unsigned char iac_se[2] = { 255, 240 }; // IAC SE
-    comm_buffered_write(comm, reinterpret_cast<char*>(iac_sb), sizeof(iac_sb));
-    comm_buffered_write(comm, data, len);
-    comm_buffered_write(comm, reinterpret_cast<char*>(iac_se), sizeof(iac_se));
+    comm_buffered_write_comm(comm, reinterpret_cast<char*>(iac_sb), sizeof(iac_sb));
+    comm_buffered_write_comm(comm, data, len);
+    comm_buffered_write_comm(comm, reinterpret_cast<char*>(iac_se), sizeof(iac_se));
     SPDLOG_DEBUG("sent: subnegotiation for option {} with {} bytes of data", option, len);
 }

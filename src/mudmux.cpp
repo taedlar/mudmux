@@ -95,20 +95,11 @@ static void init_comm_api (void) {
     comm_api.add_file = +[](const char* fn_in, const char* fn_out, int slot, uint32_t flags) -> int {
         return guarded_call<int>("add_file", -1, comm_abstract_add_file, fn_in, fn_out, slot, flags);
     };
-    comm_api.get_flags_slot = +[](int slot) -> uint32_t {
-        return guarded_call<uint32_t>("get_flags_slot", 0, comm_get_flags_slot, slot);
+    comm_api.get_flags = +[](int slot) -> uint32_t {
+        return guarded_call<uint32_t>("get_flags", 0, comm_get_flags, slot);
     };
-    comm_api.buffered_write_slot = +[](int slot, const void* buf, size_t len) {
-        guarded_call_void("buffered_write_slot", comm_buffered_write_slot, slot, buf, len);
-    };
-    comm_api.get = +[](int slot) -> comm_abstract_t* {
-        return guarded_call<comm_abstract_t*>("get", nullptr, comm_abstract_get, slot);
-    };
-    comm_api.get_flags = +[](comm_abstract_t* comm) -> uint32_t {
-        return guarded_call<uint32_t>("get_flags", 0, comm_get_flags, comm);
-    };
-    comm_api.buffered_write = +[](comm_abstract_t* comm, const void* buf, size_t len) {
-        guarded_call_void("buffered_write", comm_buffered_write, comm, buf, len);
+    comm_api.buffered_write = +[](int slot, const void* buf, size_t len) {
+        guarded_call_void("buffered_write", comm_buffered_write, slot, buf, len);
     };
     comm_api.close = +[](async_runtime_t* runtime, int slot) -> bool {
         return guarded_call<bool>("close", false, comm_close, runtime, slot);

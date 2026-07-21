@@ -14,7 +14,7 @@ The design goal is simple:
 
 ## Current behavior
 
-Today, `comm_buffered_write()` appends plaintext bytes to a per-slot outbound queue.
+Today, `comm_buffered_write(slot, buf, len)` appends plaintext bytes to a per-slot outbound queue.
 `comm_flush()` later drains that queue to the slot's write BIO.
 
 That means the current buffering policy is:

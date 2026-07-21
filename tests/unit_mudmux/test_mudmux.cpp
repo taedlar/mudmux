@@ -23,7 +23,7 @@ static int write_and_close_console_on_quit(void*, int slot, void* data, size_t l
     std::string message(static_cast<char*>(data), len);
     if (message == "/quit") {
         const char* pending = "pending before close\n";
-        comm_buffered_write_slot(slot, pending, strlen(pending));
+        comm_buffered_write(slot, pending, strlen(pending));
         (void)comm_close(nullptr, slot);
     }
     return 0;
