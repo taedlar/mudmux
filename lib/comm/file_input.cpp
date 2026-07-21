@@ -40,9 +40,9 @@ static void file_input_reader_thread (async_runtime_t* runtime, int slot, async_
             }
             else {
                 if (!BIO_should_retry(comm->rbio)) {
-                    // For file/pipe input, a non-retry read with no bytes is terminal input completion.
+                    // For file/pipe input, a non-retry read that reports EOF is terminal input completion.
                     // Treat EOF as graceful completion so main loop can shut down in non-console mode.
-                    if (BIO_eof(comm->rbio) || bytes_read == 0) {
+                    if (BIO_eof(comm->rbio)) {
                         SPDLOG_INFO ("file EOF detected for slot {}", slot);
                         {
                             std::lock_guard<std::mutex> lock(file_input_mutex);

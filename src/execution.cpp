@@ -31,7 +31,6 @@ struct queued_hook_task_t {
         ctx = nullptr;
         msg = -1;
         payload.clear();
-        payload.shrink_to_fit();
     }
 };
 
@@ -134,12 +133,18 @@ bool mudmux_execution_start() {
 }
 
 void mudmux_execution_stop() {
+    // Prevent new enqueue attempts before tearing down the pool/queues.
+    execution_state.running.store(false);
+
     execution_state.worker_pool.stop();
     {
         std::lock_guard<std::mutex> lock(execution_state.slot_queues_mutex);
         execution_state.slot_queues.clear();
     }
-    execution_state.running.store(false);
+    {
+        std::lock_guard<std::mutex> lock(execution_state.pending_telnet_subneg_mutex);
+        execution_state.pending_telnet_subnegs.clear();
+    }
 }
 
 int mudmux_execution_thread_pool_size() {
@@ -204,13 +209,11 @@ mudmux_dispatch_result_t mudmux_execution_enqueue_hook(enum mudmux_hook_type_t h
     if (slot >= 0 && slot < static_cast<int>(execution_state.slot_queues.size())) {
         slot_queue_state_t& slot_state = execution_state.slot_queues[static_cast<std::size_t>(slot)];
         std::lock_guard<std::mutex> slot_lock(slot_state.mutex);
-        if (slot_state.active && slot_state.count == 1) {
-            slot_state.tasks[slot_state.head].clear();
-            slot_state.head = 0;
-            slot_state.tail = 0;
-            slot_state.count = 0;
-            slot_state.active = false;
-        }
+        // Drop queued work and clear active flag to avoid wedging the slot if submit fails (e.g., during shutdown).
+        slot_state.head = 0;
+        slot_state.tail = 0;
+        slot_state.count = 0;
+        slot_state.active = false;
     }
     return MUDMUX_DISPATCH_ERROR;
 }
@@ -271,6 +274,15 @@ mudmux_dispatch_result_t mudmux_execution_enqueue_telnet_subneg(void* ctx, int s
         return MUDMUX_DISPATCH_OK;
     }
 
+    std::lock_guard<std::mutex> state_lock(execution_state.slot_queues_mutex);
+    if (slot >= 0 && slot < static_cast<int>(execution_state.slot_queues.size())) {
+        slot_queue_state_t& slot_state = execution_state.slot_queues[static_cast<std::size_t>(slot)];
+        std::lock_guard<std::mutex> slot_lock(slot_state.mutex);
+        slot_state.head = 0;
+        slot_state.tail = 0;
+        slot_state.count = 0;
+        slot_state.active = false;
+    }
     return MUDMUX_DISPATCH_ERROR;
 }
 
@@ -321,7 +333,6 @@ bool mudmux_execution_should_dispatch_async(enum mudmux_hook_type_t hook_type) {
     case HOOK_DISCONNECT:
     case HOOK_MESSAGE_INBOUND:
     case HOOK_PROMPT:
-    case HOOK_TELNET_SUBNEG:
         return true;
     case HOOK_MESSAGE_OUTBOUND:
     case MAX_HOOK_TYPE:
