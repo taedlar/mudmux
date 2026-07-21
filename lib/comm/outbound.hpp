@@ -6,6 +6,7 @@
 #include "async/async_runtime.h"
 
 extern "C" void comm_buffered_write (comm_abstract_t *comm, const void *buf, size_t len);
+extern "C" void comm_buffered_write_slot (int slot, const void *buf, size_t len);
 
 void comm_free_outbound_buffers(comm_abstract_ptr& comm);
 

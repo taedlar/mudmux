@@ -5,6 +5,7 @@
 #include "mudmux/mudmux.h"
 
 #include <atomic>
+#include <cstdlib>
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -93,6 +94,12 @@ static void init_comm_api (void) {
     };
     comm_api.add_file = +[](const char* fn_in, const char* fn_out, int slot, uint32_t flags) -> int {
         return guarded_call<int>("add_file", -1, comm_abstract_add_file, fn_in, fn_out, slot, flags);
+    };
+    comm_api.get_flags_slot = +[](int slot) -> uint32_t {
+        return guarded_call<uint32_t>("get_flags_slot", 0, comm_get_flags_slot, slot);
+    };
+    comm_api.buffered_write_slot = +[](int slot, const void* buf, size_t len) {
+        guarded_call_void("buffered_write_slot", comm_buffered_write_slot, slot, buf, len);
     };
     comm_api.get = +[](int slot) -> comm_abstract_t* {
         return guarded_call<comm_abstract_t*>("get", nullptr, comm_abstract_get, slot);
@@ -224,6 +231,15 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
     bool success = (runtime != nullptr);
 
     if (success) {
+        if (!mudmux_execution_start()) {
+            SPDLOG_ERROR ("failed to start thread pool with {} workers", mudmux_execution_thread_pool_size());
+            async_runtime_deinit(runtime);
+            is_running.store(false);
+            return EXIT_FAILURE;
+        }
+    }
+
+    if (success) {
         if (enable_console || enable_standard_input) { // console input is enabled, initialize console worker
             success = comm_init_console (runtime);
         }
@@ -251,13 +267,9 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
 
     if (!success) {
         SPDLOG_ERROR ("failed to initialize");
-        async_runtime_deinit(runtime);
-        is_running.store(false);
-        return EXIT_FAILURE;
-    }
-
-    if (!mudmux_execution_start()) {
-        SPDLOG_ERROR ("failed to start thread pool with {} workers", mudmux_execution_thread_pool_size());
+        comm_shutdown_async_file_input();
+        comm_shutdown_console(runtime);
+        mudmux_execution_stop();
         async_runtime_deinit(runtime);
         is_running.store(false);
         return EXIT_FAILURE;
@@ -356,6 +368,7 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
     SPDLOG_INFO ("===== exited event loop =====");
 
     // cleanup communications and teardown subsystems
+    comm_shutdown_async_file_input();
     comm_shutdown_console (runtime);
     mudmux_execution_stop();
     async_runtime_deinit (runtime);

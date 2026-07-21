@@ -3,9 +3,31 @@
 #endif
 
 #include <gtest/gtest.h>
+#include <filesystem>
+#include <fstream>
+#include <future>
 #include <thread>
 
 #include "mudmux/mudmux.h"
+#include "mudmux/comm.h"
+#include "mudmux/hooks.h"
+
+static int close_console_on_quit(void*, int slot, void* data, size_t len) {
+    std::string message(static_cast<char*>(data), len);
+    if (message == "/quit")
+        (void)comm_close(nullptr, slot);
+    return 0;
+}
+
+static int write_and_close_console_on_quit(void*, int slot, void* data, size_t len) {
+    std::string message(static_cast<char*>(data), len);
+    if (message == "/quit") {
+        const char* pending = "pending before close\n";
+        comm_buffered_write_slot(slot, pending, strlen(pending));
+        (void)comm_close(nullptr, slot);
+    }
+    return 0;
+}
 
 TEST(MudmuxTest, BasicInitialization) {
     // Test that the mudmux library initializes correctly
@@ -98,4 +120,117 @@ TEST(MudmuxTest, EventLoopRunWithConsoleEnabled) {
     server_thread.join();
 
     ASSERT_NO_FATAL_FAILURE(mudmux_deinit());
+}
+
+TEST(MudmuxTest, FileInputQuitShutsDownServer) {
+    const auto temp_dir = std::filesystem::temp_directory_path();
+    const auto stamp = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    const auto input_path = temp_dir / ("mudmux-quit-input-" + stamp + ".txt");
+    const auto output_path = temp_dir / ("mudmux-quit-output-" + stamp + ".txt");
+
+    {
+        std::ofstream input_file(input_path);
+        ASSERT_TRUE(input_file.is_open());
+        input_file << "/quit\n";
+    }
+
+    ASSERT_TRUE(mudmux_init(nullptr));
+    ASSERT_TRUE(mudmux_register_hook(HOOK_MESSAGE_INBOUND, close_console_on_quit));
+    ASSERT_GE(comm_abstract_add_file(input_path.string().c_str(), output_path.string().c_str(), COMM_SLOT_CONSOLE, C_LINE_INPUT), 0);
+
+    std::promise<int> run_result_promise;
+    std::future<int> run_result_future = run_result_promise.get_future();
+    std::thread server_thread([&run_result_promise]() {
+        run_result_promise.set_value(mudmux_run(nullptr));
+    });
+
+    const auto status = run_result_future.wait_for(std::chrono::seconds(2));
+    if (status != std::future_status::ready) {
+        mudmux_shutdown();
+        server_thread.join();
+        FAIL() << "mudmux_run did not return after /quit from file input";
+    }
+
+    EXPECT_EQ(run_result_future.get(), EXIT_SUCCESS);
+    server_thread.join();
+
+    ASSERT_NO_FATAL_FAILURE(mudmux_deinit());
+    std::error_code ec;
+    std::filesystem::remove(input_path, ec);
+    std::filesystem::remove(output_path, ec);
+}
+
+TEST(MudmuxTest, FileInputQuitWithBufferedOutputStillShutsDownServer) {
+    const auto temp_dir = std::filesystem::temp_directory_path();
+    const auto stamp = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    const auto input_path = temp_dir / ("mudmux-quit-buffered-input-" + stamp + ".txt");
+    const auto output_path = temp_dir / ("mudmux-quit-buffered-output-" + stamp + ".txt");
+
+    {
+        std::ofstream input_file(input_path);
+        ASSERT_TRUE(input_file.is_open());
+        input_file << "/quit\n";
+    }
+
+    ASSERT_TRUE(mudmux_init(nullptr));
+    ASSERT_TRUE(mudmux_register_hook(HOOK_MESSAGE_INBOUND, write_and_close_console_on_quit));
+    ASSERT_GE(comm_abstract_add_file(input_path.string().c_str(), output_path.string().c_str(), COMM_SLOT_CONSOLE, C_LINE_INPUT), 0);
+
+    std::promise<int> run_result_promise;
+    std::future<int> run_result_future = run_result_promise.get_future();
+    std::thread server_thread([&run_result_promise]() {
+        run_result_promise.set_value(mudmux_run(nullptr));
+    });
+
+    const auto status = run_result_future.wait_for(std::chrono::seconds(2));
+    if (status != std::future_status::ready) {
+        mudmux_shutdown();
+        server_thread.join();
+        FAIL() << "mudmux_run did not return after /quit with buffered output from file input";
+    }
+
+    EXPECT_EQ(run_result_future.get(), EXIT_SUCCESS);
+    server_thread.join();
+
+    ASSERT_NO_FATAL_FAILURE(mudmux_deinit());
+    std::error_code ec;
+    std::filesystem::remove(input_path, ec);
+    std::filesystem::remove(output_path, ec);
+}
+
+TEST(MudmuxTest, FileInputEofShutsDownServerWithoutExplicitClose) {
+    const auto temp_dir = std::filesystem::temp_directory_path();
+    const auto stamp = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    const auto input_path = temp_dir / ("mudmux-eof-input-" + stamp + ".txt");
+    const auto output_path = temp_dir / ("mudmux-eof-output-" + stamp + ".txt");
+
+    {
+        std::ofstream input_file(input_path);
+        ASSERT_TRUE(input_file.is_open());
+        input_file << "hello\n";
+    }
+
+    ASSERT_TRUE(mudmux_init(nullptr));
+    ASSERT_GE(comm_abstract_add_file(input_path.string().c_str(), output_path.string().c_str(), COMM_SLOT_CONSOLE, C_LINE_INPUT), 0);
+
+    std::promise<int> run_result_promise;
+    std::future<int> run_result_future = run_result_promise.get_future();
+    std::thread server_thread([&run_result_promise]() {
+        run_result_promise.set_value(mudmux_run(nullptr));
+    });
+
+    const auto status = run_result_future.wait_for(std::chrono::seconds(2));
+    if (status != std::future_status::ready) {
+        mudmux_shutdown();
+        server_thread.join();
+        FAIL() << "mudmux_run did not return on file input EOF";
+    }
+
+    EXPECT_EQ(run_result_future.get(), EXIT_SUCCESS);
+    server_thread.join();
+
+    ASSERT_NO_FATAL_FAILURE(mudmux_deinit());
+    std::error_code ec;
+    std::filesystem::remove(input_path, ec);
+    std::filesystem::remove(output_path, ec);
 }

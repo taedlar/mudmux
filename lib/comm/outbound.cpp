@@ -9,10 +9,12 @@
 #include <openssl/err.h>
 
 #include "console.hpp"
+#include "file_input.hpp"
 #include "hooks.hpp"
 #include "ssl.hpp"
 #include "mudmux/comm.h"
 #include "mudmux/hooks.h"
+#include "mudmux/mudmux.h"
 
 struct outbound_buffer_s {
     outbound_buffer_t* next{nullptr};
@@ -118,6 +120,13 @@ void comm_buffered_write (comm_abstract_t *comm, const void *buf, size_t len) {
             }
         }
     }
+}
+
+void comm_buffered_write_slot (int slot, const void *buf, size_t len) {
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
+    if (!comm)
+        return;
+    comm_buffered_write(comm.get(), buf, len);
 }
 
 void comm_free_outbound_buffers(comm_abstract_ptr& comm) {
@@ -254,6 +263,27 @@ bool comm_close (async_runtime_t* runtime, int slot) {
         comm_invoke_disconnect(runtime, slot);
     }
 
+    if (slot == COMM_SLOT_CONSOLE) {
+        // Console slots are lifecycle-driven by console/file-input workers rather than
+        // transport writable events. Do not block close on buffered-write deferral.
+        comm_free_outbound_buffers(comm);
+        comm->flags &= ~C_BUFFERED_WRITE;
+
+        if (comm_has_file_inputs()) {
+            // Async file-input mode: close slot immediately and terminate server.
+            SPDLOG_DEBUG("comm slot {} is async file input console, closing and shutting down", slot);
+            comm_abstract_remove(slot);
+            mudmux_shutdown();
+            return true;
+        }
+
+        // Standard/interactive console mode: signal worker EOF and let
+        // comm_process_console_input perform final disconnect + shutdown decision.
+        comm_signal_console_eof(runtime);
+        SPDLOG_DEBUG("comm slot {} is console, signaling EOF to console worker", slot);
+        return false;
+    }
+
     if (comm->flags & C_BUFFERED_WRITE) {
         // If TLS is not established yet, buffered plaintext cannot be flushed safely.
         // Drop pending data and close immediately to avoid close/flush deadlock.
@@ -282,12 +312,6 @@ bool comm_close (async_runtime_t* runtime, int slot) {
         async_runtime_remove (runtime, fd);
     if (comm->wbio && comm_bio_get_socket_fd(comm->wbio, &fd))
         async_runtime_remove (runtime, fd);
-
-    if (slot == COMM_SLOT_CONSOLE) {
-        comm_signal_console_eof(runtime); // let console_process_console_input() handle the disconnect
-        SPDLOG_DEBUG("comm slot {} is console, signaling EOF to console worker", slot);
-        return false;
-    }
 
     comm_abstract_remove(slot);
     return true;

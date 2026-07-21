@@ -45,6 +45,9 @@ typedef struct mudmux_comm_api_s {
     int (*add_bio)(void *rbio, void *wbio, int slot, uint32_t flags);
 #endif
     int (*add_file)(const char *fn_in, const char* fn_out, int slot, uint32_t flags);
+    uint32_t (*get_flags_slot)(int slot);
+    void (*buffered_write_slot)(int slot, const void *buf, size_t len);
+    /* deprecated: pointer-returning/accepting API kept for compatibility */
     comm_abstract_t* (*get)(int slot);
     uint32_t (*get_flags)(comm_abstract_t *comm);
     void (*buffered_write)(comm_abstract_t *comm, const void *buf, size_t len);
@@ -65,6 +68,9 @@ typedef struct mudmux_comm_api_s {
 #define comm_max_slot                   mudmux_comm_api_v1->max_slot
 #define comm_abstract_add_bio           mudmux_comm_api_v1->add_bio
 #define comm_abstract_add_file          mudmux_comm_api_v1->add_file
+#define comm_get_flags_slot             mudmux_comm_api_v1->get_flags_slot
+#define comm_buffered_write_slot        mudmux_comm_api_v1->buffered_write_slot
+/* deprecated compatibility macros */
 #define comm_abstract_get               mudmux_comm_api_v1->get
 #define comm_get_flags                  mudmux_comm_api_v1->get_flags
 #define comm_buffered_write             mudmux_comm_api_v1->buffered_write

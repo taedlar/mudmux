@@ -24,8 +24,8 @@ public:
         return selected_index;
     }
 
-    void writeMenu (comm_abstract_t* comm) const;
-    void receiveCharInput (comm_abstract_t* comm, const std::string& message);
+    void writeMenu (int slot) const;
+    void receiveCharInput (int slot, const std::string& message);
 };
 
 #endif  // CHATROOM_MENU_HPP

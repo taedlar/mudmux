@@ -34,6 +34,8 @@ using namespace testing;
 
 static std::atomic_bool stdin_hook_called{false};
 static std::promise<std::thread::id>* prompt_thread_promise_ptr{nullptr};
+static std::promise<void>* connect_hook_promise_ptr{nullptr};
+static std::promise<void>* quit_close_done_promise_ptr{nullptr};
 static std::promise<void>* backpressure_first_entered_ptr{nullptr};
 static std::shared_future<void>* backpressure_release_ptr{nullptr};
 static std::promise<void>* backpressure_done_ptr{nullptr};
@@ -49,6 +51,13 @@ static int enable_prompt_on_inbound(void*, int slot, void*, size_t) {
 static int capture_prompt_thread_and_shutdown(void*, int, void*, size_t) {
     if (prompt_thread_promise_ptr)
         prompt_thread_promise_ptr->set_value(std::this_thread::get_id());
+    mudmux_shutdown();
+    return 0;
+}
+
+static int capture_connect_and_shutdown(void*, int slot, void*, size_t) {
+    if (slot == COMM_SLOT_CONSOLE && connect_hook_promise_ptr)
+        connect_hook_promise_ptr->set_value();
     mudmux_shutdown();
     return 0;
 }
@@ -72,6 +81,18 @@ static int block_first_inbound_then_shutdown_on_last(void*, int, void* data, siz
         if (backpressure_done_ptr)
             backpressure_done_ptr->set_value();
         mudmux_shutdown();
+    }
+    return 0;
+}
+
+static int close_console_with_pending_output_on_quit(void*, int slot, void* data, size_t len) {
+    std::string message(static_cast<char*>(data), len);
+    if (message == "/quit") {
+        const char* pending = "pending before close\n";
+        comm_buffered_write_slot(slot, pending, strlen(pending));
+        (void)comm_close(nullptr, slot);
+        if (quit_close_done_promise_ptr)
+            quit_close_done_promise_ptr->set_value();
     }
     return 0;
 }
@@ -320,4 +341,120 @@ TEST(MudmuxStdinThreadPoolTest, InboundQueueFullDefersAndResumesInFifoOrder) {
     backpressure_done_ptr = nullptr;
     backpressure_messages_ptr = nullptr;
     ASSERT_NO_FATAL_FAILURE(mudmux_deinit());
+}
+
+TEST(MudmuxStdinThreadPoolTest, ConnectHookFiresForConsoleInRelaxedMode) {
+#ifndef _WIN32
+    signal(SIGPIPE, SIG_IGN);
+#endif
+    ASSERT_TRUE(mudmux_init("{\"transport\": {\"thread_pool\": {\"size\": 2}}}"));
+    mudmux_enable_standard_input(true);
+
+#ifdef _WIN32
+    int pipefd[2] = {-1, -1};
+    int saved_stdin = _dup(_fileno(stdin));
+    HANDLE saved_stdin_handle = GetStdHandle(STD_INPUT_HANDLE);
+    ASSERT_NE(saved_stdin, -1);
+    ASSERT_EQ(_pipe(pipefd, 4096, _O_BINARY), 0);
+    ASSERT_NE(_dup2(pipefd[0], _fileno(stdin)), -1);
+    intptr_t pipe_read_handle = _get_osfhandle(pipefd[0]);
+    ASSERT_NE(pipe_read_handle, static_cast<intptr_t>(-1));
+    ASSERT_TRUE(SetStdHandle(STD_INPUT_HANDLE, reinterpret_cast<HANDLE>(pipe_read_handle)));
+#else
+    int pipefd[2] = {-1, -1};
+    int saved_stdin = dup(STDIN_FILENO);
+    ASSERT_NE(saved_stdin, -1);
+    ASSERT_EQ(pipe(pipefd), 0);
+    ASSERT_NE(dup2(pipefd[0], STDIN_FILENO), -1);
+    close(pipefd[0]);
+#endif
+
+    std::promise<void> connect_hook_promise;
+    std::future<void> connect_hook_future = connect_hook_promise.get_future();
+    connect_hook_promise_ptr = &connect_hook_promise;
+
+    ASSERT_TRUE(mudmux_register_hook(HOOK_CONNECT, capture_connect_and_shutdown));
+
+    std::thread server_thread([]() {
+        EXPECT_EQ(mudmux_run(nullptr), EXIT_SUCCESS);
+    });
+
+    ASSERT_EQ(connect_hook_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+
+    server_thread.join();
+
+#ifdef _WIN32
+    ASSERT_TRUE(SetStdHandle(STD_INPUT_HANDLE, saved_stdin_handle));
+    ASSERT_NE(_dup2(saved_stdin, _fileno(stdin)), -1);
+    _close(saved_stdin);
+    _close(pipefd[0]);
+#else
+    ASSERT_NE(dup2(saved_stdin, STDIN_FILENO), -1);
+    close(saved_stdin);
+#endif
+
+    connect_hook_promise_ptr = nullptr;
+    ASSERT_NO_FATAL_FAILURE(mudmux_deinit());
+}
+
+TEST_F(MudmuxStdinTest, QuitWithPendingOutputShutsDownInStandardInputMode) {
+#ifndef _WIN32
+    signal(SIGPIPE, SIG_IGN);
+#endif
+    mudmux_enable_standard_input(true);
+
+#ifdef _WIN32
+    int pipefd[2] = {-1, -1};
+    int saved_stdin = _dup(_fileno(stdin));
+    HANDLE saved_stdin_handle = GetStdHandle(STD_INPUT_HANDLE);
+    ASSERT_NE(saved_stdin, -1);
+    ASSERT_EQ(_pipe(pipefd, 4096, _O_BINARY), 0);
+    ASSERT_NE(_dup2(pipefd[0], _fileno(stdin)), -1);
+    intptr_t pipe_read_handle = _get_osfhandle(pipefd[0]);
+    ASSERT_NE(pipe_read_handle, static_cast<intptr_t>(-1));
+    ASSERT_TRUE(SetStdHandle(STD_INPUT_HANDLE, reinterpret_cast<HANDLE>(pipe_read_handle)));
+#else
+    int pipefd[2] = {-1, -1};
+    int saved_stdin = dup(STDIN_FILENO);
+    ASSERT_NE(saved_stdin, -1);
+    ASSERT_EQ(pipe(pipefd), 0);
+    ASSERT_NE(dup2(pipefd[0], STDIN_FILENO), -1);
+    close(pipefd[0]);
+#endif
+
+    std::promise<void> quit_close_done_promise;
+    std::future<void> quit_close_done_future = quit_close_done_promise.get_future();
+    quit_close_done_promise_ptr = &quit_close_done_promise;
+
+    ASSERT_TRUE(mudmux_register_hook(HOOK_MESSAGE_INBOUND, close_console_with_pending_output_on_quit));
+
+    std::thread server_thread([]() {
+        EXPECT_EQ(mudmux_run(nullptr), EXIT_SUCCESS);
+    });
+
+    const char* quit_input = "/quit\n";
+#ifdef _WIN32
+    const auto quit_input_len = static_cast<unsigned int>(strlen(quit_input));
+    ASSERT_EQ(_write(pipefd[1], quit_input, quit_input_len), static_cast<int>(quit_input_len));
+    _close(pipefd[1]);
+#else
+    ASSERT_EQ(write(pipefd[1], quit_input, strlen(quit_input)), static_cast<ssize_t>(strlen(quit_input)));
+    close(pipefd[1]);
+#endif
+
+    ASSERT_EQ(quit_close_done_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+
+    server_thread.join();
+
+#ifdef _WIN32
+    ASSERT_TRUE(SetStdHandle(STD_INPUT_HANDLE, saved_stdin_handle));
+    ASSERT_NE(_dup2(saved_stdin, _fileno(stdin)), -1);
+    _close(saved_stdin);
+    _close(pipefd[0]);
+#else
+    ASSERT_NE(dup2(saved_stdin, STDIN_FILENO), -1);
+    close(saved_stdin);
+#endif
+
+    quit_close_done_promise_ptr = nullptr;
 }

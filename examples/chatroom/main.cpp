@@ -24,22 +24,19 @@ static void sigint_handler (int signal);
 static void process_command_line (int argc, char* argv[]);
 
 static int on_connect (void*, int slot, void* data, size_t len) {
-    auto comm = comm_abstract_get(slot);
     std::string entry_name{static_cast<const char*>(data), len};
     SPDLOG_INFO ("New connection on slot {} from entry '{}'", slot, entry_name);
-    if (comm) {
-        while (slot >= static_cast<int>(User::slots.size()))
-            User::slots.resize(slot + 32);
-        User::slots[slot] = std::make_shared<User>(slot);
-        if (entry_name != "-") {
-            comm_enable_telnet (slot); // enable TELNET for non-console connections
-            comm_enable_tls (slot); // enable TLS for secure connections
-        }
-        comm_enable_virtual_terminal (slot); // enable ANSI/VT100 processing for console and TELNET connections
-        comm_enable_prompt (slot, true); // enable prompt for console user
-        comm_set_line_input (slot, true); // enable line input mode for console user
-        User::slots[slot]->logon(); // prompt for username
+    while (slot >= static_cast<int>(User::slots.size()))
+        User::slots.resize(slot + 32);
+    User::slots[slot] = std::make_shared<User>(slot);
+    if (entry_name != "-") {
+        comm_enable_telnet (slot); // enable TELNET for non-console connections
+        comm_enable_tls (slot); // enable TLS for secure connections
     }
+    comm_enable_virtual_terminal (slot); // enable ANSI/VT100 processing for console and TELNET connections
+    comm_enable_prompt (slot, true); // enable prompt for console user
+    comm_set_line_input (slot, true); // enable line input mode for console user
+    User::slots[slot]->logon(); // prompt for username
     return 0;
 }
 

@@ -77,6 +77,14 @@ std::atomic<int> thread_pool_other_slots_completed{0};
 int thread_pool_other_slots_expected{0};
 int thread_pool_first_slot_count{0};
 
+std::promise<void>* comm_api_blocked_slot_entered_ptr{nullptr};
+std::promise<void>* comm_api_blocked_slot_finished_ptr{nullptr};
+std::promise<void>* comm_api_other_slots_done_ptr{nullptr};
+std::shared_future<void>* comm_api_blocked_slot_release_ptr{nullptr};
+std::atomic<int> comm_api_other_slots_completed{0};
+int comm_api_other_slots_expected{0};
+int comm_api_blocked_slot{-1};
+
 int thread_pool_stress_hook(void*, int slot, void* data, size_t len) {
     (void)data;
     (void)len;
@@ -97,6 +105,32 @@ int thread_pool_stress_hook(void*, int slot, void* data, size_t len) {
     const int completed = thread_pool_other_slots_completed.fetch_add(1) + 1;
     if (completed == thread_pool_other_slots_expected && thread_pool_other_slots_done_ptr)
         thread_pool_other_slots_done_ptr->set_value();
+    return 0;
+}
+
+int concurrent_comm_api_hook(void*, int slot, void*, size_t) {
+    if (mudmux_comm_api_v1->get_flags_slot(slot) == 0u)
+        return -1;
+
+    mudmux_comm_api_v1->set_echo(slot, false);
+    mudmux_comm_api_v1->set_char_input(slot);
+    mudmux_comm_api_v1->set_line_input(slot, true);
+    mudmux_comm_api_v1->enable_prompt(slot, true);
+    mudmux_comm_api_v1->buffered_write_slot(slot, "ok", 2);
+
+    if (slot == comm_api_blocked_slot) {
+        if (comm_api_blocked_slot_entered_ptr)
+            comm_api_blocked_slot_entered_ptr->set_value();
+        if (comm_api_blocked_slot_release_ptr)
+            comm_api_blocked_slot_release_ptr->wait();
+        if (comm_api_blocked_slot_finished_ptr)
+            comm_api_blocked_slot_finished_ptr->set_value();
+        return 0;
+    }
+
+    const int completed = comm_api_other_slots_completed.fetch_add(1) + 1;
+    if (completed == comm_api_other_slots_expected && comm_api_other_slots_done_ptr)
+        comm_api_other_slots_done_ptr->set_value();
     return 0;
 }
 
@@ -332,6 +366,61 @@ TEST_F(CommInboundTest, ThreadPoolKeepsPerSlotOrderWhileOtherSlotsAdvance) {
     thread_pool_other_slots_done_ptr = nullptr;
     thread_pool_first_slot_release_future_ptr = nullptr;
     thread_pool_first_slot_finished_ptr = nullptr;
+    mudmux_execution_stop();
+    mudmux_deinit();
+}
+
+TEST_F(CommInboundTest, RelaxedModeCommApiCallsFromConcurrentHooksDoNotDeadlock) {
+    mudmux_deinit();
+    ASSERT_TRUE(mudmux_init("{\"transport\": {\"thread_pool\": {\"size\": 4}}}"));
+
+    std::vector<int> slots;
+    slots.reserve(6);
+    for (int index = 0; index < 6; ++index) {
+        const int slot = add_memory_comm(C_LINE_INPUT);
+        ASSERT_NE(slot, -1);
+        slots.push_back(slot);
+    }
+    comm_api_blocked_slot = slots.front();
+
+    std::promise<void> blocked_slot_entered_promise;
+    std::future<void> blocked_slot_entered_future = blocked_slot_entered_promise.get_future();
+    std::promise<void> blocked_slot_release_promise;
+    std::shared_future<void> blocked_slot_release_future = blocked_slot_release_promise.get_future().share();
+    std::promise<void> blocked_slot_finished_promise;
+    std::future<void> blocked_slot_finished_future = blocked_slot_finished_promise.get_future();
+    std::promise<void> other_slots_done_promise;
+    std::future<void> other_slots_done_future = other_slots_done_promise.get_future();
+
+    comm_api_blocked_slot_entered_ptr = &blocked_slot_entered_promise;
+    comm_api_blocked_slot_release_ptr = &blocked_slot_release_future;
+    comm_api_blocked_slot_finished_ptr = &blocked_slot_finished_promise;
+    comm_api_other_slots_done_ptr = &other_slots_done_promise;
+    comm_api_other_slots_completed.store(0);
+    comm_api_other_slots_expected = static_cast<int>(slots.size()) - 1;
+
+    ASSERT_TRUE(mudmux_execution_start());
+    ASSERT_TRUE(mudmux_register_hook(HOOK_MESSAGE_INBOUND, concurrent_comm_api_hook));
+
+    const char payload[] = "phase6";
+    ASSERT_EQ(mudmux_execution_enqueue_hook(HOOK_MESSAGE_INBOUND, this, comm_api_blocked_slot, payload, strlen(payload)), MUDMUX_DISPATCH_OK);
+    ASSERT_EQ(blocked_slot_entered_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+
+    for (std::size_t index = 1; index < slots.size(); ++index) {
+        ASSERT_EQ(mudmux_execution_enqueue_hook(HOOK_MESSAGE_INBOUND, this, slots[index], payload, strlen(payload)), MUDMUX_DISPATCH_OK);
+    }
+
+    ASSERT_EQ(other_slots_done_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    blocked_slot_release_promise.set_value();
+    ASSERT_EQ(blocked_slot_finished_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+
+    comm_api_blocked_slot_entered_ptr = nullptr;
+    comm_api_blocked_slot_release_ptr = nullptr;
+    comm_api_blocked_slot_finished_ptr = nullptr;
+    comm_api_other_slots_done_ptr = nullptr;
+    comm_api_other_slots_expected = 0;
+    comm_api_blocked_slot = -1;
+
     mudmux_execution_stop();
     mudmux_deinit();
 }
