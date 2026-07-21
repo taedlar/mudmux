@@ -37,8 +37,8 @@ public:
         return state;
     }
 
-    inline comm_abstract_t* getComm() const {
-        return comm_abstract_get(comm_slot);
+    inline int getCommSlot() const {
+        return comm_slot;
     }
 
     void closeComm() {
@@ -46,14 +46,12 @@ public:
     }
 
     void setCharInput () {
-        comm_abstract_t* comm = getComm();
-        if (comm)
+        if (comm_slot >= 0)
             comm_set_char_input (comm_slot);
     }
 
     void setLineInput (bool echo = true) {
-        comm_abstract_t* comm = getComm();
-        if (comm)
+        if (comm_slot >= 0)
             comm_set_line_input (comm_slot, echo);
     }
 
@@ -78,7 +76,7 @@ public:
     // prompt handlers
     void promptCurrentMenu() {
         if (menu) {
-            menu->writeMenu(getComm());
+            menu->writeMenu(comm_slot);
         }
     }
 };

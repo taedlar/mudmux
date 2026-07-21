@@ -5,6 +5,7 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <atomic>
 #include <future>
 #include <thread>
 
@@ -14,6 +15,7 @@
 
 #include "async/async_event.h"
 #include "async/async_queue.h"
+#include "async/thread_pool.hpp"
 
 namespace {
 
@@ -93,6 +95,31 @@ TEST(AsyncQueueTest, BlockingWriterResumesAfterDequeue) {
 
     writer.join();
     async_queue_destroy(queue);
+}
+
+TEST(AsyncThreadPoolTest, SubmittedTasksExecute) {
+    async_thread_pool_t pool;
+    std::atomic<int> completed{0};
+    std::promise<void> finished;
+    std::future<void> finished_future = finished.get_future();
+
+    ASSERT_TRUE(pool.start(2));
+    ASSERT_EQ(pool.size(), 2u);
+
+    ASSERT_TRUE(pool.submit([&completed] {
+        ++completed;
+    }));
+    ASSERT_TRUE(pool.submit([&completed, &finished] {
+        if (++completed == 2)
+            finished.set_value();
+    }));
+
+    EXPECT_EQ(finished_future.wait_for(std::chrono::milliseconds(500)), std::future_status::ready);
+    EXPECT_EQ(completed.load(), 2);
+
+    pool.stop();
+    EXPECT_EQ(pool.size(), 0u);
+    EXPECT_FALSE(pool.submit([] {}));
 }
 
 } // namespace

@@ -11,6 +11,7 @@ target_sources(async INTERFACE
         async_queue.h
         async_runtime.h
         console_worker.h
+    thread_pool.hpp
 )
 target_compile_definitions(async PRIVATE mudmux_EXPORTS)
 
@@ -18,6 +19,7 @@ target_sources(async PRIVATE
     async_event.cpp
     async_queue.cpp
     console_worker.cpp
+    thread_pool.cpp
 )
 
 if (WIN32)

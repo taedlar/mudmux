@@ -8,22 +8,26 @@
 #define CLR CSI "J"         /* (ED n=2) Clear from cursor to end of screen */
 #define CUU(x) fmt::format(CSI "{}A", x) // Cursor Up
 
-void Menu::writeMenu (comm_abstract_t* comm) const {
-    if (!comm)
-        return;
-    *comm << CLR << "\n\r"; // clear from cursor to end of screen
-    for (size_t i = 0; i < options.size(); ++i) {
-        if (static_cast<int>(i) == cursor_position) {
-            *comm << "> " << options[i] << "\n\r"; // highlight the selected option
-        } else {
-            *comm << "  " << options[i] << "\n\r";
-        }
-    }
-    *comm << CUU(options.size() + 1) << "\r"; // move cursor up to the prompt line
-    *comm << title; // display the menu title and let cursor stay at the end of title for user input
+static void write_slot_text(int slot, const std::string& text) {
+    comm_buffered_write(slot, text.c_str(), text.size());
 }
 
-void Menu::receiveCharInput (comm_abstract_t* comm, const std::string& message) {
+void Menu::writeMenu (int slot) const {
+    if (slot < 0)
+        return;
+    write_slot_text(slot, std::string(CLR) + "\n\r"); // clear from cursor to end of screen
+    for (size_t i = 0; i < options.size(); ++i) {
+        if (static_cast<int>(i) == cursor_position) {
+            write_slot_text(slot, "> " + options[i] + "\n\r"); // highlight the selected option
+        } else {
+            write_slot_text(slot, "  " + options[i] + "\n\r");
+        }
+    }
+    write_slot_text(slot, CUU(options.size() + 1) + "\r"); // move cursor up to the prompt line
+    write_slot_text(slot, title); // display the menu title and let cursor stay at the end of title for user input
+}
+
+void Menu::receiveCharInput (int slot, const std::string& message) {
     if (message == "\x1B[A") { // Up arrow
         SPDLOG_DEBUG("Up arrow pressed, cursor_position: {}", cursor_position);
         if (cursor_position > 0) {
@@ -38,6 +42,6 @@ void Menu::receiveCharInput (comm_abstract_t* comm, const std::string& message) 
         SPDLOG_DEBUG("Option selected, cursor_position: {}", cursor_position);
         // Option selected, handle it as needed
         selected_index = cursor_position;
-        *comm << "\r\x1B[J"; // clear the line and move cursor to the beginning
+        write_slot_text(slot, "\r\x1B[J"); // clear the line and move cursor to the beginning
     }
 }

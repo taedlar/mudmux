@@ -7,19 +7,23 @@
 
 std::map<std::string, Command::CommandHandler> Command::command_map; // mapping of command verb to handler function
 
+static void write_slot_text(int slot, const std::string& text) {
+    if (slot < 0)
+        return;
+    comm_buffered_write(slot, text.c_str(), text.size());
+}
+
 static void command_quit (std::shared_ptr<User> user, const std::string& args);
 
 void Command::initialize() {
     // Register commands here
     register_command("help", [](std::shared_ptr<User> user, const std::string& args) {
         (void)args; // suppress unused parameter warning
-        auto comm = user->getComm();
-        if (comm) {
-            *comm << "Available commands:\n\r";
-            *comm << "/help - Show this help message\n\r";
-            *comm << "/quit - Disconnect from the chatroom\n\r";
-            *comm << "/exit - Disconnect from the chatroom\n\r";
-        }
+        const int slot = user->getCommSlot();
+        write_slot_text(slot, "Available commands:\n\r");
+        write_slot_text(slot, "/help - Show this help message\n\r");
+        write_slot_text(slot, "/quit - Disconnect from the chatroom\n\r");
+        write_slot_text(slot, "/exit - Disconnect from the chatroom\n\r");
     });
 
     register_command("quit", &command_quit);

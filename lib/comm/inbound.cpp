@@ -7,11 +7,14 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstring>
 #include <wchar.h>
 #include <openssl/bio.h>
 
 #include "abstract.hpp"
+#include "execution.hpp"
+#include "hooks.hpp"
 #include "ssl.hpp"
 #include "telnet.hpp"
 #include "mudmux/comm.h"
@@ -23,6 +26,9 @@ typedef SSIZE_T ssize_t;
 
 #define INBOUND_BAND_DATA       0
 #define INBOUND_BAND_SUBNEG     1
+
+static constexpr uint32_t C_DEFERRED_INBOUND = 0x00004000;
+static std::atomic<bool> has_deferred_input{false};
 
 struct inbound_buffer_s {
     inbound_buffer_t* next{nullptr};
@@ -85,16 +91,81 @@ void comm_invoke_prompt (async_runtime_t* runtime) {
         if (comm->flags & C_BUFFERED_WRITE)
             continue; // skip comms with pending buffered write
         if ((comm->flags & C_ENABLE_PROMPT) && !(comm->flags & C_INVOKED_PROMPT)) {
-            mudmux_invoke_hook (
+            const mudmux_dispatch_result_t dispatch_result = mudmux_dispatch_hook (
                 HOOK_PROMPT,
                 async_runtime_get_context(runtime),
                 slot,
                 nullptr,
                 0
             );
-            comm->flags |= C_INVOKED_PROMPT;
+            if (dispatch_result != MUDMUX_DISPATCH_QUEUE_FULL)
+                comm->flags |= C_INVOKED_PROMPT;
         }
     }
+}
+
+bool comm_has_deferred_input (void) {
+    return has_deferred_input.load(std::memory_order_acquire);
+}
+
+static mudmux_dispatch_result_t _dispatch_telnet_subnegotiation(async_runtime_t* runtime, comm_abstract_ptr& comm, const comm_telnet_negotiation_t& telnet_neg) {
+    if (telnet_neg.sb_len == 0)
+        return MUDMUX_DISPATCH_OK;
+
+    const int option = static_cast<unsigned char>(telnet_neg.subopt_buf[0]);
+    const char* payload = telnet_neg.sb_len > 1 ? telnet_neg.subopt_buf + 1 : nullptr;
+    const size_t payload_len = telnet_neg.sb_len > 1 ? telnet_neg.sb_len - 1 : 0;
+
+    if (mudmux_execution_mode() == MUDMUX_DETERMINISM_RELAXED) {
+        const mudmux_dispatch_result_t dispatch_result = mudmux_execution_enqueue_telnet_subneg(
+            async_runtime_get_context(runtime),
+            comm.slot(),
+            option,
+            payload,
+            payload_len);
+        if (dispatch_result == MUDMUX_DISPATCH_QUEUE_FULL) {
+            comm->flags |= C_DEFERRED_INBOUND;
+            has_deferred_input.store(true, std::memory_order_release);
+        }
+        return dispatch_result;
+    }
+
+    return static_cast<mudmux_dispatch_result_t>(mudmux_invoke_hook(
+        HOOK_TELNET_SUBNEG,
+        async_runtime_get_context(runtime),
+        option,
+        const_cast<char*>(payload),
+        payload_len) < 0 ? MUDMUX_DISPATCH_ERROR : MUDMUX_DISPATCH_OK);
+}
+
+void comm_resume_deferred_input (async_runtime_t* runtime) {
+    if (!runtime)
+        return;
+
+    bool any_deferred = false;
+    for (int max_slot = comm_max_slot(), slot = 0; slot < max_slot; ++slot) {
+        comm_abstract_ptr comm(slot, comm_slots_mtx);
+        if (!comm || !(comm->flags & C_DEFERRED_INBOUND))
+            continue;
+
+        if (mudmux_execution_has_pending_telnet_subneg(slot)) {
+            if (!mudmux_execution_retry_pending_telnet_subneg(slot)) {
+                any_deferred = true;
+                continue;
+            }
+        }
+
+        comm->flags &= ~C_DEFERRED_INBOUND;
+        const comm_process_result_t process_result = comm_process_input(runtime, comm);
+        if (process_result == COMM_PROCESS_CLOSED || process_result == COMM_PROCESS_ERROR) {
+            (void) comm_close(runtime, slot);
+            continue;
+        }
+        if (comm && (comm->flags & C_DEFERRED_INBOUND))
+            any_deferred = true;
+    }
+
+    has_deferred_input.store(any_deferred, std::memory_order_release);
 }
 
 int comm_invoke_connect (async_runtime_t* runtime, int slot, int entry_slot) {
@@ -109,7 +180,7 @@ int comm_invoke_connect (async_runtime_t* runtime, int slot, int entry_slot) {
     if (!entry_name)
         entry_name = "unknown";
     assert(entry_name != nullptr);
-    return mudmux_invoke_hook (
+    return mudmux_dispatch_hook (
         HOOK_CONNECT,
         async_runtime_get_context(runtime),
         slot,
@@ -125,13 +196,13 @@ int comm_invoke_inbound_message (async_runtime_t* runtime, comm_abstract_ptr& co
 
     comm->flags &= ~C_INVOKED_PROMPT; // reset C_INVOKED_PROMPT flag on inbound message
     SPDLOG_DEBUG ("invoking inbound message hook for slot {} with {} bytes of data", comm.slot(), size);
-    return mudmux_invoke_hook (
+    return static_cast<int>(mudmux_dispatch_hook (
         HOOK_MESSAGE_INBOUND,
         async_runtime_get_context(runtime),
         comm.slot(),
         const_cast<void*>(data),
         size
-    );
+    ));
 }
 
 void comm_free_inbound_buffers(comm_abstract_ptr& comm) {
@@ -158,7 +229,7 @@ static void _process_telnet_options (comm_abstract_ptr& comm, comm_telnet_negoti
         SPDLOG_DEBUG ("client capabilities updated: TELNET LINEMODE enabled for slot {}", comm.slot());
         if (comm->flags & C_LINE_INPUT) {
             char lm_mode_request[3] = { 1, 1, 0 }; // LM_MODE subnegotiation: 1=MODE, 1=EDIT
-            comm_telnet_send_subnegotiation(comm.raw(), TELOPT_LINEMODE, lm_mode_request, sizeof(lm_mode_request));
+            comm_telnet_send_subnegotiation(comm, TELOPT_LINEMODE, lm_mode_request, sizeof(lm_mode_request));
         }
     }
     else if (THEY_WONT(negotiation, TELOPT_LINEMODE)) {
@@ -181,7 +252,9 @@ static bool _refill_inbound_buffers_from_src(comm_abstract_ptr& comm, const char
     if (!comm)
         return false;
 
+    async_runtime_t* runtime = async_get_current_runtime();
     size_t remaining = size;
+    bool telnet_parsing_paused = false;
     inbound_buffer_t* ibb = comm->inbound;
     if (!ibb) {
         // lazy allocation for the first inbound buffer if it doesn't exist yet
@@ -216,7 +289,7 @@ static bool _refill_inbound_buffers_from_src(comm_abstract_ptr& comm, const char
         if (!bytes_to_copy)
             break; // no more space to copy data into the current buffer
         size_t bytes_copied = 0;
-        if (comm->flags & C_ENABLE_TELNET) {
+        if ((comm->flags & C_ENABLE_TELNET) && !telnet_parsing_paused) {
             // copy telnet data from src, preserving telnet state in comm flags
             uint32_t state = comm->flags & M_TELNET_STATE; // restore saved telnet state from comm flags
             comm_telnet_negotiation_t telnet_neg;
@@ -232,22 +305,11 @@ static bool _refill_inbound_buffers_from_src(comm_abstract_ptr& comm, const char
             }
 
             if (telnet_neg.sb_len > 0) {
-                inbound_buffer_t* subneg_ibb = allocate_inbound_buffer();
-                if (subneg_ibb) {
-                    subneg_ibb->next = ibb->next;
-                    ibb->next = subneg_ibb;
-                    if (subneg_ibb->next && remaining > bytes_consumed) { // copy data after subnegotiation to the next inbound buffer
-                        inbound_buffer_t* next_ibb = subneg_ibb->next;
-                        assert(next_ibb->end == 0);
-                        memcpy(next_ibb->buffer, src + bytes_consumed, remaining - bytes_consumed);
-                        next_ibb->end += remaining - bytes_consumed;
-                    }
-                    subneg_ibb->band = INBOUND_BAND_SUBNEG;
-                    size_t copy_len = std::min(telnet_neg.sb_len, sizeof(subneg_ibb->buffer));
-                    memcpy(subneg_ibb->buffer, telnet_neg.subopt_buf, copy_len);
-                    subneg_ibb->start = 0;
-                    subneg_ibb->end = copy_len;
-                    SPDLOG_DEBUG("stored {} bytes of Telnet subnegotiation data in a new inbound buffer", copy_len);
+                const mudmux_dispatch_result_t dispatch_result = _dispatch_telnet_subnegotiation(runtime, comm, telnet_neg);
+                if (dispatch_result == MUDMUX_DISPATCH_QUEUE_FULL) {
+                    telnet_parsing_paused = true;
+                    comm->flags |= C_DEFERRED_INBOUND;
+                    has_deferred_input.store(true, std::memory_order_release);
                 }
             }
         } else {
@@ -503,9 +565,12 @@ static inbound_buffer_t* _recycle_current_inbound_buffer(comm_abstract_ptr& comm
     return _skip_non_data_head_buffers(comm);
 }
 
-int comm_process_input (async_runtime_t* runtime, comm_abstract_ptr& comm, int max_message) {
+comm_process_result_t comm_process_input (async_runtime_t* runtime, comm_abstract_ptr& comm, int max_message) {
     if (!comm)
-        return -1;
+        return COMM_PROCESS_ERROR;
+    if (mudmux_execution_has_pending_telnet_subneg(comm.slot()))
+        return COMM_PROCESS_DEFERRED;
+    comm->flags &= ~C_DEFERRED_INBOUND;
     inbound_buffer_t* ibb = _skip_non_data_head_buffers(comm);
     int num_messages_processed = 0;
     if (comm->flags & C_LINE_INPUT) {
@@ -519,9 +584,15 @@ int comm_process_input (async_runtime_t* runtime, comm_abstract_ptr& comm, int m
                 break; // no more data in the current buffer, wait for more data
             if ((next_line_start = _find_newline_and_strip(ibb, &line_len)) >= 0) {
                 if (comm->flags & C_ENABLE_TELNET)
-                    comm_buffered_write(comm.get(), "\n", 1); // echo newline for Telnet clients
+                    comm_buffered_write_comm(comm, "\n", 1); // echo newline for Telnet clients
                 // invoke inbound message hook for each complete line
-                comm_invoke_inbound_message(runtime, comm, ibb->buffer + ibb->start, line_len);
+                const mudmux_dispatch_result_t dispatch_result = static_cast<mudmux_dispatch_result_t>(
+                    comm_invoke_inbound_message(runtime, comm, ibb->buffer + ibb->start, line_len));
+                if (dispatch_result == MUDMUX_DISPATCH_QUEUE_FULL) {
+                    comm->flags |= C_DEFERRED_INBOUND;
+                    has_deferred_input.store(true, std::memory_order_release);
+                    break;
+                }
                 ibb->start = static_cast<size_t>(next_line_start);
                 ++num_messages_processed;
                 if (!comm)
@@ -590,7 +661,13 @@ int comm_process_input (async_runtime_t* runtime, comm_abstract_ptr& comm, int m
         while (ibb && (max_message < 0 || num_messages_processed < max_message)) {
             if ((next_char_start = _find_char_input_sequence(ibb, comm->flags, &char_len)) >= 0) {
                 // invoke inbound message hook for each complete ANSI character sequence
-                comm_invoke_inbound_message(runtime, comm, ibb->buffer + ibb->start, char_len);
+                const mudmux_dispatch_result_t dispatch_result = static_cast<mudmux_dispatch_result_t>(
+                    comm_invoke_inbound_message(runtime, comm, ibb->buffer + ibb->start, char_len));
+                if (dispatch_result == MUDMUX_DISPATCH_QUEUE_FULL) {
+                    comm->flags |= C_DEFERRED_INBOUND;
+                    has_deferred_input.store(true, std::memory_order_release);
+                    break;
+                }
                 ibb->start = static_cast<size_t>(next_char_start);
                 ++num_messages_processed;
                 if (!comm)
@@ -609,5 +686,9 @@ int comm_process_input (async_runtime_t* runtime, comm_abstract_ptr& comm, int m
         }
     }
 
-    return comm ? 0 : 1; // return 0 if comm is valid, 1 if comm was closed
+    if (!comm)
+        return COMM_PROCESS_CLOSED;
+    if (comm->flags & C_DEFERRED_INBOUND)
+        return COMM_PROCESS_DEFERRED;
+    return COMM_PROCESS_OK;
 }

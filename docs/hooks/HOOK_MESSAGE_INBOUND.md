@@ -51,9 +51,8 @@ Example:
 ~~~cxx
 static int on_message_inbound (void*, int slot, void* data, size_t len) {
     std::string msg(static_cast<const char*>(data), len);
-    auto comm = comm_abstract_get(slot);
-    if (comm)
-        *comm << "Received: [" << msg << "]\n\r";
+  const std::string reply = "Received: [" + msg + "]\n\r";
+  comm_buffered_write(slot, reply.data(), reply.size());
     if (msg == "quit" || msg == "exit")
         comm_close(nullptr, slot);
     return 0;

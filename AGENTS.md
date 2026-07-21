@@ -65,6 +65,14 @@ System deps: **OpenSSL** (required), **Boost.JSON** (optional, via `find_boost`)
 - Logging: `SPDLOG_*` macros. In Debug builds `SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE` is set at compile time.
 - Configuration is YAML, passed as a string to `mudmux_init()`; see `src/mud.conf` for an example.
 
+### Internal Comm Helper Contract
+
+For `lib/comm` internal helper functions that operate on slot state, prefer a stack-scoped `comm_abstract_ptr&` parameter over raw `comm_abstract_t*`.
+
+- Acquire `comm_abstract_ptr comm(slot, comm_slots_mtx);` at the boundary, then pass `comm` down helper calls.
+- Do not store `comm_abstract_ptr` beyond the current stack frame or pass it across async/thread boundaries.
+- Use raw `comm_abstract_t*` only for tightly local leaf code where lock ownership is unambiguous and cannot escape.
+
 ## Hook System
 
 Hooks (`mudmux_hook_type_t`) let the loaded logic layer react to transport events:
@@ -81,12 +89,14 @@ Register with `mudmux_register_hook()`; invoke with `mudmux_invoke_hook()`.
 
 ### Hook API Protection and Threading Model
 
-During hook invocation, the event-loop thread enters the logic layer while holding the MUD logic mutex. This protects comm API usage inside hooks so slot/state mutations remain deterministic from the logic layer point of view.
+In strict mode, the event-loop thread enters the logic layer while holding the MUD logic mutex. This preserves the original serialized behavior for comm API usage inside hooks.
 
-- In hook callbacks: treat comm API calls as part of a serialized critical section on the main event-loop thread.
-- Outside that locked hook region: the server is fully multi-threaded. Any logic-layer shared state must use proper synchronization (mutexes/atomics/queues) to avoid races.
+In relaxed mode, hook callbacks may run concurrently on worker threads. The comm API is expected to remain safe for these callbacks through its own internal synchronization, without relying on a global hook mutex.
 
-Practical rule: if logic code touches shared data from worker threads or from code paths not running under hook dispatch, synchronization is required even if comm APIs are protected during hooks.
+- In strict-mode hook callbacks: treat comm API calls as part of a serialized critical section on the main event-loop thread.
+- Outside the documented API path, or when touching logic-layer shared state from multiple threads, use proper synchronization (mutexes/atomics/queues) to avoid races.
+
+Practical rule: if logic code touches shared data from worker threads or from code paths not running under the documented comm API, synchronization is required.
 
 ### Proactive Slot Closing (`comm_close`)
 

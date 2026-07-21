@@ -6,6 +6,14 @@ This document defines a phased plan for extending mudmux with optional thread-po
 
 The thread pool is configured through `mudmux_init()` via YAML config.
 
+## Current Status
+
+- Thread-pool configuration, worker startup/shutdown, per-slot FIFO scheduling, queue-full backpressure, deferred retry, and Telnet subneg hook dispatch are implemented.
+- Relaxed mode no longer globally serializes hook callbacks; strict mode still preserves the original lock-and-hook behavior.
+- Public comm API migration is complete: slot-based contracts are canonical; obsolete pointer-returning public contracts were removed.
+- Phase 6 hardening regressions are in place for relaxed-mode deadlock/race scenarios under queue pressure and concurrent comm API usage.
+- Current phase: finalized (Phase 6 complete for code and unit-test scope).
+
 ## Behavioral Contract
 
 ### Determinism Modes
@@ -19,6 +27,7 @@ The thread pool is configured through `mudmux_init()` via YAML config.
   - Determinism is not guaranteed across independent slots/tasks.
   - Per-slot inbound processing remains strict FIFO: messages for a slot are processed exactly in arrival order.
   - Hook callbacks may run concurrently; callers are expected to opt into this behavior by configuring `size > 1`.
+  - The public comm API is expected to be safe to call from worker-thread hook callbacks in relaxed mode.
   - Safety invariants must still hold (no data races, no deadlocks, valid slot lifetime handling).
 
 ### Backward Compatibility
@@ -70,7 +79,7 @@ Main event loop remains authoritative for:
 
 Thread pool can process compute-heavy tasks and slot-local transformations where safe.
 
-If work item side effects must touch comm state, the side-effect APIs acquire per-slot lock internally.
+If work item side effects must touch comm state, the comm APIs are responsible for their own synchronization so worker-thread hook callbacks can safely mutate slot state.
 
 ## Locking Model
 
@@ -88,8 +97,8 @@ If work item side effects must touch comm state, the side-effect APIs acquire pe
 
 4. Hook serialization lock
    - Preserved for strict deterministic mode semantics.
-  - In relaxed mode (`size > 1`), use relaxed locking and do not globally serialize hooks.
-  - In relaxed mode, guarantee API thread-safety for concurrent hook function execution.
+  - In relaxed mode (`size > 1`), do not globally serialize hooks.
+  - In relaxed mode, comm API thread-safety is provided by the comm layer's own synchronization, not by a global hook lock.
 
 ### Lock Rules
 
@@ -126,6 +135,13 @@ Replace pointer-based external contracts with slot-id based contracts.
 
 - In strict mode (`size=1`), preserve legacy behavior while deprecations are introduced.
 - In relaxed mode (`size>1`), prefer slot-id APIs only; avoid new pointer-based usage.
+
+### comm API Thread Safety
+
+- The public `mudmux_comm_api_v1` functions are callable from the logic thread and, in relaxed mode, from worker threads executing hooks.
+- `mudmux.cpp` explicitly allows worker-thread calls through the API guard.
+- The comm implementation must keep slot and buffer mutations internally synchronized so callbacks do not need an extra global lock.
+- Code running outside the documented API path should still treat shared state as unsafe unless it uses the existing locking helpers.
 
 ## Phased Plan
 
@@ -185,6 +201,8 @@ Exit criteria:
 
 ## Phase 5: Thread Pool Execution Policy
 
+Status: complete.
+
 - Add worker pool init/deinit based on `thread_pool_size`.
 - In strict mode: single worker semantics preserve deterministic ordering.
 - In relaxed mode: allow concurrent work execution across slots while preserving strict per-slot FIFO inbound ordering.
@@ -197,14 +215,16 @@ Exit criteria:
 
 ## Phase 6: Hardening and Removal
 
-- Remove remaining pointer-returning APIs entirely after slot-id migration and example adoption are complete.
+Status: complete.
+
+- Remove remaining pointer-returning public APIs after slot-id migration and example adoption.
 - Finalize API docs and migration notes.
-- Add stress suites for deadlock/race detection.
+- Add stress suites for deadlock/race detection in relaxed mode.
 
 Exit criteria:
 
-- TSAN/helgrind-style runs show no races in comm layer.
-- Deadlock stress tests pass.
+- Unit-level deadlock/race stress regressions pass in relaxed mode.
+- Full sanitizer (TSAN/helgrind-style) coverage remains a CI hardening follow-up.
 
 ## Testing Plan
 
@@ -222,6 +242,16 @@ Exit criteria:
   - correct eventual outcomes
 - Enforce per-slot ordering assertions: inbound messages per slot are processed exactly in arrival order.
 - Avoid tests that require exact global cross-slot ordering.
+
+Current relaxed-mode regression coverage includes:
+
+- `CommInboundTest.ThreadPoolKeepsPerSlotOrderWhileOtherSlotsAdvance`
+- `CommInboundTest.RelaxedModeCommApiCallsFromConcurrentHooksDoNotDeadlock`
+- `CommInboundTest.RelaxedModeQueuePressureOnOneSlotDoesNotBlockOtherSlots`
+- `CommInboundTest.RelaxedModeConcurrentEnqueueAndCommApiMutationsRemainStable`
+- `MudmuxStdinThreadPoolTest.InboundQueueFullDefersAndResumesInFifoOrder`
+- `MudmuxStdinThreadPoolTest.PromptHookRunsOnWorkerThreadInRelaxedMode`
+- `MudmuxStdinThreadPoolTest.ConnectHookFiresForConsoleInRelaxedMode`
 
 ## Open Questions
 

@@ -92,7 +92,7 @@ bool comm_abstract_get_rbio_fd (int slot, socket_fd_t* out_fd);
 bool comm_abstract_get_wbio_fd (int slot, socket_fd_t* out_fd);
 
 /* flag management (logic layer helper) */
-extern "C" uint32_t comm_get_flags (comm_abstract_t *comm);
+extern "C" uint32_t comm_get_flags (int slot);
 
 /**
  * comm_abstract_ptr is a RAII wrapper for comm_abstract_t that locks the comm_slots_mtx

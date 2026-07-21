@@ -207,6 +207,7 @@ bool comm_abstract_get_wbio_fd (int slot, socket_fd_t* out_fd) {
     return comm.get_wbio_fd(out_fd);
 }
 
-uint32_t comm_get_flags (comm_abstract_t *comm) {
+uint32_t comm_get_flags (int slot) {
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
     return comm ? comm->flags : 0;
 }

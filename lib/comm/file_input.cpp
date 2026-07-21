@@ -28,20 +28,43 @@ static void file_input_reader_thread (async_runtime_t* runtime, int slot, async_
     
     while (true) {
         size_t bytes_read = 0;
+        bool read_ok = false;
         {
             comm_abstract_ptr comm(slot, comm_slots_mtx);
             if (!comm || !comm->rbio) {
                 SPDLOG_ERROR ("file input reader thread exiting: invalid comm slot {}", slot);
                 break;
             }
-            if (BIO_read_ex(comm->rbio, buffer, sizeof(buffer) - 1, &bytes_read) <= 0) {
+            if (BIO_read_ex(comm->rbio, buffer, sizeof(buffer) - 1, &bytes_read) > 0) {
+                read_ok = true;
+            }
+            else {
                 if (!BIO_should_retry(comm->rbio)) {
-                    SPDLOG_ERROR ("BIO_read_ex() failed for slot {}: {}", slot, ERR_get_error());
+                    // For file/pipe input, a non-retry read that reports EOF is terminal input completion.
+                    // Treat EOF as graceful completion so main loop can shut down in non-console mode.
+                    if (BIO_eof(comm->rbio)) {
+                        SPDLOG_INFO ("file EOF detected for slot {}", slot);
+                        {
+                            std::lock_guard<std::mutex> lock(file_input_mutex);
+                            file_input_eof = true;
+                        }
+                        async_runtime_post_completion (runtime, completion_key, 0);
+                        break;
+                    }
+
+                    unsigned long err = ERR_get_error();
+                    SPDLOG_ERROR ("BIO_read_ex() failed for slot {}: {}", slot, err);
                     break;
                 }
+
+                // Retryable read with no progress (e.g., EAGAIN): keep polling.
+                continue;
             }
         }
-        
+
+        if (!read_ok)
+            continue;
+
         if (!bytes_read) {
             // EOF
             SPDLOG_INFO ("file EOF detected for slot {}", slot);
