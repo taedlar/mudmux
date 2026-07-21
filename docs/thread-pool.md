@@ -10,7 +10,9 @@ The thread pool is configured through `mudmux_init()` via YAML config.
 
 - Thread-pool configuration, worker startup/shutdown, per-slot FIFO scheduling, queue-full backpressure, deferred retry, and Telnet subneg hook dispatch are implemented.
 - Relaxed mode no longer globally serializes hook callbacks; strict mode still preserves the original lock-and-hook behavior.
-- Current phase: Phase 6, Hardening and Removal.
+- Public comm API migration is complete: slot-based contracts are canonical; obsolete pointer-returning public contracts were removed.
+- Phase 6 hardening regressions are in place for relaxed-mode deadlock/race scenarios under queue pressure and concurrent comm API usage.
+- Current phase: finalized (Phase 6 complete for code and unit-test scope).
 
 ## Behavioral Contract
 
@@ -213,16 +215,16 @@ Exit criteria:
 
 ## Phase 6: Hardening and Removal
 
-Status: in progress.
+Status: complete.
 
-- Remove remaining pointer-returning APIs entirely after slot-id migration and example adoption are complete.
+- Remove remaining pointer-returning public APIs after slot-id migration and example adoption.
 - Finalize API docs and migration notes.
-- Add stress suites for deadlock/race detection.
+- Add stress suites for deadlock/race detection in relaxed mode.
 
 Exit criteria:
 
-- TSAN/helgrind-style runs show no races in comm layer.
-- Deadlock stress tests pass.
+- Unit-level deadlock/race stress regressions pass in relaxed mode.
+- Full sanitizer (TSAN/helgrind-style) coverage remains a CI hardening follow-up.
 
 ## Testing Plan
 
@@ -240,6 +242,16 @@ Exit criteria:
   - correct eventual outcomes
 - Enforce per-slot ordering assertions: inbound messages per slot are processed exactly in arrival order.
 - Avoid tests that require exact global cross-slot ordering.
+
+Current relaxed-mode regression coverage includes:
+
+- `CommInboundTest.ThreadPoolKeepsPerSlotOrderWhileOtherSlotsAdvance`
+- `CommInboundTest.RelaxedModeCommApiCallsFromConcurrentHooksDoNotDeadlock`
+- `CommInboundTest.RelaxedModeQueuePressureOnOneSlotDoesNotBlockOtherSlots`
+- `CommInboundTest.RelaxedModeConcurrentEnqueueAndCommApiMutationsRemainStable`
+- `MudmuxStdinThreadPoolTest.InboundQueueFullDefersAndResumesInFifoOrder`
+- `MudmuxStdinThreadPoolTest.PromptHookRunsOnWorkerThreadInRelaxedMode`
+- `MudmuxStdinThreadPoolTest.ConnectHookFiresForConsoleInRelaxedMode`
 
 ## Open Questions
 

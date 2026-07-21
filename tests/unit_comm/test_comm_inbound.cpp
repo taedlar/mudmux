@@ -12,8 +12,10 @@
 #include <string>
 #include <vector>
 #include <atomic>
+#include <chrono>
 #include <future>
 #include <mutex>
+#include <thread>
 #include <gtest/gtest.h>
 #include <openssl/bio.h>
 
@@ -85,6 +87,16 @@ std::atomic<int> comm_api_other_slots_completed{0};
 int comm_api_other_slots_expected{0};
 int comm_api_blocked_slot{-1};
 
+std::promise<void>* queue_pressure_hot_slot_entered_ptr{nullptr};
+std::shared_future<void>* queue_pressure_hot_slot_release_ptr{nullptr};
+std::promise<void>* queue_pressure_other_slots_done_ptr{nullptr};
+std::atomic<int> queue_pressure_hot_slot_count{0};
+std::atomic<int> queue_pressure_other_slots_completed{0};
+int queue_pressure_other_slots_expected{0};
+int queue_pressure_hot_slot{-1};
+
+std::atomic<int> enqueue_race_processed_count{0};
+
 int thread_pool_stress_hook(void*, int slot, void* data, size_t len) {
     (void)data;
     (void)len;
@@ -131,6 +143,38 @@ int concurrent_comm_api_hook(void*, int slot, void*, size_t) {
     const int completed = comm_api_other_slots_completed.fetch_add(1) + 1;
     if (completed == comm_api_other_slots_expected && comm_api_other_slots_done_ptr)
         comm_api_other_slots_done_ptr->set_value();
+    return 0;
+}
+
+int queue_pressure_hook(void*, int slot, void*, size_t) {
+    mudmux_comm_api_v1->buffered_write(slot, "x", 1);
+
+    if (slot == queue_pressure_hot_slot) {
+        const int count = queue_pressure_hot_slot_count.fetch_add(1) + 1;
+        if (count == 1) {
+            if (queue_pressure_hot_slot_entered_ptr)
+                queue_pressure_hot_slot_entered_ptr->set_value();
+            if (queue_pressure_hot_slot_release_ptr)
+                queue_pressure_hot_slot_release_ptr->wait();
+        }
+        return 0;
+    }
+
+    mudmux_comm_api_v1->set_echo(slot, false);
+    const int completed = queue_pressure_other_slots_completed.fetch_add(1) + 1;
+    if (completed == queue_pressure_other_slots_expected && queue_pressure_other_slots_done_ptr)
+        queue_pressure_other_slots_done_ptr->set_value();
+    return 0;
+}
+
+int enqueue_race_comm_api_hook(void*, int slot, void*, size_t) {
+    if (mudmux_comm_api_v1->get_flags(slot) == 0u)
+        return -1;
+
+    mudmux_comm_api_v1->set_char_input(slot);
+    mudmux_comm_api_v1->set_line_input(slot, true);
+    mudmux_comm_api_v1->buffered_write(slot, "r", 1);
+    enqueue_race_processed_count.fetch_add(1);
     return 0;
 }
 
@@ -420,6 +464,148 @@ TEST_F(CommInboundTest, RelaxedModeCommApiCallsFromConcurrentHooksDoNotDeadlock)
     comm_api_other_slots_done_ptr = nullptr;
     comm_api_other_slots_expected = 0;
     comm_api_blocked_slot = -1;
+
+    mudmux_execution_stop();
+    mudmux_deinit();
+}
+
+TEST_F(CommInboundTest, RelaxedModeQueuePressureOnOneSlotDoesNotBlockOtherSlots) {
+    mudmux_deinit();
+    ASSERT_TRUE(mudmux_init("{\"transport\": {\"thread_pool\": {\"size\": 4}}}"));
+
+    std::vector<int> slots;
+    slots.reserve(6);
+    for (int index = 0; index < 6; ++index) {
+        const int slot = add_memory_comm(C_LINE_INPUT);
+        ASSERT_NE(slot, -1);
+        slots.push_back(slot);
+    }
+
+    queue_pressure_hot_slot = slots.front();
+    queue_pressure_hot_slot_count.store(0);
+    queue_pressure_other_slots_completed.store(0);
+    queue_pressure_other_slots_expected = static_cast<int>(slots.size()) - 1;
+
+    std::promise<void> hot_slot_entered_promise;
+    std::future<void> hot_slot_entered_future = hot_slot_entered_promise.get_future();
+    std::promise<void> hot_slot_release_promise;
+    std::shared_future<void> hot_slot_release_future = hot_slot_release_promise.get_future().share();
+    std::promise<void> other_slots_done_promise;
+    std::future<void> other_slots_done_future = other_slots_done_promise.get_future();
+
+    queue_pressure_hot_slot_entered_ptr = &hot_slot_entered_promise;
+    queue_pressure_hot_slot_release_ptr = &hot_slot_release_future;
+    queue_pressure_other_slots_done_ptr = &other_slots_done_promise;
+
+    ASSERT_TRUE(mudmux_execution_start());
+    ASSERT_TRUE(mudmux_register_hook(HOOK_MESSAGE_INBOUND, queue_pressure_hook));
+
+    const char payload[] = "phase6-queue-pressure";
+    ASSERT_EQ(mudmux_execution_enqueue_hook(HOOK_MESSAGE_INBOUND, this, queue_pressure_hot_slot, payload, strlen(payload)), MUDMUX_DISPATCH_OK);
+    ASSERT_EQ(hot_slot_entered_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+
+    std::atomic<int> queue_full_count{0};
+    std::atomic<int> enqueue_error_count{0};
+    std::vector<std::thread> producers;
+    producers.reserve(4);
+    for (int producer = 0; producer < 4; ++producer) {
+        producers.emplace_back([&, producer]() {
+            for (int index = 0; index < 32; ++index) {
+                const std::string msg = "hot-" + std::to_string(producer) + "-" + std::to_string(index);
+                const mudmux_dispatch_result_t rc = mudmux_execution_enqueue_hook(
+                    HOOK_MESSAGE_INBOUND, this, queue_pressure_hot_slot, msg.data(), msg.size());
+                if (rc == MUDMUX_DISPATCH_QUEUE_FULL)
+                    queue_full_count.fetch_add(1);
+                else if (rc != MUDMUX_DISPATCH_OK)
+                    enqueue_error_count.fetch_add(1);
+            }
+        });
+    }
+
+    for (std::size_t index = 1; index < slots.size(); ++index) {
+        ASSERT_EQ(mudmux_execution_enqueue_hook(HOOK_MESSAGE_INBOUND, this, slots[index], payload, strlen(payload)), MUDMUX_DISPATCH_OK);
+    }
+
+    ASSERT_EQ(other_slots_done_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_GT(queue_full_count.load(), 0);
+    EXPECT_EQ(enqueue_error_count.load(), 0);
+
+    hot_slot_release_promise.set_value();
+    for (auto& producer : producers)
+        producer.join();
+
+    queue_pressure_hot_slot_entered_ptr = nullptr;
+    queue_pressure_hot_slot_release_ptr = nullptr;
+    queue_pressure_other_slots_done_ptr = nullptr;
+    queue_pressure_other_slots_expected = 0;
+    queue_pressure_hot_slot = -1;
+
+    mudmux_execution_stop();
+    mudmux_deinit();
+}
+
+TEST_F(CommInboundTest, RelaxedModeConcurrentEnqueueAndCommApiMutationsRemainStable) {
+    mudmux_deinit();
+    ASSERT_TRUE(mudmux_init("{\"transport\": {\"thread_pool\": {\"size\": 4}}}"));
+
+    std::vector<int> slots;
+    slots.reserve(8);
+    for (int index = 0; index < 8; ++index) {
+        const int slot = add_memory_comm(C_LINE_INPUT);
+        ASSERT_NE(slot, -1);
+        slots.push_back(slot);
+    }
+
+    enqueue_race_processed_count.store(0);
+    ASSERT_TRUE(mudmux_execution_start());
+    ASSERT_TRUE(mudmux_register_hook(HOOK_MESSAGE_INBOUND, enqueue_race_comm_api_hook));
+
+    constexpr int producer_count = 4;
+    constexpr int tasks_per_producer = 40;
+    const int expected_tasks = producer_count * tasks_per_producer;
+    std::atomic<int> accepted_tasks{0};
+    std::atomic<bool> enqueue_failed{false};
+    std::vector<std::thread> producers;
+    producers.reserve(producer_count);
+
+    for (int producer = 0; producer < producer_count; ++producer) {
+        producers.emplace_back([&, producer]() {
+            for (int index = 0; index < tasks_per_producer; ++index) {
+                const int slot = slots[static_cast<std::size_t>((producer + index) % static_cast<int>(slots.size()))];
+                const std::string msg = "race-" + std::to_string(producer) + "-" + std::to_string(index);
+                bool submitted = false;
+                for (int retry = 0; retry < 2000; ++retry) {
+                    const mudmux_dispatch_result_t rc = mudmux_execution_enqueue_hook(
+                        HOOK_MESSAGE_INBOUND, this, slot, msg.data(), msg.size());
+                    if (rc == MUDMUX_DISPATCH_OK) {
+                        accepted_tasks.fetch_add(1);
+                        submitted = true;
+                        break;
+                    }
+                    if (rc == MUDMUX_DISPATCH_ERROR) {
+                        enqueue_failed.store(true);
+                        break;
+                    }
+                    std::this_thread::yield();
+                }
+                if (!submitted)
+                    enqueue_failed.store(true);
+            }
+        });
+    }
+
+    for (auto& producer : producers)
+        producer.join();
+
+    ASSERT_FALSE(enqueue_failed.load());
+    ASSERT_EQ(accepted_tasks.load(), expected_tasks);
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (std::chrono::steady_clock::now() < deadline && enqueue_race_processed_count.load() < expected_tasks) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+
+    EXPECT_EQ(enqueue_race_processed_count.load(), expected_tasks);
 
     mudmux_execution_stop();
     mudmux_deinit();
