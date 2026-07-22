@@ -454,6 +454,18 @@ TEST_F(CommInboundTest, WebSocketUpgradeRejectsInvalidHandshake) {
     async_runtime_deinit(runtime);
 }
 
+TEST_F(CommInboundTest, TelnetEnableRejectedWhenWebSocketAlreadyEnabled) {
+    const int slot = add_memory_comm(0);
+    ASSERT_NE(slot, -1);
+
+    ASSERT_TRUE(mudmux_comm_api_v1->enable_websocket(slot));
+    mudmux_comm_api_v1->enable_telnet(slot);
+
+    const uint32_t flags = comm_get_flags(slot);
+    EXPECT_TRUE((flags & C_ENABLE_WEBSOCKET) != 0);
+    EXPECT_TRUE((flags & C_ENABLE_TELNET) == 0);
+}
+
 TEST_F(CommInboundTest, ThreadPoolKeepsPerSlotOrderWhileOtherSlotsAdvance) {
     mudmux_deinit();
     ASSERT_TRUE(mudmux_init("{\"transport\": {\"thread_pool\": {\"size\": 2}}}"));

@@ -12,6 +12,10 @@ void comm_enable_telnet (int slot) {
     comm_abstract_ptr comm(slot, comm_slots_mtx);
     if (!comm)
         return;
+    if (comm->flags & C_ENABLE_WEBSOCKET) {
+        SPDLOG_WARN("cannot enable TELNET on slot {} while WebSocket is enabled", slot);
+        return;
+    }
     if (comm->flags & C_ENABLE_TELNET)
         return;
     comm->flags |= C_ENABLE_TELNET;
