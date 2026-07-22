@@ -4,6 +4,7 @@
 
 #include "comm/inbound.hpp"
 #include "comm/input_mode.hpp"
+#include "comm/outbound.hpp"
 #include "../../src/execution.hpp"
 #include "mudmux/mudmux.h"
 #include "mudmux/comm.h"
@@ -362,6 +363,93 @@ TEST_F(CommInboundTest, TelnetSubnegHookDispatchesBeforeSubsequentLineInput) {
     ASSERT_EQ(inbound_messages.size(), 2u);
     EXPECT_EQ(inbound_messages[0], "subneg:24:xy");
     EXPECT_EQ(inbound_messages[1], "foobar");
+
+    async_runtime_deinit(runtime);
+}
+
+TEST_F(CommInboundTest, WebSocketUpgradeSwitchesProtocolAndDispatchesRawPayload) {
+    async_runtime_t* runtime = async_runtime_init(this);
+    ASSERT_NE(runtime, nullptr);
+
+    const int slot = add_memory_comm(0);
+    ASSERT_NE(slot, -1);
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
+    ASSERT_TRUE(comm);
+
+    inbound_messages.clear();
+    mudmux_register_hook(HOOK_MESSAGE_INBOUND, CommInboundTest::hook_message_inbound);
+
+    ASSERT_TRUE(mudmux_comm_api_v1->enable_websocket(slot));
+
+    std::string request =
+        "GET /ws HTTP/1.1\r\n"
+        "Host: localhost\r\n"
+        "Upgrade: websocket\r\n"
+        "Connection: Upgrade\r\n"
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+        "Sec-WebSocket-Version: 13\r\n"
+        "\r\n";
+    std::string packet = request;
+    packet.push_back(static_cast<char>(0x81));
+    packet.push_back(static_cast<char>(0x82));
+    packet.push_back(static_cast<char>(0x01));
+    packet.push_back(static_cast<char>(0x02));
+
+    ASSERT_TRUE(comm_refill_inbound_buffers(comm, packet.data(), packet.size()));
+    EXPECT_EQ(comm_process_input(runtime, comm, -1), COMM_PROCESS_OK);
+
+    ASSERT_EQ(inbound_messages.size(), 1u);
+    ASSERT_EQ(inbound_messages[0].size(), 4u);
+    EXPECT_EQ(static_cast<unsigned char>(inbound_messages[0][0]), 0x81);
+    EXPECT_EQ(static_cast<unsigned char>(inbound_messages[0][1]), 0x82);
+    EXPECT_EQ(static_cast<unsigned char>(inbound_messages[0][2]), 0x01);
+    EXPECT_EQ(static_cast<unsigned char>(inbound_messages[0][3]), 0x02);
+
+    comm_flush(runtime, slot);
+    std::array<char, 512> response_buf{};
+    const int response_len = BIO_read(comm->wbio, response_buf.data(), static_cast<int>(response_buf.size()));
+    ASSERT_GT(response_len, 0);
+    std::string response(response_buf.data(), static_cast<size_t>(response_len));
+    EXPECT_NE(response.find("101 Switching Protocols"), std::string::npos);
+    EXPECT_NE(response.find("Sec-WebSocket-Accept:"), std::string::npos);
+    EXPECT_TRUE((comm_get_flags(slot) & C_WEBSOCKET_READY) != 0);
+
+    async_runtime_deinit(runtime);
+}
+
+TEST_F(CommInboundTest, WebSocketUpgradeRejectsInvalidHandshake) {
+    async_runtime_t* runtime = async_runtime_init(this);
+    ASSERT_NE(runtime, nullptr);
+
+    const int slot = add_memory_comm(0);
+    ASSERT_NE(slot, -1);
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
+    ASSERT_TRUE(comm);
+
+    inbound_messages.clear();
+    mudmux_register_hook(HOOK_MESSAGE_INBOUND, CommInboundTest::hook_message_inbound);
+
+    ASSERT_TRUE(mudmux_comm_api_v1->enable_websocket(slot));
+
+    const char* invalid_request =
+        "GET /ws HTTP/1.1\r\n"
+        "Host: localhost\r\n"
+        "Upgrade: websocket\r\n"
+        "Connection: Upgrade\r\n"
+        "Sec-WebSocket-Version: 13\r\n"
+        "\r\n";
+
+    ASSERT_TRUE(comm_refill_inbound_buffers(comm, invalid_request, strlen(invalid_request)));
+    EXPECT_EQ(comm_process_input(runtime, comm, -1), COMM_PROCESS_OK);
+    EXPECT_TRUE(inbound_messages.empty());
+
+    comm_flush(runtime, slot);
+    std::array<char, 512> response_buf{};
+    const int response_len = BIO_read(comm->wbio, response_buf.data(), static_cast<int>(response_buf.size()));
+    ASSERT_GT(response_len, 0);
+    std::string response(response_buf.data(), static_cast<size_t>(response_len));
+    EXPECT_NE(response.find("400 Bad Request"), std::string::npos);
+    EXPECT_TRUE((comm_get_flags(slot) & C_CLOSING) != 0);
 
     async_runtime_deinit(runtime);
 }

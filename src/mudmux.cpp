@@ -24,6 +24,7 @@
 #include "comm/outbound.hpp"
 #include "comm/ssl.hpp"
 #include "comm/telnet.hpp"
+#include "comm/websocket.hpp"
 #include "execution.hpp"
 #include "mudmux/async.h"
 #include "mudmux/comm.h"
@@ -124,6 +125,9 @@ static void init_comm_api (void) {
     };
     comm_api.enable_telnet = +[](int slot) {
         guarded_call_void("enable_telnet", comm_enable_telnet, slot);
+    };
+    comm_api.enable_websocket = +[](int slot) -> bool {
+        return guarded_call<bool>("enable_websocket", false, comm_enable_websocket, slot);
     };
     comm_api.enable_virtual_terminal = +[](int slot) -> bool {
         return guarded_call<bool>("enable_virtual_terminal", false, comm_enable_virtual_terminal, slot);

@@ -9,14 +9,17 @@
 #include <array>
 #include <atomic>
 #include <cstring>
+#include <string>
 #include <wchar.h>
 #include <openssl/bio.h>
 
 #include "abstract.hpp"
 #include "execution.hpp"
 #include "hooks.hpp"
+#include "outbound.hpp"
 #include "ssl.hpp"
 #include "telnet.hpp"
+#include "websocket.hpp"
 #include "mudmux/comm.h"
 #include "mudmux/hooks.h"
 
@@ -28,6 +31,7 @@ typedef SSIZE_T ssize_t;
 #define INBOUND_BAND_SUBNEG     1
 
 static constexpr uint32_t C_DEFERRED_INBOUND = 0x00004000;
+static constexpr size_t WEBSOCKET_MAX_HANDSHAKE_BYTES = 8192;
 static std::atomic<bool> has_deferred_input{false};
 
 struct inbound_buffer_s {
@@ -106,6 +110,136 @@ void comm_invoke_prompt (async_runtime_t* runtime) {
 
 bool comm_has_deferred_input (void) {
     return has_deferred_input.load(std::memory_order_acquire);
+}
+
+static size_t _copy_inbound_data_prefix(comm_abstract_ptr& comm, size_t limit, std::string& out) {
+    out.clear();
+    if (!comm || limit == 0) {
+        return 0;
+    }
+
+    size_t copied = 0;
+    for (inbound_buffer_t* ibb = comm->inbound; ibb && copied < limit; ibb = ibb->next) {
+        if (ibb->band != INBOUND_BAND_DATA || ibb->end <= ibb->start) {
+            continue;
+        }
+
+        const size_t available = ibb->end - ibb->start;
+        const size_t chunk = std::min(available, limit - copied);
+        out.append(ibb->buffer + ibb->start, chunk);
+        copied += chunk;
+    }
+
+    return copied;
+}
+
+static void _consume_inbound_data(comm_abstract_ptr& comm, size_t bytes) {
+    if (!comm || bytes == 0) {
+        return;
+    }
+
+    while (comm->inbound && bytes > 0) {
+        inbound_buffer_t* head = comm->inbound;
+
+        if (head->band != INBOUND_BAND_DATA) {
+            comm->inbound = head->next;
+            free_inbound_buffer(head);
+            continue;
+        }
+
+        const size_t available = (head->end > head->start) ? (head->end - head->start) : 0;
+        if (available == 0) {
+            comm->inbound = head->next;
+            free_inbound_buffer(head);
+            continue;
+        }
+
+        const size_t consume = std::min(available, bytes);
+        head->start += consume;
+        bytes -= consume;
+
+        if (head->start >= head->end) {
+            comm->inbound = head->next;
+            free_inbound_buffer(head);
+        }
+    }
+}
+
+static bool _find_http_header_end(const std::string& data, size_t* header_len) {
+    if (!header_len) {
+        return false;
+    }
+
+    const size_t crlf_crlf = data.find("\r\n\r\n");
+    if (crlf_crlf != std::string::npos) {
+        *header_len = crlf_crlf + 4;
+        return true;
+    }
+
+    const size_t lf_lf = data.find("\n\n");
+    if (lf_lf != std::string::npos) {
+        *header_len = lf_lf + 2;
+        return true;
+    }
+
+    return false;
+}
+
+static void _send_websocket_rejection(async_runtime_t* runtime, comm_abstract_ptr& comm, int status_code) {
+    const char* reason = "Bad Request";
+    if (status_code == 426) {
+        reason = "Upgrade Required";
+    } else if (status_code == 431) {
+        reason = "Request Header Fields Too Large";
+    }
+
+    std::string response = "HTTP/1.1 " + std::to_string(status_code) + " " + reason + "\r\n"
+                           "Connection: close\r\n"
+                           "Content-Length: 0\r\n";
+    if (status_code == 426) {
+        response += "Sec-WebSocket-Version: 13\r\n";
+    }
+    response += "\r\n";
+
+    comm_buffered_write_comm(comm, response.data(), response.size());
+    comm_close(runtime, comm.slot());
+}
+
+static void _try_upgrade_websocket(async_runtime_t* runtime, comm_abstract_ptr& comm) {
+    if (!comm || !(comm->flags & C_ENABLE_WEBSOCKET) || (comm->flags & C_WEBSOCKET_READY)) {
+        return;
+    }
+
+    std::string request;
+    const size_t copied = _copy_inbound_data_prefix(comm, WEBSOCKET_MAX_HANDSHAKE_BYTES, request);
+    if (copied == 0) {
+        return;
+    }
+
+    size_t header_len = 0;
+    if (!_find_http_header_end(request, &header_len)) {
+        if (copied >= WEBSOCKET_MAX_HANDSHAKE_BYTES) {
+            SPDLOG_WARN("websocket handshake headers exceeded {} bytes on slot {}", WEBSOCKET_MAX_HANDSHAKE_BYTES, comm.slot());
+            _send_websocket_rejection(runtime, comm, 431);
+        }
+        return;
+    }
+
+    std::string response;
+    int rejection_status = 400;
+    if (!comm_websocket_build_upgrade_response(
+            std::string_view(request.data(), header_len),
+            response,
+            &rejection_status)) {
+        SPDLOG_WARN("websocket handshake rejected on slot {} with status {}", comm.slot(), rejection_status);
+        _send_websocket_rejection(runtime, comm, rejection_status);
+        return;
+    }
+
+    comm_buffered_write_comm(comm, response.data(), response.size());
+    _consume_inbound_data(comm, header_len);
+    comm->flags |= C_WEBSOCKET_READY;
+    SPDLOG_INFO("websocket protocol switch completed for slot {}", comm.slot());
 }
 
 static mudmux_dispatch_result_t _dispatch_telnet_subnegotiation(async_runtime_t* runtime, comm_abstract_ptr& comm, const comm_telnet_negotiation_t& telnet_neg) {
@@ -289,7 +423,9 @@ static bool _refill_inbound_buffers_from_src(comm_abstract_ptr& comm, const char
         if (!bytes_to_copy)
             break; // no more space to copy data into the current buffer
         size_t bytes_copied = 0;
-        if ((comm->flags & C_ENABLE_TELNET) && !telnet_parsing_paused) {
+        const bool websocket_handshake_pending =
+            (comm->flags & C_ENABLE_WEBSOCKET) && !(comm->flags & C_WEBSOCKET_READY);
+        if ((comm->flags & C_ENABLE_TELNET) && !websocket_handshake_pending && !telnet_parsing_paused) {
             // copy telnet data from src, preserving telnet state in comm flags
             uint32_t state = comm->flags & M_TELNET_STATE; // restore saved telnet state from comm flags
             comm_telnet_negotiation_t telnet_neg;
@@ -321,6 +457,11 @@ static bool _refill_inbound_buffers_from_src(comm_abstract_ptr& comm, const char
         src += bytes_to_copy; // advance source pointer by the number of bytes consumed
         remaining -= bytes_to_copy; // decrease remaining bytes to copy from source
     }
+
+    if ((comm->flags & C_ENABLE_WEBSOCKET) && !(comm->flags & C_WEBSOCKET_READY)) {
+        _try_upgrade_websocket(runtime, comm);
+    }
+
     if (remaining > 0)
         SPDLOG_WARN ("inbound buffers full, {} bytes discarded", remaining);
     return (remaining == 0);
@@ -573,7 +714,40 @@ comm_process_result_t comm_process_input (async_runtime_t* runtime, comm_abstrac
     comm->flags &= ~C_DEFERRED_INBOUND;
     inbound_buffer_t* ibb = _skip_non_data_head_buffers(comm);
     int num_messages_processed = 0;
-    if (comm->flags & C_LINE_INPUT) {
+    if ((comm->flags & C_ENABLE_WEBSOCKET) && !(comm->flags & C_WEBSOCKET_READY)) {
+        return COMM_PROCESS_OK;
+    }
+
+    if (comm->flags & C_WEBSOCKET_READY) {
+        // In WebSocket mode, pass post-upgrade bytes as-is to the logic layer.
+        while (ibb && (max_message < 0 || num_messages_processed < max_message)) {
+            if (ibb->end <= ibb->start) {
+                ibb = _recycle_current_inbound_buffer(comm, ibb);
+                if (!ibb || ibb->end <= ibb->start)
+                    break;
+                continue;
+            }
+
+            const size_t payload_len = ibb->end - ibb->start;
+            const mudmux_dispatch_result_t dispatch_result = static_cast<mudmux_dispatch_result_t>(
+                comm_invoke_inbound_message(runtime, comm, ibb->buffer + ibb->start, payload_len));
+            if (dispatch_result == MUDMUX_DISPATCH_QUEUE_FULL) {
+                comm->flags |= C_DEFERRED_INBOUND;
+                has_deferred_input.store(true, std::memory_order_release);
+                break;
+            }
+
+            ibb->start = ibb->end;
+            ++num_messages_processed;
+            if (!comm)
+                break;
+
+            ibb = _recycle_current_inbound_buffer(comm, ibb);
+            if (!ibb || ibb->end <= ibb->start)
+                break;
+        }
+    }
+    else if (comm->flags & C_LINE_INPUT) {
         //
         // [LINE INPUT MODE] process input data line by line, invoking the inbound message hook for each complete line
         //

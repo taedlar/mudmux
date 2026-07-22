@@ -90,6 +90,7 @@ bool comm_abstract_has_rbio (int slot);
 bool comm_abstract_has_wbio (int slot);
 bool comm_abstract_get_rbio_fd (int slot, socket_fd_t* out_fd);
 bool comm_abstract_get_wbio_fd (int slot, socket_fd_t* out_fd);
+extern std::recursive_mutex comm_slots_mtx;
 
 /* flag management (logic layer helper) */
 extern "C" uint32_t comm_get_flags (int slot);
