@@ -9,14 +9,20 @@
 #include <array>
 #include <atomic>
 #include <cstring>
+#include <limits>
+#include <string>
+#include <vector>
 #include <wchar.h>
 #include <openssl/bio.h>
 
 #include "abstract.hpp"
 #include "execution.hpp"
 #include "hooks.hpp"
+#include "input_mode.hpp"
+#include "outbound.hpp"
 #include "ssl.hpp"
 #include "telnet.hpp"
+#include "websocket.hpp"
 #include "mudmux/comm.h"
 #include "mudmux/hooks.h"
 
@@ -28,6 +34,9 @@ typedef SSIZE_T ssize_t;
 #define INBOUND_BAND_SUBNEG     1
 
 static constexpr uint32_t C_DEFERRED_INBOUND = 0x00004000;
+static constexpr uint32_t C_AWAITING_TELNET_HOOK = 0x00002000;
+static constexpr uint32_t C_AWAITING_CONNECT_HOOK = 0x00001000;
+static constexpr size_t WEBSOCKET_MAX_HANDSHAKE_BYTES = 8192;
 static std::atomic<bool> has_deferred_input{false};
 
 struct inbound_buffer_s {
@@ -108,6 +117,147 @@ bool comm_has_deferred_input (void) {
     return has_deferred_input.load(std::memory_order_acquire);
 }
 
+static size_t _copy_inbound_data_prefix(comm_abstract_ptr& comm, size_t limit, std::string& out) {
+    out.clear();
+    if (!comm || limit == 0) {
+        return 0;
+    }
+
+    size_t copied = 0;
+    for (inbound_buffer_t* ibb = comm->inbound; ibb && copied < limit; ibb = ibb->next) {
+        if (ibb->band != INBOUND_BAND_DATA || ibb->end <= ibb->start) {
+            continue;
+        }
+
+        const size_t available = ibb->end - ibb->start;
+        const size_t chunk = std::min(available, limit - copied);
+        out.append(ibb->buffer + ibb->start, chunk);
+        copied += chunk;
+    }
+
+    return copied;
+}
+
+static void _consume_inbound_data(comm_abstract_ptr& comm, size_t bytes) {
+    if (!comm || bytes == 0) {
+        return;
+    }
+
+    while (comm->inbound && bytes > 0) {
+        inbound_buffer_t* head = comm->inbound;
+
+        if (head->band != INBOUND_BAND_DATA) {
+            comm->inbound = head->next;
+            free_inbound_buffer(head);
+            continue;
+        }
+
+        const size_t available = (head->end > head->start) ? (head->end - head->start) : 0;
+        if (available == 0) {
+            comm->inbound = head->next;
+            free_inbound_buffer(head);
+            continue;
+        }
+
+        const size_t consume = std::min(available, bytes);
+        head->start += consume;
+        bytes -= consume;
+
+        if (head->start >= head->end) {
+            comm->inbound = head->next;
+            free_inbound_buffer(head);
+        }
+    }
+}
+
+static bool _find_http_header_end(const std::string& data, size_t* header_len) {
+    if (!header_len) {
+        return false;
+    }
+
+    const size_t crlf_crlf = data.find("\r\n\r\n");
+    if (crlf_crlf != std::string::npos) {
+        *header_len = crlf_crlf + 4;
+        return true;
+    }
+
+    const size_t lf_lf = data.find("\n\n");
+    if (lf_lf != std::string::npos) {
+        *header_len = lf_lf + 2;
+        return true;
+    }
+
+    return false;
+}
+
+static void _send_websocket_rejection(async_runtime_t* runtime, comm_abstract_ptr& comm, int status_code) {
+    const char* reason = "Bad Request";
+    if (status_code == 426) {
+        reason = "Upgrade Required";
+    } else if (status_code == 431) {
+        reason = "Request Header Fields Too Large";
+    }
+
+    std::string response = "HTTP/1.1 " + std::to_string(status_code) + " " + reason + "\r\n"
+                           "Connection: close\r\n"
+                           "Content-Length: 0\r\n";
+    if (status_code == 426) {
+        response += "Sec-WebSocket-Version: 13\r\n";
+    }
+    response += "\r\n";
+
+    comm_buffered_write_raw_comm(comm, response.data(), response.size());
+    comm_close(runtime, comm.slot());
+}
+
+static void _try_upgrade_websocket(async_runtime_t* runtime, comm_abstract_ptr& comm) {
+    if (!comm || !(comm->flags & C_ENABLE_WEBSOCKET) || (comm->flags & C_WEBSOCKET_READY)) {
+        return;
+    }
+
+    std::string request;
+    const size_t copied = _copy_inbound_data_prefix(comm, WEBSOCKET_MAX_HANDSHAKE_BYTES, request);
+    if (copied == 0) {
+        return;
+    }
+
+    size_t header_len = 0;
+    if (!_find_http_header_end(request, &header_len)) {
+        if (copied >= WEBSOCKET_MAX_HANDSHAKE_BYTES) {
+            SPDLOG_WARN("websocket handshake headers exceeded {} bytes on slot {}", WEBSOCKET_MAX_HANDSHAKE_BYTES, comm.slot());
+            _send_websocket_rejection(runtime, comm, 431);
+        }
+        return;
+    }
+
+    std::string response;
+    int rejection_status = 400;
+    bool negotiated_telnet = false;
+    if (!comm_websocket_build_upgrade_response(
+            std::string_view(request.data(), header_len),
+            comm_websocket_preferred_protocols(comm),
+            response,
+            &rejection_status,
+            &negotiated_telnet)) {
+        SPDLOG_WARN("websocket handshake rejected on slot {} with status {}", comm.slot(), rejection_status);
+        _send_websocket_rejection(runtime, comm, rejection_status);
+        return;
+    }
+
+    // The HTTP 101 response is part of the transport upgrade and must be
+    // written before WebSocket framing is enabled.  In particular, do not
+    // route it through the pre-upgrade application-output barrier.
+    comm_buffered_write_raw_comm(comm, response.data(), response.size());
+    _consume_inbound_data(comm, header_len);
+    comm->flags |= C_WEBSOCKET_READY;
+    if (negotiated_telnet) {
+        comm->flags |= C_WEBSOCKET_TELNET_PENDING;
+        comm_enable_telnet(comm.slot());
+    }
+    SPDLOG_INFO("websocket protocol switch completed for slot {} (telnet subprotocol: {})",
+        comm.slot(), negotiated_telnet);
+}
+
 static mudmux_dispatch_result_t _dispatch_telnet_subnegotiation(async_runtime_t* runtime, comm_abstract_ptr& comm, const comm_telnet_negotiation_t& telnet_neg) {
     if (telnet_neg.sb_len == 0)
         return MUDMUX_DISPATCH_OK;
@@ -168,6 +318,16 @@ void comm_resume_deferred_input (async_runtime_t* runtime) {
     has_deferred_input.store(any_deferred, std::memory_order_release);
 }
 
+static void _resume_input_after_connect_hook(void*, int slot) {
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
+    if (!comm)
+        return;
+
+    comm->flags &= ~C_AWAITING_CONNECT_HOOK;
+    comm->flags |= C_DEFERRED_INBOUND;
+    has_deferred_input.store(true, std::memory_order_release);
+}
+
 int comm_invoke_connect (async_runtime_t* runtime, int slot, int entry_slot) {
     if (!runtime)
         return -1;
@@ -180,13 +340,39 @@ int comm_invoke_connect (async_runtime_t* runtime, int slot, int entry_slot) {
     if (!entry_name)
         entry_name = "unknown";
     assert(entry_name != nullptr);
-    return mudmux_dispatch_hook (
+    const bool await_connect_hook = mudmux_execution_should_dispatch_async(HOOK_CONNECT);
+    if (await_connect_hook) {
+        comm_abstract_ptr comm(slot, comm_slots_mtx);
+        if (comm)
+            comm->flags |= C_AWAITING_CONNECT_HOOK;
+    }
+
+    const mudmux_dispatch_result_t result = mudmux_dispatch_hook_after(
         HOOK_CONNECT,
         async_runtime_get_context(runtime),
         slot,
-        static_cast<void*>(const_cast<char*>(entry_name)),
-        strlen(entry_name)
-	);
+        entry_name,
+        strlen(entry_name),
+        await_connect_hook ? _resume_input_after_connect_hook : nullptr,
+        nullptr);
+    if (await_connect_hook && result != MUDMUX_DISPATCH_OK) {
+        comm_abstract_ptr comm(slot, comm_slots_mtx);
+        if (comm)
+            comm->flags &= ~C_AWAITING_CONNECT_HOOK;
+    }
+    return static_cast<int>(result);
+}
+
+static void _resume_input_after_inbound_hook(void*, int slot) {
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
+    if (!comm)
+        return;
+
+    comm->flags &= ~C_AWAITING_TELNET_HOOK;
+    // The hook has now had an opportunity to choose the input mode. Resume
+    // buffered bytes using that post-hook mode.
+    comm->flags |= C_DEFERRED_INBOUND;
+    has_deferred_input.store(true, std::memory_order_release);
 }
 
 int comm_invoke_inbound_message (async_runtime_t* runtime, comm_abstract_ptr& comm, const void* data, size_t size) {
@@ -196,13 +382,38 @@ int comm_invoke_inbound_message (async_runtime_t* runtime, comm_abstract_ptr& co
 
     comm->flags &= ~C_INVOKED_PROMPT; // reset C_INVOKED_PROMPT flag on inbound message
     SPDLOG_DEBUG ("invoking inbound message hook for slot {} with {} bytes of data", comm.slot(), size);
-    return static_cast<int>(mudmux_dispatch_hook (
+    const bool serialize_telnet_hook = (comm->flags & C_ENABLE_TELNET)
+        && mudmux_execution_should_dispatch_async(HOOK_MESSAGE_INBOUND);
+    if (serialize_telnet_hook)
+        comm->flags |= C_AWAITING_TELNET_HOOK;
+
+    const mudmux_dispatch_result_t result = mudmux_dispatch_hook_after(
         HOOK_MESSAGE_INBOUND,
         async_runtime_get_context(runtime),
         comm.slot(),
-        const_cast<void*>(data),
-        size
-    ));
+        data,
+        size,
+        serialize_telnet_hook ? _resume_input_after_inbound_hook : nullptr,
+        nullptr);
+    if (serialize_telnet_hook && result != MUDMUX_DISPATCH_OK)
+        comm->flags &= ~C_AWAITING_TELNET_HOOK;
+    return static_cast<int>(result);
+}
+
+static int _invoke_char_input_message(async_runtime_t* runtime, comm_abstract_ptr& comm, const void* data, size_t size) {
+    if (!runtime || !comm || !data)
+        return -1;
+
+    comm->flags &= ~C_INVOKED_PROMPT;
+    SPDLOG_DEBUG("invoking single-character inbound message hook for slot {} with {} bytes of data", comm.slot(), size);
+    return static_cast<int>(mudmux_dispatch_hook_after(
+        HOOK_MESSAGE_INBOUND,
+        async_runtime_get_context(runtime),
+        comm.slot(),
+        data,
+        size,
+        _resume_input_after_inbound_hook,
+        nullptr));
 }
 
 void comm_free_inbound_buffers(comm_abstract_ptr& comm) {
@@ -289,7 +500,9 @@ static bool _refill_inbound_buffers_from_src(comm_abstract_ptr& comm, const char
         if (!bytes_to_copy)
             break; // no more space to copy data into the current buffer
         size_t bytes_copied = 0;
-        if ((comm->flags & C_ENABLE_TELNET) && !telnet_parsing_paused) {
+        const bool websocket_handshake_pending =
+            (comm->flags & C_ENABLE_WEBSOCKET) && !(comm->flags & C_WEBSOCKET_READY);
+        if ((comm->flags & C_ENABLE_TELNET) && !websocket_handshake_pending && !telnet_parsing_paused) {
             // copy telnet data from src, preserving telnet state in comm flags
             uint32_t state = comm->flags & M_TELNET_STATE; // restore saved telnet state from comm flags
             comm_telnet_negotiation_t telnet_neg;
@@ -321,6 +534,11 @@ static bool _refill_inbound_buffers_from_src(comm_abstract_ptr& comm, const char
         src += bytes_to_copy; // advance source pointer by the number of bytes consumed
         remaining -= bytes_to_copy; // decrease remaining bytes to copy from source
     }
+
+    if ((comm->flags & C_ENABLE_WEBSOCKET) && !(comm->flags & C_WEBSOCKET_READY)) {
+        _try_upgrade_websocket(runtime, comm);
+    }
+
     if (remaining > 0)
         SPDLOG_WARN ("inbound buffers full, {} bytes discarded", remaining);
     return (remaining == 0);
@@ -565,15 +783,94 @@ static inbound_buffer_t* _recycle_current_inbound_buffer(comm_abstract_ptr& comm
     return _skip_non_data_head_buffers(comm);
 }
 
+static mudmux_dispatch_result_t _dispatch_websocket_telnet_payload(
+    async_runtime_t* runtime, comm_abstract_ptr& comm, std::string_view payload) {
+    std::string application_data(payload.size(), '\0');
+    size_t consumed = 0;
+    uint32_t state = comm->flags & M_TELNET_STATE;
+    comm_telnet_negotiation_t telnet_neg{};
+    const size_t copied = comm_telnet_process_inbound(
+        application_data.data(), const_cast<char*>(payload.data()), payload.size(), &consumed, &state, &telnet_neg);
+    comm->flags = (comm->flags & ~M_TELNET_STATE) | (state & M_TELNET_STATE);
+    if (consumed > copied)
+        _process_telnet_options(comm, &telnet_neg);
+    if (telnet_neg.sb_len > 0) {
+        const mudmux_dispatch_result_t result = _dispatch_telnet_subnegotiation(runtime, comm, telnet_neg);
+        if (result != MUDMUX_DISPATCH_OK)
+            return result;
+    }
+    if (copied == 0)
+        return MUDMUX_DISPATCH_OK;
+    return static_cast<mudmux_dispatch_result_t>(
+        comm_invoke_inbound_message(runtime, comm, application_data.data(), copied));
+}
+
+static comm_process_result_t _process_websocket_input(async_runtime_t* runtime, comm_abstract_ptr& comm,
+                                                       int max_message, int& num_messages_processed) {
+    (void) max_message; // A decoded WebSocket message is atomic and must not be split across passes.
+    std::string wire;
+    _copy_inbound_data_prefix(comm, (std::numeric_limits<size_t>::max)(), wire);
+    if (wire.empty())
+        return COMM_PROCESS_OK;
+
+    std::vector<std::string> messages;
+    size_t consumed = 0;
+    int close_code = 1002;
+    if (!comm_websocket_process_inbound(comm, wire, &consumed, messages, &close_code)) {
+        if (close_code != 0) {
+            SPDLOG_WARN("invalid WebSocket frame on slot {}; closing with code {}", comm.slot(), close_code);
+            std::string close_payload;
+            close_payload.push_back(static_cast<char>((close_code >> 8) & 0xff));
+            close_payload.push_back(static_cast<char>(close_code & 0xff));
+            std::string close_frame;
+            if (comm_websocket_encode_frame(close_payload, 0x8, close_frame))
+                comm_buffered_write_raw_comm(comm, close_frame.data(), close_frame.size());
+        }
+        (void) comm_close(runtime, comm.slot());
+        return COMM_PROCESS_CLOSED;
+    }
+    _consume_inbound_data(comm, consumed);
+
+    for (const std::string& message : messages) {
+        const mudmux_dispatch_result_t result = (comm->flags & C_ENABLE_TELNET)
+            ? _dispatch_websocket_telnet_payload(runtime, comm, message)
+            : static_cast<mudmux_dispatch_result_t>(comm_invoke_inbound_message(runtime, comm, message.data(), message.size()));
+        if (result == MUDMUX_DISPATCH_QUEUE_FULL) {
+            comm->flags |= C_DEFERRED_INBOUND;
+            has_deferred_input.store(true, std::memory_order_release);
+            return COMM_PROCESS_DEFERRED;
+        }
+        ++num_messages_processed;
+        if (!comm)
+            return COMM_PROCESS_CLOSED;
+    }
+    return COMM_PROCESS_OK;
+}
+
 comm_process_result_t comm_process_input (async_runtime_t* runtime, comm_abstract_ptr& comm, int max_message) {
     if (!comm)
         return COMM_PROCESS_ERROR;
+    if (comm->flags & (C_AWAITING_CONNECT_HOOK | C_AWAITING_TELNET_HOOK))
+        return COMM_PROCESS_DEFERRED;
     if (mudmux_execution_has_pending_telnet_subneg(comm.slot()))
         return COMM_PROCESS_DEFERRED;
     comm->flags &= ~C_DEFERRED_INBOUND;
     inbound_buffer_t* ibb = _skip_non_data_head_buffers(comm);
     int num_messages_processed = 0;
-    if (comm->flags & C_LINE_INPUT) {
+    if ((comm->flags & C_ENABLE_WEBSOCKET) && !(comm->flags & C_WEBSOCKET_READY)) {
+        // Input may have arrived while the asynchronous connect hook was still
+        // configuring the slot. In that case it is already buffered when the
+        // hook enables WebSocket support, so retry the upgrade here rather than
+        // waiting for another socket read.
+        _try_upgrade_websocket(runtime, comm);
+        if (!(comm->flags & C_WEBSOCKET_READY))
+            return COMM_PROCESS_OK;
+    }
+
+    if (comm->flags & C_WEBSOCKET_READY) {
+        return _process_websocket_input(runtime, comm, max_message, num_messages_processed);
+    }
+    else if (comm->flags & C_LINE_INPUT) {
         //
         // [LINE INPUT MODE] process input data line by line, invoking the inbound message hook for each complete line
         //
@@ -597,6 +894,8 @@ comm_process_result_t comm_process_input (async_runtime_t* runtime, comm_abstrac
                 ++num_messages_processed;
                 if (!comm)
                     break; // comm slot may have been closed by the inbound message hook
+                if (comm->flags & C_AWAITING_TELNET_HOOK)
+                    break; // wait for the Telnet hook to choose the next input mode
             }
             SPDLOG_DEBUG ("next_line_start={}, ibb->start={}, ibb->end={}", next_line_start, ibb->start, ibb->end);
             size_t space = sizeof(ibb->buffer) - (ibb->end - ibb->start);
@@ -660,9 +959,14 @@ comm_process_result_t comm_process_input (async_runtime_t* runtime, comm_abstrac
         size_t char_len;
         while (ibb && (max_message < 0 || num_messages_processed < max_message)) {
             if ((next_char_start = _find_char_input_sequence(ibb, comm->flags, &char_len)) >= 0) {
-                // invoke inbound message hook for each complete ANSI character sequence
+                // Character input is one-shot: return to line input before dispatching
+                // so a hook must explicitly re-arm character input for the next message.
+                if (!comm_set_line_input(comm.slot(), true))
+                    return COMM_PROCESS_ERROR;
                 const mudmux_dispatch_result_t dispatch_result = static_cast<mudmux_dispatch_result_t>(
-                    comm_invoke_inbound_message(runtime, comm, ibb->buffer + ibb->start, char_len));
+                    ((comm->flags & C_ENABLE_TELNET) && mudmux_execution_should_dispatch_async(HOOK_MESSAGE_INBOUND))
+                        ? comm_invoke_inbound_message(runtime, comm, ibb->buffer + ibb->start, char_len)
+                        : _invoke_char_input_message(runtime, comm, ibb->buffer + ibb->start, char_len));
                 if (dispatch_result == MUDMUX_DISPATCH_QUEUE_FULL) {
                     comm->flags |= C_DEFERRED_INBOUND;
                     has_deferred_input.store(true, std::memory_order_release);
@@ -672,6 +976,7 @@ comm_process_result_t comm_process_input (async_runtime_t* runtime, comm_abstrac
                 ++num_messages_processed;
                 if (!comm)
                     break; // comm slot may have been closed by the inbound message hook
+                break; // Do not dispatch additional buffered characters before the hook re-arms char input.
             }
             SPDLOG_DEBUG ("next_char_start={}, ibb->start={}, ibb->end={}", next_char_start, ibb->start, ibb->end);
             if (next_char_start < 0)

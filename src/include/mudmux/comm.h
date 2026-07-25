@@ -16,6 +16,9 @@
 #define C_CLIENT_ECHO       0x04000000
 #define C_ENABLE_TELNET     0x02000000
 #define C_ENABLE_ANSI       0x01000000
+#define C_ENABLE_WEBSOCKET  0x00800000
+#define C_WEBSOCKET_READY   0x00400000
+#define C_WEBSOCKET_TELNET_PENDING 0x00200000
 #define C_ENABLE_PROMPT     0x00040000
 #define C_INVOKED_PROMPT    0x00020000
 #define C_BUFFERED_WRITE    0x00010000
@@ -54,6 +57,7 @@ typedef struct mudmux_comm_api_s {
     bool (*ssl_init)(const char* certificate_path, const char* private_key_path);
     void (*ssl_deinit)(void);
     void (*enable_telnet)(int slot);
+    bool (*enable_websocket)(int slot, const char* preferred_protocols);
     void (*enable_prompt)(int slot, bool enable);
     bool (*enable_virtual_terminal)(int slot);
     void (*enable_tls)(int slot);
@@ -74,6 +78,7 @@ typedef struct mudmux_comm_api_s {
 #define comm_ssl_deinit                 mudmux_comm_api_v1->ssl_deinit
 #define comm_enable_prompt              mudmux_comm_api_v1->enable_prompt
 #define comm_enable_telnet              mudmux_comm_api_v1->enable_telnet
+#define comm_enable_websocket           mudmux_comm_api_v1->enable_websocket
 #define comm_enable_virtual_terminal    mudmux_comm_api_v1->enable_virtual_terminal
 #define comm_enable_tls                 mudmux_comm_api_v1->enable_tls
 #endif

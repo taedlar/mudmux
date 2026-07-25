@@ -4,6 +4,7 @@
 
 #include "comm/inbound.hpp"
 #include "comm/input_mode.hpp"
+#include "comm/outbound.hpp"
 #include "../../src/execution.hpp"
 #include "mudmux/mudmux.h"
 #include "mudmux/comm.h"
@@ -11,6 +12,7 @@
 
 #include <string>
 #include <vector>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <future>
@@ -57,6 +59,11 @@ public:
             test_instance->inbound_messages.push_back(std::string(static_cast<char*>(data), len));
         }
         return 0; // Indicate success
+    }
+
+    static int hook_message_inbound_and_rearm_char(void* ctx, int slot, void* data, size_t len) {
+        const int result = hook_message_inbound(ctx, slot, data, len);
+        return comm_set_char_input(slot) ? result : -1;
     }
 
     static int hook_telnet_subneg(void* ctx, int option, void* data, size_t len) {
@@ -216,7 +223,7 @@ TEST_F(CommInboundTest, ProcessLineInputModeDispatchesCompleteLines) {
 
     const char* data = "  hello  \r\nworld\npartial";
     ASSERT_TRUE(comm_refill_inbound_buffers(comm, data, strlen(data)));
-    EXPECT_EQ(comm_process_input(runtime, comm, -1), 0);
+    EXPECT_EQ(comm_process_input(runtime, comm, -1), COMM_PROCESS_OK);
 
     ASSERT_EQ(inbound_messages.size(), 2u);
     EXPECT_EQ(inbound_messages[0], "hello");
@@ -241,12 +248,12 @@ TEST_F(CommInboundTest, ProcessCharInputModeDispatchesOneCharacterAtATime) {
     ASSERT_TRUE(comm);
 
     inbound_messages.clear();
-    mudmux_register_hook(HOOK_MESSAGE_INBOUND, CommInboundTest::hook_message_inbound);
+    mudmux_register_hook(HOOK_MESSAGE_INBOUND, CommInboundTest::hook_message_inbound_and_rearm_char);
 
     const char* data = "ab";
     ASSERT_TRUE(comm_refill_inbound_buffers(comm, data, strlen(data)));
-    EXPECT_EQ(comm_process_input(runtime, comm, 1), 0);
-    EXPECT_EQ(comm_process_input(runtime, comm, 1), 0);
+    EXPECT_EQ(comm_process_input(runtime, comm, 1), COMM_PROCESS_DEFERRED);
+    EXPECT_EQ(comm_process_input(runtime, comm, 1), COMM_PROCESS_DEFERRED);
 
     ASSERT_EQ(inbound_messages.size(), 2u);
     EXPECT_EQ(inbound_messages[0], "a");
@@ -265,16 +272,16 @@ TEST_F(CommInboundTest, ProcessCharInputModeTreatsAnsiSequenceAsSingleMessage) {
     ASSERT_TRUE(comm);
 
     inbound_messages.clear();
-    mudmux_register_hook(HOOK_MESSAGE_INBOUND, CommInboundTest::hook_message_inbound);
+    mudmux_register_hook(HOOK_MESSAGE_INBOUND, CommInboundTest::hook_message_inbound_and_rearm_char);
 
     const char* data = "\x1B[Ax";
     ASSERT_TRUE(comm_refill_inbound_buffers(comm, data, strlen(data)));
 
-    EXPECT_EQ(comm_process_input(runtime, comm, 1), 0);
+    EXPECT_EQ(comm_process_input(runtime, comm, 1), COMM_PROCESS_DEFERRED);
     ASSERT_EQ(inbound_messages.size(), 1u);
     EXPECT_EQ(inbound_messages[0], "\x1B[A");
 
-    EXPECT_EQ(comm_process_input(runtime, comm, 1), 0);
+    EXPECT_EQ(comm_process_input(runtime, comm, 1), COMM_PROCESS_DEFERRED);
     ASSERT_EQ(inbound_messages.size(), 2u);
     EXPECT_EQ(inbound_messages[1], "x");
 
@@ -295,12 +302,12 @@ TEST_F(CommInboundTest, ProcessCharInputModeWaitsForCompleteAnsiSequence) {
 
     const char* partial = "\x1B[";
     ASSERT_TRUE(comm_refill_inbound_buffers(comm, partial, strlen(partial)));
-    EXPECT_EQ(comm_process_input(runtime, comm, -1), 0);
+    EXPECT_EQ(comm_process_input(runtime, comm, -1), COMM_PROCESS_OK);
     EXPECT_TRUE(inbound_messages.empty());
 
     const char* complete = "31~";
     ASSERT_TRUE(comm_refill_inbound_buffers(comm, complete, strlen(complete)));
-    EXPECT_EQ(comm_process_input(runtime, comm, -1), 0);
+    EXPECT_EQ(comm_process_input(runtime, comm, -1), COMM_PROCESS_DEFERRED);
 
     ASSERT_EQ(inbound_messages.size(), 1u);
     EXPECT_EQ(inbound_messages[0], "\x1B[31~");
@@ -362,6 +369,194 @@ TEST_F(CommInboundTest, TelnetSubnegHookDispatchesBeforeSubsequentLineInput) {
     ASSERT_EQ(inbound_messages.size(), 2u);
     EXPECT_EQ(inbound_messages[0], "subneg:24:xy");
     EXPECT_EQ(inbound_messages[1], "foobar");
+
+    async_runtime_deinit(runtime);
+}
+
+TEST_F(CommInboundTest, WebSocketUpgradeDispatchesBinaryUtf8StreamAndFramesOutboundBinary) {
+    async_runtime_t* runtime = async_runtime_init(this);
+    ASSERT_NE(runtime, nullptr);
+
+    const int slot = add_memory_comm(0);
+    ASSERT_NE(slot, -1);
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
+    ASSERT_TRUE(comm);
+
+    inbound_messages.clear();
+    mudmux_register_hook(HOOK_MESSAGE_INBOUND, CommInboundTest::hook_message_inbound);
+
+    ASSERT_TRUE(mudmux_comm_api_v1->enable_websocket(slot, nullptr));
+
+    std::string request =
+        "GET /ws HTTP/1.1\r\n"
+        "Host: localhost\r\n"
+        "Upgrade: websocket\r\n"
+        "Connection: Upgrade\r\n"
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+        "Sec-WebSocket-Version: 13\r\n"
+        "\r\n";
+    std::string packet = request;
+    packet.push_back(static_cast<char>(0x82));
+    packet.push_back(static_cast<char>(0x82));
+    packet.push_back(static_cast<char>(0x01));
+    packet.push_back(static_cast<char>(0x02));
+    packet.push_back(static_cast<char>(0x03));
+    packet.push_back(static_cast<char>(0x04));
+    packet.push_back(static_cast<char>('h' ^ 0x01));
+    packet.push_back(static_cast<char>('i' ^ 0x02));
+
+    ASSERT_TRUE(comm_refill_inbound_buffers(comm, packet.data(), packet.size()));
+    EXPECT_EQ(comm_process_input(runtime, comm, -1), COMM_PROCESS_OK);
+
+    ASSERT_EQ(inbound_messages.size(), 1u);
+    EXPECT_EQ(inbound_messages[0], "hi");
+
+    comm_buffered_write(slot, "ok", 2);
+
+    comm_flush(runtime, slot);
+    std::array<char, 512> response_buf{};
+    const int response_len = BIO_read(comm->wbio, response_buf.data(), static_cast<int>(response_buf.size()));
+    ASSERT_GT(response_len, 0);
+    std::string response(response_buf.data(), static_cast<size_t>(response_len));
+    EXPECT_NE(response.find("101 Switching Protocols"), std::string::npos);
+    EXPECT_NE(response.find("Sec-WebSocket-Accept:"), std::string::npos);
+    EXPECT_NE(response.find(std::string("\x82\x02ok", 4)), std::string::npos);
+    EXPECT_TRUE((comm_get_flags(slot) & C_WEBSOCKET_READY) != 0);
+
+    async_runtime_deinit(runtime);
+}
+
+TEST_F(CommInboundTest, WebSocketUpgradeRejectsInvalidHandshake) {
+    async_runtime_t* runtime = async_runtime_init(this);
+    ASSERT_NE(runtime, nullptr);
+
+    const int slot = add_memory_comm(0);
+    ASSERT_NE(slot, -1);
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
+    ASSERT_TRUE(comm);
+
+    inbound_messages.clear();
+    mudmux_register_hook(HOOK_MESSAGE_INBOUND, CommInboundTest::hook_message_inbound);
+
+    ASSERT_TRUE(mudmux_comm_api_v1->enable_websocket(slot, nullptr));
+
+    const char* invalid_request =
+        "GET /ws HTTP/1.1\r\n"
+        "Host: localhost\r\n"
+        "Upgrade: websocket\r\n"
+        "Connection: Upgrade\r\n"
+        "Sec-WebSocket-Version: 13\r\n"
+        "\r\n";
+
+    ASSERT_TRUE(comm_refill_inbound_buffers(comm, invalid_request, strlen(invalid_request)));
+    EXPECT_EQ(comm_process_input(runtime, comm, -1), COMM_PROCESS_OK);
+    EXPECT_TRUE(inbound_messages.empty());
+
+    comm_flush(runtime, slot);
+    std::array<char, 512> response_buf{};
+    const int response_len = BIO_read(comm->wbio, response_buf.data(), static_cast<int>(response_buf.size()));
+    ASSERT_GT(response_len, 0);
+    std::string response(response_buf.data(), static_cast<size_t>(response_len));
+    EXPECT_NE(response.find("400 Bad Request"), std::string::npos);
+    EXPECT_TRUE((comm_get_flags(slot) & C_CLOSING) != 0);
+
+    async_runtime_deinit(runtime);
+}
+
+TEST_F(CommInboundTest, TelnetEnableRejectedWhenWebSocketUpgradePending) {
+    // TELNET cannot be enabled manually while WebSocket mode is active but upgrade not yet done.
+    const int slot = add_memory_comm(0);
+    ASSERT_NE(slot, -1);
+
+    ASSERT_TRUE(mudmux_comm_api_v1->enable_websocket(slot, nullptr));
+    mudmux_comm_api_v1->enable_telnet(slot);
+
+    const uint32_t flags = comm_get_flags(slot);
+    EXPECT_TRUE((flags & C_ENABLE_WEBSOCKET) != 0);
+    EXPECT_TRUE((flags & C_ENABLE_TELNET) == 0);
+}
+
+TEST_F(CommInboundTest, WebSocketClientSubprotocolIsIgnoredWithoutServerPreference) {
+    async_runtime_t* runtime = async_runtime_init(this);
+    ASSERT_NE(runtime, nullptr);
+
+    const int slot = add_memory_comm(0);
+    ASSERT_NE(slot, -1);
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
+    ASSERT_TRUE(comm);
+
+    ASSERT_TRUE(mudmux_comm_api_v1->enable_websocket(slot, nullptr));
+
+    const std::string request =
+        "GET /ws HTTP/1.1\r\n"
+        "Host: localhost\r\n"
+        "Upgrade: websocket\r\n"
+        "Connection: Upgrade\r\n"
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+        "Sec-WebSocket-Version: 13\r\n"
+        "Sec-WebSocket-Protocol: telnet.ietf.org\r\n"
+        "\r\n";
+
+    ASSERT_TRUE(comm_refill_inbound_buffers(comm, request.data(), request.size()));
+    EXPECT_EQ(comm_process_input(runtime, comm, -1), COMM_PROCESS_OK);
+
+    const uint32_t flags = comm_get_flags(slot);
+    EXPECT_TRUE((flags & C_WEBSOCKET_READY) != 0);
+    EXPECT_TRUE((flags & C_ENABLE_TELNET) == 0);
+
+    comm_flush(runtime, slot);
+    std::array<char, 512> response_buf{};
+    const int response_len = BIO_read(comm->wbio, response_buf.data(), static_cast<int>(response_buf.size()));
+    ASSERT_GT(response_len, 0);
+    const std::string response(response_buf.data(), static_cast<size_t>(response_len));
+    EXPECT_NE(response.find("101 Switching Protocols"), std::string::npos);
+    EXPECT_EQ(response.find("Sec-WebSocket-Protocol:"), std::string::npos);
+
+    async_runtime_deinit(runtime);
+}
+
+TEST_F(CommInboundTest, WebSocketTelnetSubprotocolProcessesBinaryTelnetPayload) {
+    async_runtime_t* runtime = async_runtime_init(this);
+    ASSERT_NE(runtime, nullptr);
+
+    const int slot = add_memory_comm(0);
+    ASSERT_NE(slot, -1);
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
+    ASSERT_TRUE(comm);
+    inbound_messages.clear();
+    mudmux_register_hook(HOOK_MESSAGE_INBOUND, CommInboundTest::hook_message_inbound);
+    ASSERT_TRUE(mudmux_comm_api_v1->enable_websocket(slot, "unrelated, telnet.mudstandards.org, telnet.ietf.org"));
+
+    std::string packet =
+        "GET /ws HTTP/1.1\r\n"
+        "Host: localhost\r\n"
+        "Upgrade: websocket\r\n"
+        "Connection: Upgrade\r\n"
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+        "Sec-WebSocket-Version: 13\r\n"
+        "Sec-WebSocket-Protocol: telnet.ietf.org, telnet.mudstandards.org\r\n"
+        "\r\n";
+    const std::array<unsigned char, 5> telnet_payload{{255, 251, 34, 'g', 'o'}};
+    packet.push_back(static_cast<char>(0x82)); // binary frame for Telnet bytes
+    packet.push_back(static_cast<char>(0x80 | telnet_payload.size()));
+    const std::array<unsigned char, 4> mask{{1, 2, 3, 4}};
+    for (unsigned char byte : mask)
+        packet.push_back(static_cast<char>(byte));
+    for (size_t i = 0; i < telnet_payload.size(); ++i)
+        packet.push_back(static_cast<char>(telnet_payload[i] ^ mask[i % mask.size()]));
+
+    ASSERT_TRUE(comm_refill_inbound_buffers(comm, packet.data(), packet.size()));
+    EXPECT_EQ(comm_process_input(runtime, comm, -1), COMM_PROCESS_OK);
+    ASSERT_EQ(inbound_messages.size(), 1u);
+    EXPECT_EQ(inbound_messages[0], "go");
+
+    comm_flush(runtime, slot);
+    std::array<char, 512> response_buf{};
+    const int response_len = BIO_read(comm->wbio, response_buf.data(), static_cast<int>(response_buf.size()));
+    ASSERT_GT(response_len, 0);
+    const std::string response(response_buf.data(), static_cast<size_t>(response_len));
+    EXPECT_NE(response.find("Sec-WebSocket-Protocol: telnet.mudstandards.org"), std::string::npos);
+    EXPECT_NE(response.find(std::string("\x82\x03\xff\xfb\x03", 5)), std::string::npos);
 
     async_runtime_deinit(runtime);
 }

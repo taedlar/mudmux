@@ -21,6 +21,7 @@
 
 #include "inbound.hpp"
 #include "outbound.hpp"
+#include "websocket.hpp"
 #include "mudmux/comm.h"
 
 std::recursive_mutex comm_slots_mtx;
@@ -152,6 +153,7 @@ int comm_abstract_remove (int slot) {
         return 0; // already removed or invalid slot
     comm_free_inbound_buffers(comm);
     comm_free_outbound_buffers(comm);
+    comm_websocket_free_state(comm);
 
     if (comm->ssl) {
         SSL_free(comm->ssl);

@@ -9,6 +9,7 @@ add_library(comm OBJECT
     inbound.cpp
     outbound.cpp
     telnet.cpp
+    websocket.cpp
     ssl.cpp
     ssl.hpp
 )
@@ -27,6 +28,7 @@ target_sources(comm INTERFACE
         input_mode.hpp
         inbound.hpp
         outbound.hpp
+        websocket.hpp
 )
 target_compile_definitions(comm PRIVATE mudmux_EXPORTS)
 

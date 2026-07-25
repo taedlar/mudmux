@@ -8,15 +8,7 @@
 #include "outbound.hpp"
 #include "mudmux/comm.h"
 
-void comm_enable_telnet (int slot) {
-    comm_abstract_ptr comm(slot, comm_slots_mtx);
-    if (!comm)
-        return;
-    if (comm->flags & C_ENABLE_TELNET)
-        return;
-    comm->flags |= C_ENABLE_TELNET;
-    SPDLOG_DEBUG ("enabled TELNET for comm slot {}", slot);
-
+static void _start_telnet_negotiation(comm_abstract_ptr& comm) {
     // Suppress obsolete Go Ahead (SGA), we are capable of full-duplex
     comm_telnet_send_will(comm, TELOPT_SGA);
 
@@ -28,6 +20,30 @@ void comm_enable_telnet (int slot) {
     // Negotiate LINEMODE for clients that support it (RFC 1184). This is the preferred mode
     // for line input, as it allows the client to handle local echo and line editing.
     comm_telnet_send_do(comm, TELOPT_LINEMODE);
+}
+
+void comm_enable_telnet (int slot) {
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
+    if (!comm)
+        return;
+    if ((comm->flags & C_ENABLE_WEBSOCKET) && !(comm->flags & C_WEBSOCKET_READY)) {
+        SPDLOG_WARN("cannot enable TELNET on slot {} before WebSocket upgrade completes", slot);
+        return;
+    }
+    if (comm->flags & C_ENABLE_TELNET)
+        return;
+    comm->flags |= C_ENABLE_TELNET;
+    SPDLOG_DEBUG ("enabled TELNET for comm slot {}", slot);
+
+    if (!(comm->flags & C_WEBSOCKET_TELNET_PENDING))
+        _start_telnet_negotiation(comm);
+}
+
+void comm_start_telnet_negotiation (int slot) {
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
+    if (!comm || !(comm->flags & C_ENABLE_TELNET))
+        return;
+    _start_telnet_negotiation(comm);
 }
 
 size_t comm_telnet_process_inbound (char* dest, char* src, size_t src_len, size_t* src_consumed,

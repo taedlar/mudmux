@@ -25,12 +25,16 @@ struct queued_hook_task_t {
     void* ctx{nullptr};
     int msg{-1};
     std::vector<char> payload;
+    mudmux_hook_completion_t completion{nullptr};
+    void* completion_context{nullptr};
 
     void clear() {
         hook_type = MAX_HOOK_TYPE;
         ctx = nullptr;
         msg = -1;
         payload.clear();
+        completion = nullptr;
+        completion_context = nullptr;
     }
 };
 
@@ -105,6 +109,8 @@ static void drain_slot_queue(int slot) {
 
         void* hook_data = task.payload.empty() ? nullptr : task.payload.data();
         (void)mudmux_invoke_registered_hook(task.hook_type, task.ctx, task.msg, hook_data, task.payload.size(), false);
+        if (task.completion)
+            task.completion(task.completion_context, task.msg);
     }
 
     async_runtime_t* runtime = async_get_current_runtime();
@@ -163,7 +169,14 @@ bool mudmux_execution_is_worker_thread() {
     return is_execution_worker_thread;
 }
 
-mudmux_dispatch_result_t mudmux_execution_enqueue_hook(enum mudmux_hook_type_t hook_type, void* ctx, int slot, const void* data, size_t size) {
+mudmux_dispatch_result_t mudmux_execution_enqueue_hook(
+    enum mudmux_hook_type_t hook_type,
+    void* ctx,
+    int slot,
+    const void* data,
+    size_t size,
+    mudmux_hook_completion_t completion,
+    void* completion_context) {
     if (!execution_state.running.load() || slot < 0)
         return MUDMUX_DISPATCH_ERROR;
 
@@ -171,6 +184,8 @@ mudmux_dispatch_result_t mudmux_execution_enqueue_hook(enum mudmux_hook_type_t h
     task.hook_type = hook_type;
     task.ctx = ctx;
     task.msg = slot;
+    task.completion = completion;
+    task.completion_context = completion_context;
     if (data && size > 0) {
         task.payload.resize(size);
         memcpy(task.payload.data(), data, size);

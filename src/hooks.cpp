@@ -52,12 +52,31 @@ MUDMUX_EXPORT int mudmux_invoke_hook (enum mudmux_hook_type_t hook_type, void* c
 }
 
 mudmux_dispatch_result_t mudmux_dispatch_hook(enum mudmux_hook_type_t hook_type, void* ctx, int msg, const void* data, size_t size) {
+    return mudmux_dispatch_hook_after(hook_type, ctx, msg, data, size, nullptr, nullptr);
+}
+
+mudmux_dispatch_result_t mudmux_dispatch_hook_after(
+    enum mudmux_hook_type_t hook_type,
+    void* ctx,
+    int msg,
+    const void* data,
+    size_t size,
+    mudmux_hook_completion_t completion,
+    void* completion_context) {
     if (!mudmux_execution_should_dispatch_async(hook_type))
-        return static_cast<mudmux_dispatch_result_t>(mudmux_invoke_hook(hook_type, ctx, msg, const_cast<void*>(data), size) < 0 ? MUDMUX_DISPATCH_ERROR : MUDMUX_DISPATCH_OK);
+    {
+        const mudmux_dispatch_result_t result = static_cast<mudmux_dispatch_result_t>(
+            mudmux_invoke_hook(hook_type, ctx, msg, const_cast<void*>(data), size) < 0
+                ? MUDMUX_DISPATCH_ERROR
+                : MUDMUX_DISPATCH_OK);
+        if (completion)
+            completion(completion_context, msg);
+        return result;
+    }
 
     if (hook_type == HOOK_TELNET_SUBNEG) {
         return MUDMUX_DISPATCH_ERROR;
     }
 
-    return mudmux_execution_enqueue_hook(hook_type, ctx, msg, data, size);
+    return mudmux_execution_enqueue_hook(hook_type, ctx, msg, data, size, completion, completion_context);
 }

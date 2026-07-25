@@ -62,6 +62,7 @@ static_assert(std::is_trivially_copyable_v<comm_telnet_negotiation_t>,
  * @param slot The communication slot to enable Telnet for.
  */
 void comm_enable_telnet (int slot);
+void comm_start_telnet_negotiation (int slot);
 
 /**
  * @brief Process inbound data from a Telnet client, handling Telnet commands and options.

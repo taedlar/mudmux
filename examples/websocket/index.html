@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>mudmux WebSocket test client</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; }
+    body { margin: 2rem auto; max-width: 52rem; padding: 0 1rem; }
+    fieldset, textarea, input, select, button { font: inherit; }
+    fieldset { display: grid; gap: .7rem; margin-bottom: 1rem; }
+    label { display: grid; gap: .25rem; }
+    input, select, textarea { box-sizing: border-box; padding: .45rem; width: 100%; }
+    textarea { min-height: 8rem; resize: vertical; }
+    button { padding: .45rem .8rem; }
+    #status { font-weight: 600; }
+    #log { background: #151515; border: 1px solid #555; min-height: 16rem; overflow: auto; padding: .75rem; white-space: pre-wrap; }
+    .in { color: #8ee; } .out { color: #9e9; } .event { color: #fc8; } .error { color: #f88; }
+  </style>
+</head>
+<body>
+  <h1>mudmux WebSocket test client</h1>
+  <p>
+    This client sends and receives binary WebSocket frames containing UTF-8 text.
+    Select a Telnet protocol to exercise Telnet-over-WebSocket negotiation.
+  </p>
+
+  <fieldset>
+    <label>WebSocket URL
+      <input id="url" value="ws://localhost:4000/" spellcheck="false">
+    </label>
+    <label>Requested subprotocol
+      <select id="protocol">
+        <option value="">None</option>
+        <option value="telnet.ietf.org" selected>telnet.ietf.org</option>
+        <option value="telnet.mudstandards.org">telnet.mudstandards.org</option>
+      </select>
+    </label>
+    <div>
+      <button id="connect" type="button">Connect</button>
+      <button id="disconnect" type="button" disabled>Disconnect</button>
+      <span id="status">Disconnected</span>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <label>Message
+      <textarea id="message" placeholder="Type a UTF-8 message"></textarea>
+    </label>
+    <div><button id="send" type="button" disabled>Send binary UTF-8 frame</button></div>
+  </fieldset>
+
+  <div id="log" aria-live="polite"></div>
+
+  <script>
+    (() => {
+      const encoder = new TextEncoder();
+      const decoder = new TextDecoder("utf-8", { fatal: false });
+      const $ = (id) => document.getElementById(id);
+      const log = (kind, text) => {
+        const line = document.createElement("div");
+        line.className = kind;
+        line.textContent = `${new Date().toLocaleTimeString()}  ${text}`;
+        $("log").append(line);
+        $("log").scrollTop = $("log").scrollHeight;
+      };
+
+      let socket = null;
+      const setConnected = (connected, status) => {
+        $("connect").disabled = connected;
+        $("disconnect").disabled = !connected;
+        $("send").disabled = !connected;
+        $("status").textContent = status;
+      };
+
+      $("connect").addEventListener("click", () => {
+        if (socket) return;
+        const protocol = $("protocol").value;
+        try {
+          socket = protocol ? new WebSocket($("url").value, [protocol]) : new WebSocket($("url").value);
+        } catch (error) {
+          log("error", `Could not create WebSocket: ${error.message}`);
+          return;
+        }
+        socket.binaryType = "arraybuffer";
+        $("status").textContent = "Connecting…";
+        socket.addEventListener("open", () => {
+          setConnected(true, `Connected${socket.protocol ? ` (${socket.protocol})` : ""}`);
+          log("event", `Connected; selected protocol: ${socket.protocol || "none"}`);
+        });
+        socket.addEventListener("message", async (event) => {
+          const bytes = typeof event.data === "string"
+            ? encoder.encode(event.data)
+            : event.data instanceof ArrayBuffer
+              ? new Uint8Array(event.data)
+              : new Uint8Array(await event.data.arrayBuffer());
+          log("in", `← ${decoder.decode(bytes)}`);
+        });
+        socket.addEventListener("error", () => log("error", "WebSocket error"));
+        socket.addEventListener("close", (event) => {
+          log("event", `Disconnected (code ${event.code}${event.reason ? `: ${event.reason}` : ""})`);
+          socket = null;
+          setConnected(false, "Disconnected");
+        });
+      });
+
+      $("disconnect").addEventListener("click", () => socket?.close(1000, "test client disconnect"));
+      $("send").addEventListener("click", () => {
+        if (!socket || socket.readyState !== WebSocket.OPEN) return;
+        const text = $("message").value;
+        socket.send(encoder.encode(text));
+        log("out", `→ ${text}`);
+        $("message").value = "";
+      });
+      $("message").addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && !event.shiftKey) {
+          event.preventDefault();
+          $("send").click();
+        }
+      });
+    })();
+  </script>
+</body>
+</html>
