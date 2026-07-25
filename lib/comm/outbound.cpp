@@ -12,6 +12,7 @@
 #include "file_input.hpp"
 #include "hooks.hpp"
 #include "ssl.hpp"
+#include "websocket.hpp"
 #include "mudmux/comm.h"
 #include "mudmux/hooks.h"
 #include "mudmux/mudmux.h"
@@ -54,7 +55,7 @@ static void free_outbound_buffer(outbound_buffer_t* buffer) {
     outbound_buffer_pool = buffer;
 }
 
-void comm_buffered_write_comm (comm_abstract_ptr& comm, const void *buf, size_t len) {
+void comm_buffered_write_raw_comm(comm_abstract_ptr& comm, const void *buf, size_t len) {
     if (!comm || !comm->wbio || !buf || len == 0)
         return; // invalid parameters
     if (len > sizeof(outbound_buffer_t::buffer) * MAX_OUTBOUND_BUFFERS_PER_SLOT) {
@@ -118,6 +119,21 @@ void comm_buffered_write_comm (comm_abstract_ptr& comm, const void *buf, size_t 
             }
         }
     }
+}
+
+void comm_buffered_write_comm (comm_abstract_ptr& comm, const void *buf, size_t len) {
+    if (!comm || !buf || len == 0)
+        return;
+    if (comm->flags & C_WEBSOCKET_READY) {
+        std::string frame;
+        if (!comm_websocket_encode_frame(std::string_view(static_cast<const char*>(buf), len), 0x2, frame)) {
+            SPDLOG_ERROR("failed to encode WebSocket outbound frame");
+            return;
+        }
+        comm_buffered_write_raw_comm(comm, frame.data(), frame.size());
+        return;
+    }
+    comm_buffered_write_raw_comm(comm, buf, len);
 }
 
 void comm_buffered_write (int slot, const void *buf, size_t len) {

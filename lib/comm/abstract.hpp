@@ -13,6 +13,7 @@
 
 typedef struct inbound_buffer_s inbound_buffer_t;
 typedef struct outbound_buffer_s outbound_buffer_t;
+typedef struct comm_websocket_state_s comm_websocket_state_t;
 
 typedef struct comm_abstract_s {
     BIO *rbio; // could be null or equal to wbio for bidirectional sockets
@@ -20,6 +21,7 @@ typedef struct comm_abstract_s {
     SSL *ssl; // could be null if SSL/TLS is not enabled for this comm
     inbound_buffer_t* inbound;
     outbound_buffer_t* outbound;
+    comm_websocket_state_t* websocket;
     uint32_t flags;
     struct client_capabilities_s { // bitfields of client capabilities (negotiated via TELNET or other protocols)
         uint32_t telnet_linemode : 1; // client says WILL TELOPT_LINEMODE (RFC 1184)

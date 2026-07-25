@@ -9,7 +9,9 @@
 #include <array>
 #include <atomic>
 #include <cstring>
+#include <limits>
 #include <string>
+#include <vector>
 #include <wchar.h>
 #include <openssl/bio.h>
 
@@ -230,6 +232,7 @@ static void _try_upgrade_websocket(async_runtime_t* runtime, comm_abstract_ptr& 
     bool negotiated_telnet = false;
     if (!comm_websocket_build_upgrade_response(
             std::string_view(request.data(), header_len),
+            comm_websocket_preferred_protocols(comm),
             response,
             &rejection_status,
             &negotiated_telnet)) {
@@ -711,6 +714,70 @@ static inbound_buffer_t* _recycle_current_inbound_buffer(comm_abstract_ptr& comm
     return _skip_non_data_head_buffers(comm);
 }
 
+static mudmux_dispatch_result_t _dispatch_websocket_telnet_payload(
+    async_runtime_t* runtime, comm_abstract_ptr& comm, std::string_view payload) {
+    std::string application_data(payload.size(), '\0');
+    size_t consumed = 0;
+    uint32_t state = comm->flags & M_TELNET_STATE;
+    comm_telnet_negotiation_t telnet_neg{};
+    const size_t copied = comm_telnet_process_inbound(
+        application_data.data(), const_cast<char*>(payload.data()), payload.size(), &consumed, &state, &telnet_neg);
+    comm->flags = (comm->flags & ~M_TELNET_STATE) | (state & M_TELNET_STATE);
+    if (consumed > copied)
+        _process_telnet_options(comm, &telnet_neg);
+    if (telnet_neg.sb_len > 0) {
+        const mudmux_dispatch_result_t result = _dispatch_telnet_subnegotiation(runtime, comm, telnet_neg);
+        if (result != MUDMUX_DISPATCH_OK)
+            return result;
+    }
+    if (copied == 0)
+        return MUDMUX_DISPATCH_OK;
+    return static_cast<mudmux_dispatch_result_t>(
+        comm_invoke_inbound_message(runtime, comm, application_data.data(), copied));
+}
+
+static comm_process_result_t _process_websocket_input(async_runtime_t* runtime, comm_abstract_ptr& comm,
+                                                       int max_message, int& num_messages_processed) {
+    (void) max_message; // A decoded WebSocket message is atomic and must not be split across passes.
+    std::string wire;
+    _copy_inbound_data_prefix(comm, (std::numeric_limits<size_t>::max)(), wire);
+    if (wire.empty())
+        return COMM_PROCESS_OK;
+
+    std::vector<std::string> messages;
+    size_t consumed = 0;
+    int close_code = 1002;
+    if (!comm_websocket_process_inbound(comm, wire, &consumed, messages, &close_code)) {
+        if (close_code != 0) {
+            SPDLOG_WARN("invalid WebSocket frame on slot {}; closing with code {}", comm.slot(), close_code);
+            std::string close_payload;
+            close_payload.push_back(static_cast<char>((close_code >> 8) & 0xff));
+            close_payload.push_back(static_cast<char>(close_code & 0xff));
+            std::string close_frame;
+            if (comm_websocket_encode_frame(close_payload, 0x8, close_frame))
+                comm_buffered_write_raw_comm(comm, close_frame.data(), close_frame.size());
+        }
+        (void) comm_close(runtime, comm.slot());
+        return COMM_PROCESS_CLOSED;
+    }
+    _consume_inbound_data(comm, consumed);
+
+    for (const std::string& message : messages) {
+        const mudmux_dispatch_result_t result = (comm->flags & C_ENABLE_TELNET)
+            ? _dispatch_websocket_telnet_payload(runtime, comm, message)
+            : static_cast<mudmux_dispatch_result_t>(comm_invoke_inbound_message(runtime, comm, message.data(), message.size()));
+        if (result == MUDMUX_DISPATCH_QUEUE_FULL) {
+            comm->flags |= C_DEFERRED_INBOUND;
+            has_deferred_input.store(true, std::memory_order_release);
+            return COMM_PROCESS_DEFERRED;
+        }
+        ++num_messages_processed;
+        if (!comm)
+            return COMM_PROCESS_CLOSED;
+    }
+    return COMM_PROCESS_OK;
+}
+
 comm_process_result_t comm_process_input (async_runtime_t* runtime, comm_abstract_ptr& comm, int max_message) {
     if (!comm)
         return COMM_PROCESS_ERROR;
@@ -724,33 +791,7 @@ comm_process_result_t comm_process_input (async_runtime_t* runtime, comm_abstrac
     }
 
     if (comm->flags & C_WEBSOCKET_READY) {
-        // In WebSocket mode, pass post-upgrade bytes as-is to the logic layer.
-        while (ibb && (max_message < 0 || num_messages_processed < max_message)) {
-            if (ibb->end <= ibb->start) {
-                ibb = _recycle_current_inbound_buffer(comm, ibb);
-                if (!ibb || ibb->end <= ibb->start)
-                    break;
-                continue;
-            }
-
-            const size_t payload_len = ibb->end - ibb->start;
-            const mudmux_dispatch_result_t dispatch_result = static_cast<mudmux_dispatch_result_t>(
-                comm_invoke_inbound_message(runtime, comm, ibb->buffer + ibb->start, payload_len));
-            if (dispatch_result == MUDMUX_DISPATCH_QUEUE_FULL) {
-                comm->flags |= C_DEFERRED_INBOUND;
-                has_deferred_input.store(true, std::memory_order_release);
-                break;
-            }
-
-            ibb->start = ibb->end;
-            ++num_messages_processed;
-            if (!comm)
-                break;
-
-            ibb = _recycle_current_inbound_buffer(comm, ibb);
-            if (!ibb || ibb->end <= ibb->start)
-                break;
-        }
+        return _process_websocket_input(runtime, comm, max_message, num_messages_processed);
     }
     else if (comm->flags & C_LINE_INPUT) {
         //
