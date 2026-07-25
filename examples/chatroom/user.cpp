@@ -95,5 +95,8 @@ void User::receiveExitConfirmation(const std::string& message) {
             inbound_handler = nullptr; // reset the inbound handler
             comm_set_line_input(comm_slot, true); // set line input mode back to normal
         }
+        else {
+            comm_set_char_input(comm_slot); // re-arm character input mode to continue receiving input
+        }
     }
 }

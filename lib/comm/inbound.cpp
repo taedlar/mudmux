@@ -18,6 +18,7 @@
 #include "abstract.hpp"
 #include "execution.hpp"
 #include "hooks.hpp"
+#include "input_mode.hpp"
 #include "outbound.hpp"
 #include "ssl.hpp"
 #include "telnet.hpp"
@@ -33,6 +34,8 @@ typedef SSIZE_T ssize_t;
 #define INBOUND_BAND_SUBNEG     1
 
 static constexpr uint32_t C_DEFERRED_INBOUND = 0x00004000;
+static constexpr uint32_t C_AWAITING_TELNET_HOOK = 0x00002000;
+static constexpr uint32_t C_AWAITING_CONNECT_HOOK = 0x00001000;
 static constexpr size_t WEBSOCKET_MAX_HANDSHAKE_BYTES = 8192;
 static std::atomic<bool> has_deferred_input{false};
 
@@ -203,7 +206,7 @@ static void _send_websocket_rejection(async_runtime_t* runtime, comm_abstract_pt
     }
     response += "\r\n";
 
-    comm_buffered_write_comm(comm, response.data(), response.size());
+    comm_buffered_write_raw_comm(comm, response.data(), response.size());
     comm_close(runtime, comm.slot());
 }
 
@@ -241,11 +244,16 @@ static void _try_upgrade_websocket(async_runtime_t* runtime, comm_abstract_ptr& 
         return;
     }
 
-    comm_buffered_write_comm(comm, response.data(), response.size());
+    // The HTTP 101 response is part of the transport upgrade and must be
+    // written before WebSocket framing is enabled.  In particular, do not
+    // route it through the pre-upgrade application-output barrier.
+    comm_buffered_write_raw_comm(comm, response.data(), response.size());
     _consume_inbound_data(comm, header_len);
     comm->flags |= C_WEBSOCKET_READY;
-    if (negotiated_telnet)
+    if (negotiated_telnet) {
+        comm->flags |= C_WEBSOCKET_TELNET_PENDING;
         comm_enable_telnet(comm.slot());
+    }
     SPDLOG_INFO("websocket protocol switch completed for slot {} (telnet subprotocol: {})",
         comm.slot(), negotiated_telnet);
 }
@@ -310,6 +318,16 @@ void comm_resume_deferred_input (async_runtime_t* runtime) {
     has_deferred_input.store(any_deferred, std::memory_order_release);
 }
 
+static void _resume_input_after_connect_hook(void*, int slot) {
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
+    if (!comm)
+        return;
+
+    comm->flags &= ~C_AWAITING_CONNECT_HOOK;
+    comm->flags |= C_DEFERRED_INBOUND;
+    has_deferred_input.store(true, std::memory_order_release);
+}
+
 int comm_invoke_connect (async_runtime_t* runtime, int slot, int entry_slot) {
     if (!runtime)
         return -1;
@@ -322,13 +340,39 @@ int comm_invoke_connect (async_runtime_t* runtime, int slot, int entry_slot) {
     if (!entry_name)
         entry_name = "unknown";
     assert(entry_name != nullptr);
-    return mudmux_dispatch_hook (
+    const bool await_connect_hook = mudmux_execution_should_dispatch_async(HOOK_CONNECT);
+    if (await_connect_hook) {
+        comm_abstract_ptr comm(slot, comm_slots_mtx);
+        if (comm)
+            comm->flags |= C_AWAITING_CONNECT_HOOK;
+    }
+
+    const mudmux_dispatch_result_t result = mudmux_dispatch_hook_after(
         HOOK_CONNECT,
         async_runtime_get_context(runtime),
         slot,
-        static_cast<void*>(const_cast<char*>(entry_name)),
-        strlen(entry_name)
-	);
+        entry_name,
+        strlen(entry_name),
+        await_connect_hook ? _resume_input_after_connect_hook : nullptr,
+        nullptr);
+    if (await_connect_hook && result != MUDMUX_DISPATCH_OK) {
+        comm_abstract_ptr comm(slot, comm_slots_mtx);
+        if (comm)
+            comm->flags &= ~C_AWAITING_CONNECT_HOOK;
+    }
+    return static_cast<int>(result);
+}
+
+static void _resume_input_after_inbound_hook(void*, int slot) {
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
+    if (!comm)
+        return;
+
+    comm->flags &= ~C_AWAITING_TELNET_HOOK;
+    // The hook has now had an opportunity to choose the input mode. Resume
+    // buffered bytes using that post-hook mode.
+    comm->flags |= C_DEFERRED_INBOUND;
+    has_deferred_input.store(true, std::memory_order_release);
 }
 
 int comm_invoke_inbound_message (async_runtime_t* runtime, comm_abstract_ptr& comm, const void* data, size_t size) {
@@ -338,13 +382,38 @@ int comm_invoke_inbound_message (async_runtime_t* runtime, comm_abstract_ptr& co
 
     comm->flags &= ~C_INVOKED_PROMPT; // reset C_INVOKED_PROMPT flag on inbound message
     SPDLOG_DEBUG ("invoking inbound message hook for slot {} with {} bytes of data", comm.slot(), size);
-    return static_cast<int>(mudmux_dispatch_hook (
+    const bool serialize_telnet_hook = (comm->flags & C_ENABLE_TELNET)
+        && mudmux_execution_should_dispatch_async(HOOK_MESSAGE_INBOUND);
+    if (serialize_telnet_hook)
+        comm->flags |= C_AWAITING_TELNET_HOOK;
+
+    const mudmux_dispatch_result_t result = mudmux_dispatch_hook_after(
         HOOK_MESSAGE_INBOUND,
         async_runtime_get_context(runtime),
         comm.slot(),
-        const_cast<void*>(data),
-        size
-    ));
+        data,
+        size,
+        serialize_telnet_hook ? _resume_input_after_inbound_hook : nullptr,
+        nullptr);
+    if (serialize_telnet_hook && result != MUDMUX_DISPATCH_OK)
+        comm->flags &= ~C_AWAITING_TELNET_HOOK;
+    return static_cast<int>(result);
+}
+
+static int _invoke_char_input_message(async_runtime_t* runtime, comm_abstract_ptr& comm, const void* data, size_t size) {
+    if (!runtime || !comm || !data)
+        return -1;
+
+    comm->flags &= ~C_INVOKED_PROMPT;
+    SPDLOG_DEBUG("invoking single-character inbound message hook for slot {} with {} bytes of data", comm.slot(), size);
+    return static_cast<int>(mudmux_dispatch_hook_after(
+        HOOK_MESSAGE_INBOUND,
+        async_runtime_get_context(runtime),
+        comm.slot(),
+        data,
+        size,
+        _resume_input_after_inbound_hook,
+        nullptr));
 }
 
 void comm_free_inbound_buffers(comm_abstract_ptr& comm) {
@@ -781,13 +850,21 @@ static comm_process_result_t _process_websocket_input(async_runtime_t* runtime, 
 comm_process_result_t comm_process_input (async_runtime_t* runtime, comm_abstract_ptr& comm, int max_message) {
     if (!comm)
         return COMM_PROCESS_ERROR;
+    if (comm->flags & (C_AWAITING_CONNECT_HOOK | C_AWAITING_TELNET_HOOK))
+        return COMM_PROCESS_DEFERRED;
     if (mudmux_execution_has_pending_telnet_subneg(comm.slot()))
         return COMM_PROCESS_DEFERRED;
     comm->flags &= ~C_DEFERRED_INBOUND;
     inbound_buffer_t* ibb = _skip_non_data_head_buffers(comm);
     int num_messages_processed = 0;
     if ((comm->flags & C_ENABLE_WEBSOCKET) && !(comm->flags & C_WEBSOCKET_READY)) {
-        return COMM_PROCESS_OK;
+        // Input may have arrived while the asynchronous connect hook was still
+        // configuring the slot. In that case it is already buffered when the
+        // hook enables WebSocket support, so retry the upgrade here rather than
+        // waiting for another socket read.
+        _try_upgrade_websocket(runtime, comm);
+        if (!(comm->flags & C_WEBSOCKET_READY))
+            return COMM_PROCESS_OK;
     }
 
     if (comm->flags & C_WEBSOCKET_READY) {
@@ -817,6 +894,8 @@ comm_process_result_t comm_process_input (async_runtime_t* runtime, comm_abstrac
                 ++num_messages_processed;
                 if (!comm)
                     break; // comm slot may have been closed by the inbound message hook
+                if (comm->flags & C_AWAITING_TELNET_HOOK)
+                    break; // wait for the Telnet hook to choose the next input mode
             }
             SPDLOG_DEBUG ("next_line_start={}, ibb->start={}, ibb->end={}", next_line_start, ibb->start, ibb->end);
             size_t space = sizeof(ibb->buffer) - (ibb->end - ibb->start);
@@ -880,9 +959,14 @@ comm_process_result_t comm_process_input (async_runtime_t* runtime, comm_abstrac
         size_t char_len;
         while (ibb && (max_message < 0 || num_messages_processed < max_message)) {
             if ((next_char_start = _find_char_input_sequence(ibb, comm->flags, &char_len)) >= 0) {
-                // invoke inbound message hook for each complete ANSI character sequence
+                // Character input is one-shot: return to line input before dispatching
+                // so a hook must explicitly re-arm character input for the next message.
+                if (!comm_set_line_input(comm.slot(), true))
+                    return COMM_PROCESS_ERROR;
                 const mudmux_dispatch_result_t dispatch_result = static_cast<mudmux_dispatch_result_t>(
-                    comm_invoke_inbound_message(runtime, comm, ibb->buffer + ibb->start, char_len));
+                    ((comm->flags & C_ENABLE_TELNET) && mudmux_execution_should_dispatch_async(HOOK_MESSAGE_INBOUND))
+                        ? comm_invoke_inbound_message(runtime, comm, ibb->buffer + ibb->start, char_len)
+                        : _invoke_char_input_message(runtime, comm, ibb->buffer + ibb->start, char_len));
                 if (dispatch_result == MUDMUX_DISPATCH_QUEUE_FULL) {
                     comm->flags |= C_DEFERRED_INBOUND;
                     has_deferred_input.store(true, std::memory_order_release);
@@ -892,6 +976,7 @@ comm_process_result_t comm_process_input (async_runtime_t* runtime, comm_abstrac
                 ++num_messages_processed;
                 if (!comm)
                     break; // comm slot may have been closed by the inbound message hook
+                break; // Do not dispatch additional buffered characters before the hook re-arms char input.
             }
             SPDLOG_DEBUG ("next_char_start={}, ibb->start={}, ibb->end={}", next_char_start, ibb->start, ibb->end);
             if (next_char_start < 0)

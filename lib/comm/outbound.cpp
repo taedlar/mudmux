@@ -4,6 +4,7 @@
 
 #include "outbound.hpp"
 
+#include <algorithm>
 #include <mutex>
 #include <openssl/bio.h>
 #include <openssl/err.h>
@@ -12,6 +13,7 @@
 #include "file_input.hpp"
 #include "hooks.hpp"
 #include "ssl.hpp"
+#include "telnet.hpp"
 #include "websocket.hpp"
 #include "mudmux/comm.h"
 #include "mudmux/hooks.h"
@@ -53,6 +55,44 @@ static void free_outbound_buffer(outbound_buffer_t* buffer) {
         return;
     buffer->next = outbound_buffer_pool;
     outbound_buffer_pool = buffer;
+}
+
+static bool append_websocket_upgrade_barrier(comm_abstract_ptr& comm, const void* data, size_t size) {
+    if (!comm || !data || size == 0)
+        return false;
+
+    outbound_buffer_t*& barrier = comm->websocket_upgrade_barrier;
+    if (!barrier)
+        barrier = allocate_outbound_buffer();
+    if (!barrier)
+        return false;
+
+    outbound_buffer_t* tail = barrier;
+    int buffer_count = 1;
+    while (tail->next) {
+        tail = tail->next;
+        if (++buffer_count >= MAX_OUTBOUND_BUFFERS_PER_SLOT)
+            return false;
+    }
+
+    while (size > 0) {
+        const size_t space = sizeof(tail->buffer) - tail->end;
+        if (space == 0) {
+            if (++buffer_count > MAX_OUTBOUND_BUFFERS_PER_SLOT)
+                return false;
+            tail->next = allocate_outbound_buffer();
+            tail = tail->next;
+            if (!tail)
+                return false;
+            continue;
+        }
+        const size_t copied = std::min(space, size);
+        memcpy(tail->buffer + tail->end, data, copied);
+        tail->end += copied;
+        data = static_cast<const char*>(data) + copied;
+        size -= copied;
+    }
+    return true;
 }
 
 void comm_buffered_write_raw_comm(comm_abstract_ptr& comm, const void *buf, size_t len) {
@@ -124,6 +164,15 @@ void comm_buffered_write_raw_comm(comm_abstract_ptr& comm, const void *buf, size
 void comm_buffered_write_comm (comm_abstract_ptr& comm, const void *buf, size_t len) {
     if (!comm || !buf || len == 0)
         return;
+    if ((comm->flags & C_ENABLE_WEBSOCKET) && !(comm->flags & C_WEBSOCKET_READY)) {
+        // Application output must not precede the HTTP 101 response. Preserve
+        // it in the upgrade barrier as already-framed WebSocket data.
+        std::string frame;
+        if (!comm_websocket_encode_frame(std::string_view(static_cast<const char*>(buf), len), 0x2, frame)
+            || !append_websocket_upgrade_barrier(comm, frame.data(), frame.size()))
+            SPDLOG_ERROR("failed to queue WebSocket upgrade-barrier output");
+        return;
+    }
     if (comm->flags & C_WEBSOCKET_READY) {
         std::string frame;
         if (!comm_websocket_encode_frame(std::string_view(static_cast<const char*>(buf), len), 0x2, frame)) {
@@ -149,6 +198,11 @@ void comm_free_outbound_buffers(comm_abstract_ptr& comm) {
             outbound_buffer_t* next_buffer = comm->outbound->next;
             free_outbound_buffer(comm->outbound);
             comm->outbound = next_buffer;
+        }
+        while (comm->websocket_upgrade_barrier) {
+            outbound_buffer_t* next_buffer = comm->websocket_upgrade_barrier->next;
+            free_outbound_buffer(comm->websocket_upgrade_barrier);
+            comm->websocket_upgrade_barrier = next_buffer;
         }
         assert(comm->outbound == nullptr);
     }
@@ -218,6 +272,25 @@ void comm_flush (async_runtime_t* runtime, int slot) {
     }
     BIO_flush(comm->wbio); // ensure all data is sent to the transport layer
 
+    // The HTTP upgrade response has drained. Queue the Telnet negotiation only
+    // now, so it is sent as WebSocket data after the response bytes.
+    if (!comm->outbound && (comm->flags & C_WEBSOCKET_TELNET_PENDING)) {
+        comm->flags &= ~C_WEBSOCKET_TELNET_PENDING;
+        if (!(comm->flags & C_CLOSING)) {
+            comm_start_telnet_negotiation(slot);
+            comm_flush(runtime, slot);
+            return;
+        }
+    }
+
+    if (!comm->outbound && comm->websocket_upgrade_barrier) {
+        comm->outbound = comm->websocket_upgrade_barrier;
+        comm->websocket_upgrade_barrier = nullptr;
+        comm->flags |= C_BUFFERED_WRITE;
+        comm_flush(runtime, slot);
+        return;
+    }
+
     socket_fd_t fd {INVALID_SOCKET_FD};
     if (!comm_bio_get_socket_fd(comm->wbio, &fd)) {
         SPDLOG_WARN ("Failed to retrieve socket fd from BIO during flush for slot {}", slot);
@@ -252,6 +325,7 @@ void comm_flush (async_runtime_t* runtime, int slot) {
                 BIO_shutdown_wr(comm->wbio); // shutdown write side of the socket and expect the peer to close the connection
             }
         }
+
     }
 }
 

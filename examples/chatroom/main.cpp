@@ -30,8 +30,9 @@ static int on_connect (void*, int slot, void* data, size_t len) {
         User::slots.resize(slot + 32);
     User::slots[slot] = std::make_shared<User>(slot);
     if (entry_name != "-") {
-        comm_enable_telnet (slot); // enable TELNET for non-console connections
-        comm_enable_tls (slot); // enable TLS for secure connections
+        // comm_enable_telnet (slot); // enable TELNET for non-console connections
+        // comm_enable_tls (slot); // enable TLS for secure connections
+        comm_enable_websocket (slot, "telnet.ietf.org, telnet.mudstandards.org"); // enable WebSocket for web clients
     }
     comm_enable_virtual_terminal (slot); // enable ANSI/VT100 processing for console and TELNET connections
     comm_enable_prompt (slot, true); // enable prompt for console user

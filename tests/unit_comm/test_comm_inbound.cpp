@@ -61,6 +61,11 @@ public:
         return 0; // Indicate success
     }
 
+    static int hook_message_inbound_and_rearm_char(void* ctx, int slot, void* data, size_t len) {
+        const int result = hook_message_inbound(ctx, slot, data, len);
+        return comm_set_char_input(slot) ? result : -1;
+    }
+
     static int hook_telnet_subneg(void* ctx, int option, void* data, size_t len) {
         CommInboundTest* test_instance = static_cast<CommInboundTest*>(ctx);
         if (test_instance) {
@@ -218,7 +223,7 @@ TEST_F(CommInboundTest, ProcessLineInputModeDispatchesCompleteLines) {
 
     const char* data = "  hello  \r\nworld\npartial";
     ASSERT_TRUE(comm_refill_inbound_buffers(comm, data, strlen(data)));
-    EXPECT_EQ(comm_process_input(runtime, comm, -1), 0);
+    EXPECT_EQ(comm_process_input(runtime, comm, -1), COMM_PROCESS_OK);
 
     ASSERT_EQ(inbound_messages.size(), 2u);
     EXPECT_EQ(inbound_messages[0], "hello");
@@ -243,12 +248,12 @@ TEST_F(CommInboundTest, ProcessCharInputModeDispatchesOneCharacterAtATime) {
     ASSERT_TRUE(comm);
 
     inbound_messages.clear();
-    mudmux_register_hook(HOOK_MESSAGE_INBOUND, CommInboundTest::hook_message_inbound);
+    mudmux_register_hook(HOOK_MESSAGE_INBOUND, CommInboundTest::hook_message_inbound_and_rearm_char);
 
     const char* data = "ab";
     ASSERT_TRUE(comm_refill_inbound_buffers(comm, data, strlen(data)));
-    EXPECT_EQ(comm_process_input(runtime, comm, 1), 0);
-    EXPECT_EQ(comm_process_input(runtime, comm, 1), 0);
+    EXPECT_EQ(comm_process_input(runtime, comm, 1), COMM_PROCESS_DEFERRED);
+    EXPECT_EQ(comm_process_input(runtime, comm, 1), COMM_PROCESS_DEFERRED);
 
     ASSERT_EQ(inbound_messages.size(), 2u);
     EXPECT_EQ(inbound_messages[0], "a");
@@ -267,16 +272,16 @@ TEST_F(CommInboundTest, ProcessCharInputModeTreatsAnsiSequenceAsSingleMessage) {
     ASSERT_TRUE(comm);
 
     inbound_messages.clear();
-    mudmux_register_hook(HOOK_MESSAGE_INBOUND, CommInboundTest::hook_message_inbound);
+    mudmux_register_hook(HOOK_MESSAGE_INBOUND, CommInboundTest::hook_message_inbound_and_rearm_char);
 
     const char* data = "\x1B[Ax";
     ASSERT_TRUE(comm_refill_inbound_buffers(comm, data, strlen(data)));
 
-    EXPECT_EQ(comm_process_input(runtime, comm, 1), 0);
+    EXPECT_EQ(comm_process_input(runtime, comm, 1), COMM_PROCESS_DEFERRED);
     ASSERT_EQ(inbound_messages.size(), 1u);
     EXPECT_EQ(inbound_messages[0], "\x1B[A");
 
-    EXPECT_EQ(comm_process_input(runtime, comm, 1), 0);
+    EXPECT_EQ(comm_process_input(runtime, comm, 1), COMM_PROCESS_DEFERRED);
     ASSERT_EQ(inbound_messages.size(), 2u);
     EXPECT_EQ(inbound_messages[1], "x");
 
@@ -297,12 +302,12 @@ TEST_F(CommInboundTest, ProcessCharInputModeWaitsForCompleteAnsiSequence) {
 
     const char* partial = "\x1B[";
     ASSERT_TRUE(comm_refill_inbound_buffers(comm, partial, strlen(partial)));
-    EXPECT_EQ(comm_process_input(runtime, comm, -1), 0);
+    EXPECT_EQ(comm_process_input(runtime, comm, -1), COMM_PROCESS_OK);
     EXPECT_TRUE(inbound_messages.empty());
 
     const char* complete = "31~";
     ASSERT_TRUE(comm_refill_inbound_buffers(comm, complete, strlen(complete)));
-    EXPECT_EQ(comm_process_input(runtime, comm, -1), 0);
+    EXPECT_EQ(comm_process_input(runtime, comm, -1), COMM_PROCESS_DEFERRED);
 
     ASSERT_EQ(inbound_messages.size(), 1u);
     EXPECT_EQ(inbound_messages[0], "\x1B[31~");

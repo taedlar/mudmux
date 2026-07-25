@@ -8,6 +8,20 @@
 #include "outbound.hpp"
 #include "mudmux/comm.h"
 
+static void _start_telnet_negotiation(comm_abstract_ptr& comm) {
+    // Suppress obsolete Go Ahead (SGA), we are capable of full-duplex
+    comm_telnet_send_will(comm, TELOPT_SGA);
+
+    // We don't want to echo back what the client types (this will be used in password input)
+    // Keeping WONT ECHO also enables Kludge line mode fallback for clients that don't support
+    // LINEMODE (e.g., old tintin++, PuTTY, Windows Telnet).
+    comm_telnet_send_wont(comm, TELOPT_ECHO);
+
+    // Negotiate LINEMODE for clients that support it (RFC 1184). This is the preferred mode
+    // for line input, as it allows the client to handle local echo and line editing.
+    comm_telnet_send_do(comm, TELOPT_LINEMODE);
+}
+
 void comm_enable_telnet (int slot) {
     comm_abstract_ptr comm(slot, comm_slots_mtx);
     if (!comm)
@@ -21,17 +35,15 @@ void comm_enable_telnet (int slot) {
     comm->flags |= C_ENABLE_TELNET;
     SPDLOG_DEBUG ("enabled TELNET for comm slot {}", slot);
 
-    // Suppress obsolete Go Ahead (SGA), we are capable of full-duplex
-    comm_telnet_send_will(comm, TELOPT_SGA);
+    if (!(comm->flags & C_WEBSOCKET_TELNET_PENDING))
+        _start_telnet_negotiation(comm);
+}
 
-    // We don't want to echo back what the client types (this will be used in password input)
-    // Keeping WONT ECHO also enables Kludge line mode fallback for clients that don't support
-    // LINEMODE (e.g., old tintin++, PuTTY, Windows Telnet).
-    comm_telnet_send_wont(comm, TELOPT_ECHO);
-
-    // Negotiate LINEMODE for clients that support it (RFC 1184). This is the preferred mode
-    // for line input, as it allows the client to handle local echo and line editing.
-    comm_telnet_send_do(comm, TELOPT_LINEMODE);
+void comm_start_telnet_negotiation (int slot) {
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
+    if (!comm || !(comm->flags & C_ENABLE_TELNET))
+        return;
+    _start_telnet_negotiation(comm);
 }
 
 size_t comm_telnet_process_inbound (char* dest, char* src, size_t src_len, size_t* src_consumed,
