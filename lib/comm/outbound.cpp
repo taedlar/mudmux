@@ -2,6 +2,7 @@
 #include "config.h"
 #endif
 
+#define NOMINMAX
 #include "outbound.hpp"
 
 #include <algorithm>
