@@ -24,11 +24,14 @@ extern "C" bool comm_enable_websocket(int slot);
  * @param request Raw HTTP request bytes.
  * @param response Receives the 101 response when request is valid.
  * @param rejection_status Receives HTTP rejection status (e.g. 400, 426) when invalid.
+ * @param negotiated_telnet_subprotocol Set to true when the client proposed the "telnet"
+ *        subprotocol and it was accepted. The caller should then enable TELNET on the slot.
  * @return true if request is a valid RFC6455 upgrade request, false otherwise.
  */
 bool comm_websocket_build_upgrade_response(
     std::string_view request,
     std::string& response,
-    int* rejection_status = nullptr);
+    int* rejection_status = nullptr,
+    bool* negotiated_telnet_subprotocol = nullptr);
 
 #endif // COMM_WEBSOCKET_HPP

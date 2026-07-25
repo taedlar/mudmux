@@ -161,7 +161,8 @@ extern "C" bool comm_enable_websocket(int slot) {
 bool comm_websocket_build_upgrade_response(
     std::string_view request,
     std::string& response,
-    int* rejection_status) {
+    int* rejection_status,
+    bool* negotiated_telnet_subprotocol) {
     if (rejection_status) {
         *rejection_status = 400;
     }
@@ -208,7 +209,13 @@ bool comm_websocket_build_upgrade_response(
                "Sec-WebSocket-Accept: " + accept_key + "\r\n";
 
     if (!headers[4].empty()) {
-        response += "Sec-WebSocket-Protocol: " + headers[4] + "\r\n";
+        const bool telnet_subprot = token_list_contains(headers[4], "telnet");
+        if (negotiated_telnet_subprotocol)
+            *negotiated_telnet_subprotocol = telnet_subprot;
+        if (telnet_subprot)
+            response += "Sec-WebSocket-Protocol: telnet\r\n";
+        else
+            response += "Sec-WebSocket-Protocol: " + headers[4] + "\r\n";
     }
 
     response += "\r\n";

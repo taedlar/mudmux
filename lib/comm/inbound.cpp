@@ -227,10 +227,12 @@ static void _try_upgrade_websocket(async_runtime_t* runtime, comm_abstract_ptr& 
 
     std::string response;
     int rejection_status = 400;
+    bool negotiated_telnet = false;
     if (!comm_websocket_build_upgrade_response(
             std::string_view(request.data(), header_len),
             response,
-            &rejection_status)) {
+            &rejection_status,
+            &negotiated_telnet)) {
         SPDLOG_WARN("websocket handshake rejected on slot {} with status {}", comm.slot(), rejection_status);
         _send_websocket_rejection(runtime, comm, rejection_status);
         return;
@@ -239,7 +241,10 @@ static void _try_upgrade_websocket(async_runtime_t* runtime, comm_abstract_ptr& 
     comm_buffered_write_comm(comm, response.data(), response.size());
     _consume_inbound_data(comm, header_len);
     comm->flags |= C_WEBSOCKET_READY;
-    SPDLOG_INFO("websocket protocol switch completed for slot {}", comm.slot());
+    if (negotiated_telnet)
+        comm_enable_telnet(comm.slot());
+    SPDLOG_INFO("websocket protocol switch completed for slot {} (telnet subprotocol: {})",
+        comm.slot(), negotiated_telnet);
 }
 
 static mudmux_dispatch_result_t _dispatch_telnet_subnegotiation(async_runtime_t* runtime, comm_abstract_ptr& comm, const comm_telnet_negotiation_t& telnet_neg) {

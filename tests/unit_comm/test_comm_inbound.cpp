@@ -454,7 +454,8 @@ TEST_F(CommInboundTest, WebSocketUpgradeRejectsInvalidHandshake) {
     async_runtime_deinit(runtime);
 }
 
-TEST_F(CommInboundTest, TelnetEnableRejectedWhenWebSocketAlreadyEnabled) {
+TEST_F(CommInboundTest, TelnetEnableRejectedWhenWebSocketUpgradePending) {
+    // TELNET cannot be enabled manually while WebSocket mode is active but upgrade not yet done.
     const int slot = add_memory_comm(0);
     ASSERT_NE(slot, -1);
 
@@ -464,6 +465,45 @@ TEST_F(CommInboundTest, TelnetEnableRejectedWhenWebSocketAlreadyEnabled) {
     const uint32_t flags = comm_get_flags(slot);
     EXPECT_TRUE((flags & C_ENABLE_WEBSOCKET) != 0);
     EXPECT_TRUE((flags & C_ENABLE_TELNET) == 0);
+}
+
+TEST_F(CommInboundTest, WebSocketTelnetSubprotocolEnablesTelnetAfterUpgrade) {
+    async_runtime_t* runtime = async_runtime_init(this);
+    ASSERT_NE(runtime, nullptr);
+
+    const int slot = add_memory_comm(0);
+    ASSERT_NE(slot, -1);
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
+    ASSERT_TRUE(comm);
+
+    ASSERT_TRUE(mudmux_comm_api_v1->enable_websocket(slot));
+
+    const std::string request =
+        "GET /ws HTTP/1.1\r\n"
+        "Host: localhost\r\n"
+        "Upgrade: websocket\r\n"
+        "Connection: Upgrade\r\n"
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+        "Sec-WebSocket-Version: 13\r\n"
+        "Sec-WebSocket-Protocol: telnet\r\n"
+        "\r\n";
+
+    ASSERT_TRUE(comm_refill_inbound_buffers(comm, request.data(), request.size()));
+    EXPECT_EQ(comm_process_input(runtime, comm, -1), COMM_PROCESS_OK);
+
+    const uint32_t flags = comm_get_flags(slot);
+    EXPECT_TRUE((flags & C_WEBSOCKET_READY) != 0);
+    EXPECT_TRUE((flags & C_ENABLE_TELNET) != 0);
+
+    comm_flush(runtime, slot);
+    std::array<char, 512> response_buf{};
+    const int response_len = BIO_read(comm->wbio, response_buf.data(), static_cast<int>(response_buf.size()));
+    ASSERT_GT(response_len, 0);
+    const std::string response(response_buf.data(), static_cast<size_t>(response_len));
+    EXPECT_NE(response.find("101 Switching Protocols"), std::string::npos);
+    EXPECT_NE(response.find("Sec-WebSocket-Protocol: telnet"), std::string::npos);
+
+    async_runtime_deinit(runtime);
 }
 
 TEST_F(CommInboundTest, ThreadPoolKeepsPerSlotOrderWhileOtherSlotsAdvance) {
