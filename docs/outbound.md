@@ -85,6 +85,45 @@ The flush path should follow this order:
 4. Clear `C_BUFFERED_WRITE` only after both the comm queue and transport internal pending
    output are drained.
 
+## WebSocket upgrades and subprotocols
+
+WebSocket is a transport upgrade: HTTP bytes are sent first, then every subsequent
+application or subprotocol byte is carried in a WebSocket data frame.  The outbound
+queue must preserve that boundary even when a connect hook writes immediately.
+
+Required ordering:
+
+1. Keep output produced while the HTTP upgrade is pending in an upgrade barrier.
+2. Send and fully drain the HTTP `101 Switching Protocols` response.
+3. Enable WebSocket framing, then release the barrier as WebSocket data frames.
+4. Start any negotiated subprotocol output only after the `101` response.  For example,
+   Telnet negotiation is payload inside a WebSocket binary frame, never raw socket data.
+
+`comm_flush_all()` may run between accept and the first request read, so an empty normal
+outbound queue is not sufficient reason to release the upgrade barrier.  It must also be
+known that `C_WEBSOCKET_READY` is set.
+
+For inbound processing, decode and unmask a complete WebSocket frame before passing its
+payload to a subprotocol parser.  Applying a Telnet parser to raw WebSocket bytes can
+consume masking or frame-header bytes that happen to contain IAC (`0xff`) and corrupt the
+next frame.
+
+### WebSocket close handshake
+
+The WebSocket Close control frame is a protocol message, not a TCP half-close.  On a
+server-initiated close:
+
+1. Mark the slot closing and run disconnect cleanup once.
+2. Drain application frames that were already queued by that cleanup.
+3. Queue one `Close` frame (normally code `1000`) as the final WebSocket frame.
+4. Reject later application writes, including output from delayed relaxed-mode hooks.
+5. Keep the transport readable until the peer replies with Close, then tear down TCP/TLS.
+
+Do not call `BIO_shutdown_wr()` or `SSL_shutdown()` while waiting for the peer Close
+reply.  A transport EOF/error is the exception: there can be no reply, so teardown may
+finish then.  For a peer-initiated Close, queue the required Close reply, flush it, and
+only then remove the transport.
+
 ## Practical contract for pre-initialized TLS slots
 
 If a TLS object is already initialized before the slot is added, the slot registration API

@@ -45,6 +45,9 @@ bool comm_websocket_build_upgrade_response(
 /** Build an unmasked server-to-client RFC 6455 frame. */
 bool comm_websocket_encode_frame(std::string_view payload, uint8_t opcode, std::string& frame);
 
+/** Queue one server Close control frame, if one has not already been sent. */
+bool comm_websocket_queue_close(comm_abstract_ptr& comm, std::string_view payload);
+
 /**
  * Consume complete client WebSocket frames from @p wire and return complete text
  * messages.  Partial frames remain unconsumed for the next read.

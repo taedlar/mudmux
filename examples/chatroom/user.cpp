@@ -48,7 +48,7 @@ void User::dispatchInboundMessage(const std::string& message) {
     if (inbound_handler) {
         (this->*inbound_handler)(message); // call the inbound handler function
     } else {
-        if (comm_slot < 0)
+        if (comm_slot < 0 || message.empty())
             return;
         if (message.front() == '/') {
             // Handle slash commands

@@ -165,6 +165,12 @@ void comm_buffered_write_raw_comm(comm_abstract_ptr& comm, const void *buf, size
 void comm_buffered_write_comm (comm_abstract_ptr& comm, const void *buf, size_t len) {
     if (!comm || !buf || len == 0)
         return;
+    // RFC 6455 forbids data frames after Close. A relaxed hook that was
+    // already queued can otherwise append output after the handshake starts.
+    if ((comm->flags & C_WEBSOCKET_READY) && (comm->flags & C_WEBSOCKET_CLOSE_SENT)) {
+        SPDLOG_DEBUG("discarding {} application bytes after WebSocket Close on slot {}", len, comm.slot());
+        return;
+    }
     if ((comm->flags & C_ENABLE_WEBSOCKET) && !(comm->flags & C_WEBSOCKET_READY)) {
         // Application output must not precede the HTTP 101 response. Preserve
         // it in the upgrade barrier as already-framed WebSocket data.
@@ -284,7 +290,13 @@ void comm_flush (async_runtime_t* runtime, int slot) {
         }
     }
 
-    if (!comm->outbound && comm->websocket_upgrade_barrier) {
+    // Application data queued by the connect hook must remain behind the
+    // HTTP 101 response.  comm_flush_all() also runs between accept and the
+    // first client read, so releasing this barrier merely because the normal
+    // outbound queue is empty would put a WebSocket frame on the wire before
+    // the upgrade has completed.
+    if (!comm->outbound && (comm->flags & C_WEBSOCKET_READY) && comm->websocket_upgrade_barrier) {
+        SPDLOG_DEBUG("releasing WebSocket upgrade barrier on slot {} after HTTP 101", slot);
         comm->outbound = comm->websocket_upgrade_barrier;
         comm->websocket_upgrade_barrier = nullptr;
         comm->flags |= C_BUFFERED_WRITE;
@@ -318,7 +330,10 @@ void comm_flush (async_runtime_t* runtime, int slot) {
         // clear buffered-write flag, it will be set again when new data is written
         comm->flags &= ~C_BUFFERED_WRITE;
 
-        if (comm->flags & C_CLOSING) {
+        const bool waiting_for_websocket_close =
+            (comm->flags & C_WEBSOCKET_READY) &&
+            !(comm->flags & C_WEBSOCKET_CLOSE_RECEIVED);
+        if ((comm->flags & C_CLOSING) && !waiting_for_websocket_close) {
             SPDLOG_DEBUG ("comm slot has C_CLOSING flag set, sending shutdown signal to peer");
             if (comm->ssl && (comm->flags & C_TLS_ESTABLISHED)) {
                 (void) SSL_shutdown(comm->ssl);
@@ -350,6 +365,8 @@ bool comm_close (async_runtime_t* runtime, int slot) {
         // let logic layer handle disconnect (e.g., cleanup, logging, etc.)
         comm->flags |= C_CLOSING;
         comm_invoke_disconnect(runtime, slot);
+
+        comm->flags &= ~C_ENABLE_PROMPT; // disable prompt to avoid corrupted L7 shutdown sequence
     }
 
     if (slot == COMM_SLOT_CONSOLE) {
@@ -384,6 +401,22 @@ bool comm_close (async_runtime_t* runtime, int slot) {
             SPDLOG_DEBUG("comm slot {} has buffered data, will flush before disconnecting", slot);
             return false;
         }
+    }
+
+    // The close control frame must be the final WebSocket frame.  In
+    // particular, HOOK_DISCONNECT may have queued a final message above, so
+    // wait until it has drained before sending Close.
+    if ((comm->flags & C_WEBSOCKET_READY) &&
+        !(comm->flags & (C_WEBSOCKET_CLOSE_SENT | C_WEBSOCKET_CLOSE_RECEIVED))) {
+        const char normal_close[] = {0x03, static_cast<char>(0xe8)}; // 1000
+        SPDLOG_DEBUG("outbound data drained; initiating WebSocket close on slot {}", slot);
+        (void) comm_websocket_queue_close(comm, std::string_view(normal_close, sizeof(normal_close)));
+        return false;
+    }
+
+    if ((comm->flags & C_WEBSOCKET_READY) &&
+        !(comm->flags & C_WEBSOCKET_CLOSE_RECEIVED)) {
+        return false;
     }
 
     if (comm->ssl && (comm->flags & C_TLS_ESTABLISHED)) {

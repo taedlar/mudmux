@@ -192,6 +192,21 @@ static bool is_valid_utf8(std::string_view value) {
     return true;
 }
 
+static unsigned int websocket_close_code(std::string_view payload) {
+    if (payload.size() < 2)
+        return 0;
+    return (static_cast<unsigned int>(static_cast<unsigned char>(payload[0])) << 8)
+        | static_cast<unsigned char>(payload[1]);
+}
+
+static void log_websocket_close(const char* action, int slot, std::string_view payload) {
+    const unsigned int code = websocket_close_code(payload);
+    if (code != 0)
+        SPDLOG_DEBUG("{} WebSocket Close frame on slot {} (code {})", action, slot, code);
+    else
+        SPDLOG_DEBUG("{} WebSocket Close frame on slot {} without a status code", action, slot);
+}
+
 bool comm_websocket_encode_frame(std::string_view payload, uint8_t opcode, std::string& frame) {
     if (opcode > 0x0f || payload.size() > static_cast<size_t>((std::numeric_limits<uint64_t>::max)()))
         return false;
@@ -211,6 +226,19 @@ bool comm_websocket_encode_frame(std::string_view payload, uint8_t opcode, std::
             frame.push_back(static_cast<char>((size >> shift) & 0xff));
     }
     frame.append(payload.data(), payload.size());
+    return true;
+}
+
+bool comm_websocket_queue_close(comm_abstract_ptr& comm, std::string_view payload) {
+    if (!comm || (comm->flags & C_WEBSOCKET_CLOSE_SENT))
+        return static_cast<bool>(comm);
+
+    std::string frame;
+    if (!comm_websocket_encode_frame(payload, 0x8, frame))
+        return false;
+    comm_buffered_write_raw_comm(comm, frame.data(), frame.size());
+    comm->flags |= C_WEBSOCKET_CLOSE_SENT;
+    log_websocket_close("queued", comm.slot(), payload);
     return true;
 }
 
@@ -244,7 +272,13 @@ bool comm_websocket_process_inbound(comm_abstract_ptr& comm, std::string_view wi
         const bool masked = (second & 0x80) != 0;
         uint64_t payload_size = second & 0x7f;
         size_t header_size = 2;
-        if (rsv != 0 || !masked || (opcode >= 3 && opcode <= 7) || opcode >= 0x0b) return false;
+        if (rsv != 0 || !masked || (opcode >= 3 && opcode <= 7) || opcode >= 0x0b) {
+            SPDLOG_WARN(
+                "invalid WebSocket frame header on slot {}: first=0x{:02x}, second=0x{:02x}, "
+                "fin={}, rsv=0x{:x}, opcode=0x{:x}, masked={}",
+                comm.slot(), first, second, fin, rsv, opcode, masked);
+            return false;
+        }
         if (payload_size == 126) {
             if (wire.size() - offset < 4) break;
             payload_size = (static_cast<uint8_t>(wire[offset + 2]) << 8) | static_cast<uint8_t>(wire[offset + 3]);
@@ -273,9 +307,9 @@ bool comm_websocket_process_inbound(comm_abstract_ptr& comm, std::string_view wi
 
         if (opcode == 0x8) { // close
             if (payload.size() == 1) return false;
-            std::string close_frame;
-            if (comm_websocket_encode_frame(payload, 0x8, close_frame))
-                comm_buffered_write_raw_comm(comm, close_frame.data(), close_frame.size());
+            log_websocket_close("received", comm.slot(), payload);
+            comm->flags |= C_WEBSOCKET_CLOSE_RECEIVED;
+            (void) comm_websocket_queue_close(comm, payload);
             if (close_code) *close_code = 0; // normal peer-initiated close
             return false;
         }
