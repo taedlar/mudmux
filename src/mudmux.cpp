@@ -333,6 +333,11 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
                     bool refilled = comm_refill_inbound_buffers (comm); // read more data from rbio
 #endif
                     const comm_process_result_t process_result = comm_process_input(runtime, comm);
+                    // Input processing may synchronously close the slot (for
+                    // example, a rejected WebSocket upgrade).  The guard then
+                    // no longer resolves to a live communication object.
+                    if (!comm)
+                        continue;
                     if (!refilled || process_result == COMM_PROCESS_ERROR || process_result == COMM_PROCESS_CLOSED) {
                         const bool closed = comm_close(runtime, slot);
                         // EOF can arrive with EVENT_READ|EVENT_CLOSE.  In that
