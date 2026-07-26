@@ -502,7 +502,12 @@ static bool _refill_inbound_buffers_from_src(comm_abstract_ptr& comm, const char
         size_t bytes_copied = 0;
         const bool websocket_handshake_pending =
             (comm->flags & C_ENABLE_WEBSOCKET) && !(comm->flags & C_WEBSOCKET_READY);
-        if ((comm->flags & C_ENABLE_TELNET) && !websocket_handshake_pending && !telnet_parsing_paused) {
+        // WebSocket frames must remain intact until the WebSocket decoder has
+        // removed framing and client masking.  For Telnet-over-WebSocket, the
+        // decoded payload is passed through the Telnet parser later in
+        // _dispatch_websocket_telnet_payload().
+        const bool websocket_ready = (comm->flags & C_WEBSOCKET_READY) != 0;
+        if ((comm->flags & C_ENABLE_TELNET) && !websocket_handshake_pending && !websocket_ready && !telnet_parsing_paused) {
             // copy telnet data from src, preserving telnet state in comm flags
             uint32_t state = comm->flags & M_TELNET_STATE; // restore saved telnet state from comm flags
             comm_telnet_negotiation_t telnet_neg;
@@ -822,11 +827,9 @@ static comm_process_result_t _process_websocket_input(async_runtime_t* runtime, 
             std::string close_payload;
             close_payload.push_back(static_cast<char>((close_code >> 8) & 0xff));
             close_payload.push_back(static_cast<char>(close_code & 0xff));
-            std::string close_frame;
-            if (comm_websocket_encode_frame(close_payload, 0x8, close_frame))
-                comm_buffered_write_raw_comm(comm, close_frame.data(), close_frame.size());
+            (void) comm_websocket_queue_close(comm, close_payload);
+            (void) comm_close(runtime, comm.slot());
         }
-        (void) comm_close(runtime, comm.slot());
         return COMM_PROCESS_CLOSED;
     }
     _consume_inbound_data(comm, consumed);
@@ -880,8 +883,10 @@ comm_process_result_t comm_process_input (async_runtime_t* runtime, comm_abstrac
             if (ibb->end <= ibb->start)
                 break; // no more data in the current buffer, wait for more data
             if ((next_line_start = _find_newline_and_strip(ibb, &line_len)) >= 0) {
-                if (comm->flags & C_ENABLE_TELNET)
-                    comm_buffered_write_comm(comm, "\n", 1); // echo newline for Telnet clients
+                if (comm->flags & C_ENABLE_TELNET) {
+                    if (!(comm->flags & C_CLOSING))
+                        comm_buffered_write_comm(comm, "\n", 1); // echo newline for Telnet clients
+                }
                 // invoke inbound message hook for each complete line
                 const mudmux_dispatch_result_t dispatch_result = static_cast<mudmux_dispatch_result_t>(
                     comm_invoke_inbound_message(runtime, comm, ibb->buffer + ibb->start, line_len));

@@ -318,7 +318,10 @@ void comm_flush (async_runtime_t* runtime, int slot) {
         // clear buffered-write flag, it will be set again when new data is written
         comm->flags &= ~C_BUFFERED_WRITE;
 
-        if (comm->flags & C_CLOSING) {
+        const bool waiting_for_websocket_close =
+            (comm->flags & C_WEBSOCKET_READY) &&
+            !(comm->flags & C_WEBSOCKET_CLOSE_RECEIVED);
+        if ((comm->flags & C_CLOSING) && !waiting_for_websocket_close) {
             SPDLOG_DEBUG ("comm slot has C_CLOSING flag set, sending shutdown signal to peer");
             if (comm->ssl && (comm->flags & C_TLS_ESTABLISHED)) {
                 (void) SSL_shutdown(comm->ssl);
@@ -350,6 +353,8 @@ bool comm_close (async_runtime_t* runtime, int slot) {
         // let logic layer handle disconnect (e.g., cleanup, logging, etc.)
         comm->flags |= C_CLOSING;
         comm_invoke_disconnect(runtime, slot);
+
+        comm->flags &= ~C_ENABLE_PROMPT; // disable prompt to avoid corrupted L7 shutdown sequence
     }
 
     if (slot == COMM_SLOT_CONSOLE) {
@@ -373,6 +378,12 @@ bool comm_close (async_runtime_t* runtime, int slot) {
         return false;
     }
 
+    if ((comm->flags & C_WEBSOCKET_READY) &&
+        !(comm->flags & (C_WEBSOCKET_CLOSE_SENT | C_WEBSOCKET_CLOSE_RECEIVED))) {
+        const char normal_close[] = {0x03, static_cast<char>(0xe8)}; // 1000
+        (void) comm_websocket_queue_close(comm, std::string_view(normal_close, sizeof(normal_close)));
+    }
+
     if (comm->flags & C_BUFFERED_WRITE) {
         // If TLS is not established yet, buffered plaintext cannot be flushed safely.
         // Drop pending data and close immediately to avoid close/flush deadlock.
@@ -384,6 +395,11 @@ bool comm_close (async_runtime_t* runtime, int slot) {
             SPDLOG_DEBUG("comm slot {} has buffered data, will flush before disconnecting", slot);
             return false;
         }
+    }
+
+    if ((comm->flags & C_WEBSOCKET_READY) &&
+        !(comm->flags & C_WEBSOCKET_CLOSE_RECEIVED)) {
+        return false;
     }
 
     if (comm->ssl && (comm->flags & C_TLS_ESTABLISHED)) {

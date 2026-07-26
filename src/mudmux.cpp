@@ -334,7 +334,16 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
 #endif
                     const comm_process_result_t process_result = comm_process_input(runtime, comm);
                     if (!refilled || process_result == COMM_PROCESS_ERROR || process_result == COMM_PROCESS_CLOSED) {
-                        (void) comm_close(runtime, slot);
+                        const bool closed = comm_close(runtime, slot);
+                        // EOF can arrive with EVENT_READ|EVENT_CLOSE.  In that
+                        // case the peer cannot send the Close reply we were
+                        // waiting for, so finish the transport teardown here.
+                        if (!closed && !refilled &&
+                            ((comm->flags & (C_CLOSING | C_WEBSOCKET_READY)) ==
+                             (C_CLOSING | C_WEBSOCKET_READY))) {
+                            comm->flags |= C_WEBSOCKET_CLOSE_RECEIVED;
+                            (void) comm_close(runtime, slot);
+                        }
                         continue;
                     }
                 }
@@ -344,7 +353,16 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
                 }
 
                 if (event.event_type & (EVENT_CLOSE | EVENT_ERROR)) {
-                    (void) comm_close(runtime, slot); // close the connection on error or close event
+                    // A transport-level close/error means there can be no
+                    // WebSocket Close reply.  Complete any pending close
+                    // handshake now instead of retaining the slot and
+                    // repeatedly receiving the terminal event.
+                    const bool closed = comm_close(runtime, slot);
+                    if (!closed && ((comm->flags & (C_CLOSING | C_WEBSOCKET_READY)) ==
+                                    (C_CLOSING | C_WEBSOCKET_READY))) {
+                        comm->flags |= C_WEBSOCKET_CLOSE_RECEIVED;
+                        (void) comm_close(runtime, slot);
+                    }
                     continue;
                 }
 
