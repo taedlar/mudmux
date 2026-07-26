@@ -2,6 +2,7 @@
 #define CHATROOM_USER_HPP
 
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 #include "mudmux/comm.h"
@@ -16,6 +17,9 @@ enum class UserState {
 
 class User: public std::enable_shared_from_this<User> {
 private:
+    static std::recursive_mutex users_mutex;
+    static std::vector<std::shared_ptr<User>> slots;
+
     std::string username;
     int comm_slot;
     UserState state;
@@ -25,37 +29,54 @@ private:
     std::unique_ptr<Menu> menu;
 
 public:
-    static std::vector<std::shared_ptr<User>> slots; // mapping of comm slots to User instances
-
     User(int slot) : comm_slot(slot), state(UserState::Disconnected) {}
 
-    const std::string& getUsername() const {
+    /** Create and register a user for a communication slot. */
+    static std::shared_ptr<User> connect(int slot);
+
+    /** Return a stable reference to the user currently registered for a slot. */
+    static std::shared_ptr<User> find(int slot);
+
+    /** Remove and return the user currently registered for a slot. */
+    static std::shared_ptr<User> take(int slot);
+
+    /** Snapshot the registered users for safe iteration outside the registry. */
+    static std::vector<std::shared_ptr<User>> snapshot();
+
+    std::string getUsername() const {
+        std::lock_guard<std::recursive_mutex> lock(users_mutex);
         return username;
     }
 
     UserState getState() const {
+        std::lock_guard<std::recursive_mutex> lock(users_mutex);
         return state;
     }
 
     inline int getCommSlot() const {
+        std::lock_guard<std::recursive_mutex> lock(users_mutex);
         return comm_slot;
     }
 
     void closeComm() {
+        std::lock_guard<std::recursive_mutex> lock(users_mutex);
         comm_close(nullptr, comm_slot);
     }
 
     void setCharInput () {
+        std::lock_guard<std::recursive_mutex> lock(users_mutex);
         if (comm_slot >= 0)
             comm_set_char_input (comm_slot);
     }
 
     void setLineInput (bool echo = true) {
+        std::lock_guard<std::recursive_mutex> lock(users_mutex);
         if (comm_slot >= 0)
             comm_set_line_input (comm_slot, echo);
     }
 
     void doMenu (std::unique_ptr<Menu> new_menu, void (User::* handler)(const std::string& message)) {
+        std::lock_guard<std::recursive_mutex> lock(users_mutex);
         menu = std::move(new_menu);
         if (menu) {
             prompt_handler = &User::promptCurrentMenu;
@@ -75,6 +96,7 @@ public:
 
     // prompt handlers
     void promptCurrentMenu() {
+        std::lock_guard<std::recursive_mutex> lock(users_mutex);
         if (menu) {
             menu->writeMenu(comm_slot);
         }

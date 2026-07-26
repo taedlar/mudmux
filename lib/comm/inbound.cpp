@@ -866,6 +866,10 @@ comm_process_result_t comm_process_input (async_runtime_t* runtime, comm_abstrac
         // hook enables WebSocket support, so retry the upgrade here rather than
         // waiting for another socket read.
         _try_upgrade_websocket(runtime, comm);
+        // A rejected handshake closes and removes the slot.  Do not continue
+        // through the input state machine with the now-invalid guard.
+        if (!comm)
+            return COMM_PROCESS_CLOSED;
         if (!(comm->flags & C_WEBSOCKET_READY))
             return COMM_PROCESS_OK;
     }

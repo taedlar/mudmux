@@ -8,7 +8,40 @@
 #include "command.hpp"
 #include "user.hpp"
 
+std::recursive_mutex User::users_mutex;
 std::vector<std::shared_ptr<User>> User::slots; // mapping of comm slots to User instances
+
+std::shared_ptr<User> User::connect(int slot) {
+    if (slot < 0)
+        return nullptr;
+
+    std::lock_guard<std::recursive_mutex> lock(users_mutex);
+    if (slot >= static_cast<int>(slots.size()))
+        slots.resize(static_cast<size_t>(slot) + 32);
+    auto user = std::make_shared<User>(slot);
+    slots[static_cast<size_t>(slot)] = user;
+    return user;
+}
+
+std::shared_ptr<User> User::find(int slot) {
+    std::lock_guard<std::recursive_mutex> lock(users_mutex);
+    if (slot < 0 || slot >= static_cast<int>(slots.size()))
+        return nullptr;
+    return slots[static_cast<size_t>(slot)];
+}
+
+std::shared_ptr<User> User::take(int slot) {
+    std::lock_guard<std::recursive_mutex> lock(users_mutex);
+    if (slot < 0 || slot >= static_cast<int>(slots.size()))
+        return nullptr;
+    auto user = std::move(slots[static_cast<size_t>(slot)]);
+    return user;
+}
+
+std::vector<std::shared_ptr<User>> User::snapshot() {
+    std::lock_guard<std::recursive_mutex> lock(users_mutex);
+    return slots;
+}
 
 static void write_slot_text(int slot, const std::string& text) {
     if (slot < 0)
@@ -17,6 +50,7 @@ static void write_slot_text(int slot, const std::string& text) {
 }
 
 void User::logon() {
+    std::lock_guard<std::recursive_mutex> lock(users_mutex);
     if (comm_slot < 0)
         return;
     write_slot_text(comm_slot, "Please enter your username: ");
@@ -25,12 +59,14 @@ void User::logon() {
 }
 
 void User::disconnect() {
+    std::lock_guard<std::recursive_mutex> lock(users_mutex);
     write_slot_text(comm_slot, "Bye!\n\r");
     state = UserState::Disconnected;
     comm_slot = -1; // mark the communication slot as invalid
 }
 
 void User::prompt() {
+    std::lock_guard<std::recursive_mutex> lock(users_mutex);
     if (prompt_handler) {
         (this->*prompt_handler)(); // call the prompt handler function
         return;
@@ -45,6 +81,7 @@ void User::prompt() {
 }
 
 void User::dispatchInboundMessage(const std::string& message) {
+    std::lock_guard<std::recursive_mutex> lock(users_mutex);
     if (inbound_handler) {
         (this->*inbound_handler)(message); // call the inbound handler function
     } else {
@@ -59,7 +96,7 @@ void User::dispatchInboundMessage(const std::string& message) {
             // Handle regular chat messages
             write_slot_text(comm_slot, "You said: " + message + "\n\r"); // echo the message back to the user
             // Broadcast the message to all other connected users
-            for (const auto& user_ptr : User::slots) {
+            for (const auto& user_ptr : User::snapshot()) {
                 if (user_ptr && user_ptr->getState() == UserState::LoggedIn && user_ptr->comm_slot != comm_slot) {
                     write_slot_text(user_ptr->comm_slot, username + " says: " + message + "\n\r"); // broadcast the message to other users
                 }
@@ -69,6 +106,7 @@ void User::dispatchInboundMessage(const std::string& message) {
 }
 
 void User::receiveUsername(const std::string& name) {
+    std::lock_guard<std::recursive_mutex> lock(users_mutex);
     if (name.length() < 3 || name.length() > 16) {
         write_slot_text(comm_slot, "Username must be between 3 and 16 characters. Please enter a valid username: ");
         return; // do not proceed if the username is invalid
@@ -82,6 +120,7 @@ void User::receiveUsername(const std::string& name) {
 }
 
 void User::receiveExitConfirmation(const std::string& message) {
+    std::lock_guard<std::recursive_mutex> lock(users_mutex);
     if (comm_slot < 0)
         return;
     if (menu) {

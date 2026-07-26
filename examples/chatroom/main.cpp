@@ -26,41 +26,35 @@ static void process_command_line (int argc, char* argv[]);
 static int on_connect (void*, int slot, void* data, size_t len) {
     std::string entry_name{static_cast<const char*>(data), len};
     SPDLOG_INFO ("New connection on slot {} from entry '{}'", slot, entry_name);
-    while (slot >= static_cast<int>(User::slots.size()))
-        User::slots.resize(slot + 32);
-    User::slots[slot] = std::make_shared<User>(slot);
+    auto user = User::connect(slot);
     if (entry_name != "-") {
         // comm_enable_telnet (slot); // enable TELNET for non-console connections
-        // comm_enable_tls (slot); // enable TLS for secure connections
+        comm_enable_tls (slot); // enable TLS for secure connections
         comm_enable_websocket (slot, "telnet.ietf.org, telnet.mudstandards.org"); // enable WebSocket for web clients
     }
     comm_enable_virtual_terminal (slot); // enable ANSI/VT100 processing for console and TELNET connections
     comm_enable_prompt (slot, true); // enable prompt for console user
     comm_set_line_input (slot, true); // enable line input mode for console user
-    User::slots[slot]->logon(); // prompt for username
+    user->logon(); // prompt for username
     return 0;
 }
 
 static int on_message_inbound (void*, int slot, void* data, size_t size) {
     std::string message(static_cast<char*>(data), size);
-    if (slot < static_cast<int>(User::slots.size()) && User::slots[slot]) {
-        User::slots[slot]->dispatchInboundMessage(message);
-    }
+    if (auto user = User::find(slot))
+        user->dispatchInboundMessage(message);
     return 0;
 }
 
 static int on_prompt (void*, int slot, void*, size_t) {
-    if (slot < static_cast<int>(User::slots.size()) && User::slots[slot]) {
-        User::slots[slot]->prompt(); // display prompt for user input
-    }
+    if (auto user = User::find(slot))
+        user->prompt(); // display prompt for user input
     return 0;
 }
 
 static int on_disconnect (void*, int slot, void*, size_t) {
-    if (slot < static_cast<int>(User::slots.size()) && User::slots[slot]) {
-        User::slots[slot]->disconnect(); // mark user as disconnected
-        User::slots[slot].reset(); // remove user from the list
-    }
+    if (auto user = User::take(slot))
+        user->disconnect(); // mark user as disconnected
     return 0;
 }
 
