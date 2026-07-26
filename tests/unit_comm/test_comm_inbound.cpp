@@ -498,6 +498,7 @@ TEST_F(CommInboundTest, WebSocketUpgradeDispatchesBinaryUtf8StreamAndFramesOutbo
     const int response_len = BIO_read(comm->wbio, response_buf.data(), static_cast<int>(response_buf.size()));
     ASSERT_GT(response_len, 0);
     std::string response(response_buf.data(), static_cast<size_t>(response_len));
+    EXPECT_EQ(response.rfind("HTTP/1.1 101 Switching Protocols", 0), 0u);
     EXPECT_NE(response.find("101 Switching Protocols"), std::string::npos);
     EXPECT_NE(response.find("Sec-WebSocket-Accept:"), std::string::npos);
     EXPECT_NE(response.find(std::string("\x82\x02ok", 4)), std::string::npos);
@@ -512,18 +513,33 @@ TEST_F(CommInboundTest, ServerInitiatedWebSocketCloseWaitsForPeerReplyBeforeRemo
 
     const int slot = add_memory_comm(C_WEBSOCKET_READY);
     ASSERT_NE(slot, -1);
+
+    // Application output queued by a disconnect hook must drain before the
+    // Close control frame, which must be the final outgoing WebSocket frame.
+    comm_buffered_write(slot, "bye", 3);
     EXPECT_FALSE(comm_close(runtime, slot));
 
     comm_flush(runtime, slot);
     std::array<char, 16> outbound{};
     const int outbound_len = BIO_read(comm_abstract_get(slot)->wbio, outbound.data(), static_cast<int>(outbound.size()));
-    ASSERT_EQ(outbound_len, 4);
-    EXPECT_EQ(std::string(outbound.data(), static_cast<size_t>(outbound_len)), std::string("\x88\x02\x03\xe8", 4));
+    ASSERT_EQ(outbound_len, 5);
+    EXPECT_EQ(std::string(outbound.data(), static_cast<size_t>(outbound_len)), std::string("\x82\x03" "bye", 5));
 
     // Memory BIOs have no writable-event bookkeeping; the frame above has
     // drained, so model the equivalent socket state before processing reply.
     comm_abstract_get(slot)->flags &= ~C_BUFFERED_WRITE;
     EXPECT_FALSE(comm_close(runtime, slot));
+
+    comm_flush(runtime, slot);
+    const int close_len = BIO_read(comm_abstract_get(slot)->wbio, outbound.data(), static_cast<int>(outbound.size()));
+    ASSERT_EQ(close_len, 4);
+    EXPECT_EQ(std::string(outbound.data(), static_cast<size_t>(close_len)), std::string("\x88\x02\x03\xe8", 4));
+    EXPECT_NE(comm_get_flags(slot) & C_WEBSOCKET_CLOSE_SENT, 0u);
+    comm_abstract_get(slot)->flags &= ~C_BUFFERED_WRITE;
+
+    // Late application output from a queued relaxed hook must not follow Close.
+    comm_buffered_write(slot, "late", 4);
+    EXPECT_EQ(BIO_ctrl_pending(comm_abstract_get(slot)->wbio), 0);
 
     const char peer_close[] = {
         static_cast<char>(0x88), static_cast<char>(0x82),

@@ -192,6 +192,21 @@ static bool is_valid_utf8(std::string_view value) {
     return true;
 }
 
+static unsigned int websocket_close_code(std::string_view payload) {
+    if (payload.size() < 2)
+        return 0;
+    return (static_cast<unsigned int>(static_cast<unsigned char>(payload[0])) << 8)
+        | static_cast<unsigned char>(payload[1]);
+}
+
+static void log_websocket_close(const char* action, int slot, std::string_view payload) {
+    const unsigned int code = websocket_close_code(payload);
+    if (code != 0)
+        SPDLOG_DEBUG("{} WebSocket Close frame on slot {} (code {})", action, slot, code);
+    else
+        SPDLOG_DEBUG("{} WebSocket Close frame on slot {} without a status code", action, slot);
+}
+
 bool comm_websocket_encode_frame(std::string_view payload, uint8_t opcode, std::string& frame) {
     if (opcode > 0x0f || payload.size() > static_cast<size_t>((std::numeric_limits<uint64_t>::max)()))
         return false;
@@ -223,6 +238,7 @@ bool comm_websocket_queue_close(comm_abstract_ptr& comm, std::string_view payloa
         return false;
     comm_buffered_write_raw_comm(comm, frame.data(), frame.size());
     comm->flags |= C_WEBSOCKET_CLOSE_SENT;
+    log_websocket_close("queued", comm.slot(), payload);
     return true;
 }
 
@@ -291,6 +307,7 @@ bool comm_websocket_process_inbound(comm_abstract_ptr& comm, std::string_view wi
 
         if (opcode == 0x8) { // close
             if (payload.size() == 1) return false;
+            log_websocket_close("received", comm.slot(), payload);
             comm->flags |= C_WEBSOCKET_CLOSE_RECEIVED;
             (void) comm_websocket_queue_close(comm, payload);
             if (close_code) *close_code = 0; // normal peer-initiated close
