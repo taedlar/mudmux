@@ -16,6 +16,24 @@ static void* slot_to_context (int slot) {
 	return reinterpret_cast<void*>(static_cast<intptr_t>(slot));
 }
 
+static bool set_socket_nonblocking (socket_fd_t fd) {
+	int bio_fd = -1;
+	if (!comm_socket_fd_to_bio_fd(fd, &bio_fd)) {
+		SPDLOG_ERROR ("socket fd {} cannot be represented as an OpenSSL socket fd", fd);
+		return false;
+	}
+
+	if (BIO_socket_nbio(bio_fd, 1) != 1) {
+#ifdef _WIN32
+		SPDLOG_ERROR ("failed to set socket {} non-blocking (Winsock error {})", fd, WSAGetLastError());
+#else
+		SPDLOG_ERROR ("failed to set socket {} non-blocking", fd);
+#endif
+		return false;
+	}
+	return true;
+}
+
 int comm_accept (async_runtime_t* runtime, const char* accept_name) {
 	if (!runtime || !accept_name || !*accept_name) {
 		SPDLOG_ERROR ("comm_accept() called with invalid runtime or accept_name");
@@ -85,6 +103,11 @@ static int _accept_new_comm (int slot, socket_fd_t event_fd) {
     // Windows IOCP delivers the accepted fd directly in the event (proactive).
     // Unix epoll/poll only signal readability; accept() must be called to extract fd (reactive).
 	if (event_fd != INVALID_SOCKET_FD) {
+		if (!set_socket_nonblocking(event_fd)) {
+			closesocket(event_fd);
+			return -1;
+		}
+
 		int bio_fd = -1;
 		if (!comm_socket_fd_to_bio_fd(event_fd, &bio_fd)) {
 			SPDLOG_ERROR("accepted socket fd {} cannot be represented as BIO int fd", event_fd);
@@ -95,13 +118,9 @@ static int _accept_new_comm (int slot, socket_fd_t event_fd) {
 		BIO* accepted_bio = BIO_new_socket (bio_fd, BIO_CLOSE);
         if (!accepted_bio) {
             SPDLOG_ERROR("failed to create BIO for accepted window socket {}", event_fd);
+			closesocket(event_fd);
             return -1;
         }
-		if (BIO_set_nbio (accepted_bio, 1) <= 0) { // set accepted socket to non-blocking mode
-			SPDLOG_ERROR("failed to set accepted socket non-blocking on slot {}", slot);
-			BIO_free (accepted_bio);
-			return -1;
-		}
 		int accepted_slot = comm_abstract_add_bio (accepted_bio, accepted_bio, -1, C_SOCKET_READABLE);
 		if (accepted_slot < 0) {
 			BIO_free (accepted_bio);
@@ -126,7 +145,12 @@ static int _accept_new_comm (int slot, socket_fd_t event_fd) {
         SPDLOG_WARN ("BIO_pop failed for listener slot {}", slot);
         return -1;
     }
-	BIO_set_nbio (accepted_bio, 1); // set accepted socket to non-blocking mode
+	socket_fd_t accepted_fd {INVALID_SOCKET_FD};
+	if (!comm_bio_get_socket_fd(accepted_bio, &accepted_fd) || !set_socket_nonblocking(accepted_fd)) {
+		SPDLOG_ERROR ("failed to set accepted socket non-blocking on listener slot {}", slot);
+		BIO_free (accepted_bio);
+		return -1;
+	}
     int accepted_slot = comm_abstract_add_bio (accepted_bio, accepted_bio, -1, C_SOCKET_READABLE);
     if (accepted_slot < 0) {
         BIO_free (accepted_bio);
