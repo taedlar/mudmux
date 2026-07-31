@@ -343,10 +343,9 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
                         // EOF can arrive with EVENT_READ|EVENT_CLOSE.  In that
                         // case the peer cannot send the Close reply we were
                         // waiting for, so finish the transport teardown here.
-                        if (!closed && !refilled &&
-                            ((comm->flags & (C_CLOSING | C_WEBSOCKET_READY)) ==
-                             (C_CLOSING | C_WEBSOCKET_READY))) {
-                            comm->flags |= C_WEBSOCKET_CLOSE_RECEIVED;
+                        if (!closed && !refilled && (comm->flags & C_CLOSING) &&
+                            C_WEBSOCKET_IS_READY(comm->flags)) {
+                            C_WEBSOCKET_SET_STATE(comm->flags, WS_CLOSE_RECEIVED);
                             (void) comm_close(runtime, slot);
                         }
                         continue;
@@ -363,9 +362,9 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
                     // handshake now instead of retaining the slot and
                     // repeatedly receiving the terminal event.
                     const bool closed = comm_close(runtime, slot);
-                    if (!closed && ((comm->flags & (C_CLOSING | C_WEBSOCKET_READY)) ==
-                                    (C_CLOSING | C_WEBSOCKET_READY))) {
-                        comm->flags |= C_WEBSOCKET_CLOSE_RECEIVED;
+                    if (!closed && (comm->flags & C_CLOSING) &&
+                        C_WEBSOCKET_IS_READY(comm->flags)) {
+                        C_WEBSOCKET_SET_STATE(comm->flags, WS_CLOSE_RECEIVED);
                         (void) comm_close(runtime, slot);
                     }
                     continue;

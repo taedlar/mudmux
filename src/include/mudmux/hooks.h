@@ -18,6 +18,12 @@ enum mudmux_hook_type_t {
     MAX_HOOK_TYPE
 };
 
+enum mudmux_dispatch_result_t {
+	MUDMUX_DISPATCH_ERROR = -1,
+	MUDMUX_DISPATCH_OK = 0,
+	MUDMUX_DISPATCH_QUEUE_FULL = 1,
+};
+
 typedef int (*mudmux_hook_func_t)(void* ctx, int msg, void* data, size_t size);
 
 /**

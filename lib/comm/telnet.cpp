@@ -5,6 +5,8 @@
 #include "telnet.hpp"
 
 #include "abstract.hpp"
+#include "execution.hpp"
+#include "inbound.hpp"
 #include "outbound.hpp"
 #include "mudmux/comm.h"
 
@@ -26,7 +28,7 @@ void comm_enable_telnet (int slot) {
     comm_abstract_ptr comm(slot, comm_slots_mtx);
     if (!comm)
         return;
-    if ((comm->flags & C_ENABLE_WEBSOCKET) && !(comm->flags & C_WEBSOCKET_READY)) {
+    if ((comm->flags & C_ENABLE_WEBSOCKET) && !C_WEBSOCKET_IS_READY(comm->flags)) {
         SPDLOG_WARN("cannot enable TELNET on slot {} before WebSocket upgrade completes", slot);
         return;
     }
@@ -35,7 +37,7 @@ void comm_enable_telnet (int slot) {
     comm->flags |= C_ENABLE_TELNET;
     SPDLOG_DEBUG ("enabled TELNET for comm slot {}", slot);
 
-    if (!(comm->flags & C_WEBSOCKET_TELNET_PENDING))
+    if (C_WEBSOCKET_STATE(comm->flags) != WS_TELNET_PENDING)
         _start_telnet_negotiation(comm);
 }
 
@@ -196,4 +198,60 @@ void comm_telnet_send_subnegotiation(comm_abstract_ptr& comm, int option, const 
     comm_buffered_write_comm(comm, data, len);
     comm_buffered_write_comm(comm, reinterpret_cast<char*>(iac_se), sizeof(iac_se));
     SPDLOG_DEBUG("sent: subnegotiation for option {} with {} bytes of data", option, len);
+}
+
+/**
+ * Handles WILL/WONT claims from the client and updates the client capabilities accordingly.
+ * This function should be called after processing inbound Telnet data to update the capabilities
+ * based on the options negotiated with the client.
+ */
+void comm_process_telnet_options (comm_abstract_ptr& comm, comm_telnet_negotiation_t* negotiation) {
+    if (!comm || !negotiation)
+        return;
+    if (THEY_WILL(negotiation, TELOPT_LINEMODE)) {
+        comm->caps.telnet_linemode = 1;
+        SPDLOG_DEBUG ("client capabilities updated: TELNET LINEMODE enabled for slot {}", comm.slot());
+        if (comm->flags & C_LINE_INPUT) {
+            char lm_mode_request[3] = { 1, 1, 0 }; // LM_MODE subnegotiation: 1=MODE, 1=EDIT
+            comm_telnet_send_subnegotiation(comm, TELOPT_LINEMODE, lm_mode_request, sizeof(lm_mode_request));
+        }
+    }
+    else if (THEY_WONT(negotiation, TELOPT_LINEMODE)) {
+        comm->caps.telnet_linemode = 0;
+        SPDLOG_DEBUG ("client capabilities updated: TELNET LINEMODE disabled for slot {}", comm.slot());
+        if (comm->flags & C_LINE_INPUT) {
+            // If the client refuses LINEMODE, we can fall back to Kludge line mode with WONT ECHO declared
+            // when enable telnet on the slot.
+        }
+    }
+}
+
+mudmux_dispatch_result_t comm_dispatch_telnet_subnegotiation(async_runtime_t* runtime, comm_abstract_ptr& comm, const comm_telnet_negotiation_t& telnet_neg) {
+    if (telnet_neg.sb_len == 0)
+        return MUDMUX_DISPATCH_OK;
+
+    const int option = static_cast<unsigned char>(telnet_neg.subopt_buf[0]);
+    const char* payload = telnet_neg.sb_len > 1 ? telnet_neg.subopt_buf + 1 : nullptr;
+    const size_t payload_len = telnet_neg.sb_len > 1 ? telnet_neg.sb_len - 1 : 0;
+
+    if (mudmux_execution_mode() == MUDMUX_DETERMINISM_RELAXED) {
+        const mudmux_dispatch_result_t dispatch_result = mudmux_execution_enqueue_telnet_subneg(
+            async_runtime_get_context(runtime),
+            comm.slot(),
+            option,
+            payload,
+            payload_len);
+        if (dispatch_result == MUDMUX_DISPATCH_QUEUE_FULL) {
+            comm->flags |= C_DEFERRED_INBOUND;
+            has_deferred_input.store(true, std::memory_order_release);
+        }
+        return dispatch_result;
+    }
+
+    return static_cast<mudmux_dispatch_result_t>(mudmux_invoke_hook(
+        HOOK_TELNET_SUBNEG,
+        async_runtime_get_context(runtime),
+        option,
+        const_cast<char*>(payload),
+        payload_len) < 0 ? MUDMUX_DISPATCH_ERROR : MUDMUX_DISPATCH_OK);
 }

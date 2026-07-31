@@ -16,8 +16,11 @@
 #include <openssl/sha.h>
 
 #include "abstract.hpp"
+#include "hooks.hpp"
 #include "outbound.hpp"
+#include "telnet.hpp"
 #include "mudmux/comm.h"
+#include "mudmux/hooks.h"
 
 struct comm_websocket_state_s {
     uint8_t fragmented_opcode{0};
@@ -28,6 +31,7 @@ struct comm_websocket_state_s {
 namespace {
 
 constexpr const char* kWebSocketGuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+static constexpr size_t WEBSOCKET_MAX_HANDSHAKE_BYTES = 8192;
 
 static std::string to_lower_ascii(std::string_view in) {
     std::string out;
@@ -207,6 +211,94 @@ static void log_websocket_close(const char* action, int slot, std::string_view p
         SPDLOG_DEBUG("{} WebSocket Close frame on slot {} without a status code", action, slot);
 }
 
+static bool _find_http_header_end(const std::string& data, size_t* header_len) {
+    if (!header_len) {
+        return false;
+    }
+
+    const size_t crlf_crlf = data.find("\r\n\r\n");
+    if (crlf_crlf != std::string::npos) {
+        *header_len = crlf_crlf + 4;
+        return true;
+    }
+
+    const size_t lf_lf = data.find("\n\n");
+    if (lf_lf != std::string::npos) {
+        *header_len = lf_lf + 2;
+        return true;
+    }
+
+    return false;
+}
+
+static void _send_websocket_rejection(async_runtime_t* runtime, comm_abstract_ptr& comm, int status_code) {
+    const char* reason = "Bad Request";
+    if (status_code == 426) {
+        reason = "Upgrade Required";
+    } else if (status_code == 431) {
+        reason = "Request Header Fields Too Large";
+    }
+
+    std::string response = "HTTP/1.1 " + std::to_string(status_code) + " " + reason + "\r\n"
+                           "Connection: close\r\n"
+                           "Content-Length: 0\r\n";
+    if (status_code == 426) {
+        response += "Sec-WebSocket-Version: 13\r\n";
+    }
+    response += "\r\n";
+
+    comm_buffered_write_raw_comm(comm, response.data(), response.size());
+    comm_close(runtime, comm.slot());
+}
+
+void comm_try_upgrade_websocket(async_runtime_t* runtime, comm_abstract_ptr& comm) {
+    if (!comm || !(comm->flags & C_ENABLE_WEBSOCKET) || C_WEBSOCKET_IS_READY(comm->flags)) {
+        return;
+    }
+
+    std::string request;
+    const size_t copied = comm_copy_inbound_data_prefix(comm, WEBSOCKET_MAX_HANDSHAKE_BYTES, request);
+    if (copied == 0) {
+        return;
+    }
+
+    size_t header_len = 0;
+    if (!_find_http_header_end(request, &header_len)) {
+        if (copied >= WEBSOCKET_MAX_HANDSHAKE_BYTES) {
+            SPDLOG_WARN("websocket handshake headers exceeded {} bytes on slot {}", WEBSOCKET_MAX_HANDSHAKE_BYTES, comm.slot());
+            _send_websocket_rejection(runtime, comm, 431);
+        }
+        return;
+    }
+
+    std::string response;
+    int rejection_status = 400;
+    bool negotiated_telnet = false;
+    if (!comm_websocket_build_upgrade_response(
+            std::string_view(request.data(), header_len),
+            comm_websocket_preferred_protocols(comm),
+            response,
+            &rejection_status,
+            &negotiated_telnet)) {
+        SPDLOG_WARN("websocket handshake rejected on slot {} with status {}", comm.slot(), rejection_status);
+        _send_websocket_rejection(runtime, comm, rejection_status);
+        return;
+    }
+
+    // The HTTP 101 response is part of the transport upgrade and must be
+    // written before WebSocket framing is enabled.  In particular, do not
+    // route it through the pre-upgrade application-output barrier.
+    comm_buffered_write_raw_comm(comm, response.data(), response.size());
+    comm_consume_inbound_data(comm, header_len);
+    C_WEBSOCKET_SET_STATE(comm->flags, WS_READY);
+    if (negotiated_telnet) {
+        C_WEBSOCKET_SET_STATE(comm->flags, WS_TELNET_PENDING);
+        comm_enable_telnet(comm.slot());
+    }
+    SPDLOG_INFO("websocket protocol switch completed for slot {} (telnet subprotocol: {})",
+        comm.slot(), negotiated_telnet);
+}
+
 bool comm_websocket_encode_frame(std::string_view payload, uint8_t opcode, std::string& frame) {
     if (opcode > 0x0f || payload.size() > static_cast<size_t>((std::numeric_limits<uint64_t>::max)()))
         return false;
@@ -230,14 +322,15 @@ bool comm_websocket_encode_frame(std::string_view payload, uint8_t opcode, std::
 }
 
 bool comm_websocket_queue_close(comm_abstract_ptr& comm, std::string_view payload) {
-    if (!comm || (comm->flags & C_WEBSOCKET_CLOSE_SENT))
+    if (!comm || C_WEBSOCKET_STATE(comm->flags) == WS_CLOSE_SENT ||
+        C_WEBSOCKET_STATE(comm->flags) == WS_CLOSE_RECEIVED)
         return static_cast<bool>(comm);
 
     std::string frame;
     if (!comm_websocket_encode_frame(payload, 0x8, frame))
         return false;
     comm_buffered_write_raw_comm(comm, frame.data(), frame.size());
-    comm->flags |= C_WEBSOCKET_CLOSE_SENT;
+    C_WEBSOCKET_SET_STATE(comm->flags, WS_CLOSE_SENT);
     log_websocket_close("queued", comm.slot(), payload);
     return true;
 }
@@ -308,8 +401,8 @@ bool comm_websocket_process_inbound(comm_abstract_ptr& comm, std::string_view wi
         if (opcode == 0x8) { // close
             if (payload.size() == 1) return false;
             log_websocket_close("received", comm.slot(), payload);
-            comm->flags |= C_WEBSOCKET_CLOSE_RECEIVED;
             (void) comm_websocket_queue_close(comm, payload);
+            C_WEBSOCKET_SET_STATE(comm->flags, WS_CLOSE_RECEIVED);
             if (close_code) *close_code = 0; // normal peer-initiated close
             return false;
         }
@@ -428,4 +521,66 @@ bool comm_websocket_build_upgrade_response(
     response += "\r\n";
 
     return true;
+}
+
+static mudmux_dispatch_result_t _dispatch_websocket_telnet_payload(
+    async_runtime_t* runtime, comm_abstract_ptr& comm, std::string_view payload) {
+    std::string application_data(payload.size(), '\0');
+    size_t consumed = 0;
+    uint32_t state = comm->flags & M_TELNET_STATE;
+    comm_telnet_negotiation_t telnet_neg{};
+    const size_t copied = comm_telnet_process_inbound(
+        application_data.data(), const_cast<char*>(payload.data()), payload.size(), &consumed, &state, &telnet_neg);
+    comm->flags = (comm->flags & ~M_TELNET_STATE) | (state & M_TELNET_STATE);
+    if (consumed > copied)
+        comm_process_telnet_options(comm, &telnet_neg);
+    if (telnet_neg.sb_len > 0) {
+        const mudmux_dispatch_result_t result = comm_dispatch_telnet_subnegotiation(runtime, comm, telnet_neg);
+        if (result != MUDMUX_DISPATCH_OK)
+            return result;
+    }
+    if (copied == 0)
+        return MUDMUX_DISPATCH_OK;
+    return static_cast<mudmux_dispatch_result_t>(
+        comm_invoke_inbound_message(runtime, comm, application_data.data(), copied));
+}
+
+comm_process_result_t comm_process_websocket_input(async_runtime_t* runtime, comm_abstract_ptr& comm,
+                                                       int max_message, int& num_messages_processed) {
+    (void) max_message; // A decoded WebSocket message is atomic and must not be split across passes.
+    std::string wire;
+    comm_copy_inbound_data_prefix(comm, (std::numeric_limits<size_t>::max)(), wire);
+    if (wire.empty())
+        return COMM_PROCESS_OK;
+
+    std::vector<std::string> messages;
+    size_t consumed = 0;
+    int close_code = 1002;
+    if (!comm_websocket_process_inbound(comm, wire, &consumed, messages, &close_code)) {
+        if (close_code != 0) {
+            SPDLOG_WARN("invalid WebSocket frame on slot {}; closing with code {}", comm.slot(), close_code);
+            std::string close_payload;
+            close_payload.push_back(static_cast<char>((close_code >> 8) & 0xff));
+            close_payload.push_back(static_cast<char>(close_code & 0xff));
+            (void) comm_websocket_queue_close(comm, close_payload);
+            (void) comm_close(runtime, comm.slot());
+        }
+        return COMM_PROCESS_CLOSED;
+    }
+    comm_consume_inbound_data(comm, consumed);
+
+    for (const std::string& message : messages) {
+        const mudmux_dispatch_result_t result = (comm->flags & C_ENABLE_TELNET)
+            ? _dispatch_websocket_telnet_payload(runtime, comm, message)
+            : static_cast<mudmux_dispatch_result_t>(comm_invoke_inbound_message(runtime, comm, message.data(), message.size()));
+        if (result == MUDMUX_DISPATCH_QUEUE_FULL) {
+            comm->flags |= C_DEFERRED_INBOUND;
+            has_deferred_input.store(true, std::memory_order_release);
+            return COMM_PROCESS_DEFERRED;
+        }
+        ++num_messages_processed;
+        if (!comm)
+            return COMM_PROCESS_CLOSED;
+    }
+    return COMM_PROCESS_OK;
 }

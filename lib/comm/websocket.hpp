@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "abstract.hpp"
+#include "inbound.hpp"
 
 /**
  * @brief Enable WebSocket upgrade handling for a communication slot.
@@ -23,6 +24,8 @@
  * @return true if WebSocket handling is enabled (or already enabled), false otherwise.
  */
 extern "C" bool comm_enable_websocket(int slot, const char* preferred_protocols);
+
+void comm_try_upgrade_websocket(async_runtime_t* runtime, comm_abstract_ptr& comm);
 
 /**
  * @brief Build a successful WebSocket handshake response from an HTTP request.
@@ -65,4 +68,6 @@ void comm_websocket_free_state(comm_abstract_ptr& comm);
 /** Return the server subprotocol preference list configured for this slot. */
 std::string_view comm_websocket_preferred_protocols(comm_abstract_ptr& comm);
 
+comm_process_result_t comm_process_websocket_input(async_runtime_t* runtime, comm_abstract_ptr& comm,
+                                                       int max_message, int& num_messages_processed);
 #endif // COMM_WEBSOCKET_HPP

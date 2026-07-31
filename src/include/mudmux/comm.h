@@ -8,24 +8,36 @@
 #include "mudmux_export.h"
 #include "async.h"
 
-#define C_CLOSING           0x80000000
-#define C_SOCKET_LISTENING  0x40000000
-#define C_SOCKET_READABLE   0x20000000
-#define C_SOCKET_WRITABLE   0x10000000
-#define C_LINE_INPUT        0x08000000
-#define C_CLIENT_ECHO       0x04000000
-#define C_ENABLE_TELNET     0x02000000
-#define C_ENABLE_ANSI       0x01000000
-#define C_ENABLE_WEBSOCKET  0x00800000
-#define C_WEBSOCKET_READY   0x00400000
-#define C_WEBSOCKET_TELNET_PENDING 0x00200000
-#define C_WEBSOCKET_CLOSE_SENT     0x00100000
-#define C_WEBSOCKET_CLOSE_RECEIVED 0x00080000
-#define C_ENABLE_PROMPT     0x00040000
-#define C_INVOKED_PROMPT    0x00020000
-#define C_BUFFERED_WRITE    0x00010000
-#define C_TLS_ESTABLISHED   0x00008000
-#define M_TELNET_STATE      0x0000000f      /* used by TELNET */
+#define C_CLOSING                   (1u<<31)
+#define C_SOCKET_LISTENING          (1u<<30)
+#define C_SOCKET_READABLE           (1u<<29)
+#define C_SOCKET_WRITABLE           (1u<<28)
+#define C_LINE_INPUT                (1u<<27)
+#define C_CLIENT_ECHO               (1u<<26)
+#define C_ENABLE_TELNET             (1u<<25)
+#define C_ENABLE_ANSI               (1u<<24)
+#define C_ENABLE_WEBSOCKET          (1u<<23)
+#define C_ENABLE_PROMPT             (1u<<22)
+#define C_INVOKED_PROMPT            (1u<<15)
+#define C_BUFFERED_WRITE            (1u<<14)
+#define C_TLS_ESTABLISHED           (1u<<13)
+#define C_DEFERRED_INBOUND          (1u<<12)
+#define C_AWAITING_TELNET_HOOK      (1u<<11)
+#define C_AWAITING_CONNECT_HOOK     (1u<<10)
+#define M_WEBSOCKET_STATE           0x000000f0u     /* used by WEBSOCKET */
+#define M_TELNET_STATE              0x0000000fu     /* used by TELNET */
+
+/* WebSocket lifecycle states. C_ENABLE_WEBSOCKET is intentionally separate. */
+#define WS_HANDSHAKE       0x00000000u
+#define WS_READY           0x00000010u
+#define WS_TELNET_PENDING  0x00000020u
+#define WS_CLOSE_SENT      0x00000030u
+#define WS_CLOSE_RECEIVED  0x00000040u
+
+#define C_WEBSOCKET_STATE(flags)    ((flags) & M_WEBSOCKET_STATE)
+#define C_WEBSOCKET_IS_READY(flags) (C_WEBSOCKET_STATE(flags) != WS_HANDSHAKE)
+#define C_WEBSOCKET_SET_STATE(flags, state) \
+    ((flags) = ((flags) & ~M_WEBSOCKET_STATE) | ((state) & M_WEBSOCKET_STATE))
 
 typedef struct comm_abstract_s comm_abstract_t;
 

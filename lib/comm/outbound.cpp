@@ -167,11 +167,12 @@ void comm_buffered_write_comm (comm_abstract_ptr& comm, const void *buf, size_t 
         return;
     // RFC 6455 forbids data frames after Close. A relaxed hook that was
     // already queued can otherwise append output after the handshake starts.
-    if ((comm->flags & C_WEBSOCKET_READY) && (comm->flags & C_WEBSOCKET_CLOSE_SENT)) {
+    if (C_WEBSOCKET_IS_READY(comm->flags) &&
+        C_WEBSOCKET_STATE(comm->flags) == WS_CLOSE_SENT) {
         SPDLOG_DEBUG("discarding {} application bytes after WebSocket Close on slot {}", len, comm.slot());
         return;
     }
-    if ((comm->flags & C_ENABLE_WEBSOCKET) && !(comm->flags & C_WEBSOCKET_READY)) {
+    if ((comm->flags & C_ENABLE_WEBSOCKET) && !C_WEBSOCKET_IS_READY(comm->flags)) {
         // Application output must not precede the HTTP 101 response. Preserve
         // it in the upgrade barrier as already-framed WebSocket data.
         std::string frame;
@@ -180,7 +181,7 @@ void comm_buffered_write_comm (comm_abstract_ptr& comm, const void *buf, size_t 
             SPDLOG_ERROR("failed to queue WebSocket upgrade-barrier output");
         return;
     }
-    if (comm->flags & C_WEBSOCKET_READY) {
+    if (C_WEBSOCKET_IS_READY(comm->flags)) {
         std::string frame;
         if (!comm_websocket_encode_frame(std::string_view(static_cast<const char*>(buf), len), 0x2, frame)) {
             SPDLOG_ERROR("failed to encode WebSocket outbound frame");
@@ -281,8 +282,8 @@ void comm_flush (async_runtime_t* runtime, int slot) {
 
     // The HTTP upgrade response has drained. Queue the Telnet negotiation only
     // now, so it is sent as WebSocket data after the response bytes.
-    if (!comm->outbound && (comm->flags & C_WEBSOCKET_TELNET_PENDING)) {
-        comm->flags &= ~C_WEBSOCKET_TELNET_PENDING;
+    if (!comm->outbound && C_WEBSOCKET_STATE(comm->flags) == WS_TELNET_PENDING) {
+        C_WEBSOCKET_SET_STATE(comm->flags, WS_READY);
         if (!(comm->flags & C_CLOSING)) {
             comm_start_telnet_negotiation(slot);
             comm_flush(runtime, slot);
@@ -295,7 +296,7 @@ void comm_flush (async_runtime_t* runtime, int slot) {
     // first client read, so releasing this barrier merely because the normal
     // outbound queue is empty would put a WebSocket frame on the wire before
     // the upgrade has completed.
-    if (!comm->outbound && (comm->flags & C_WEBSOCKET_READY) && comm->websocket_upgrade_barrier) {
+    if (!comm->outbound && C_WEBSOCKET_IS_READY(comm->flags) && comm->websocket_upgrade_barrier) {
         SPDLOG_DEBUG("releasing WebSocket upgrade barrier on slot {} after HTTP 101", slot);
         comm->outbound = comm->websocket_upgrade_barrier;
         comm->websocket_upgrade_barrier = nullptr;
@@ -331,8 +332,8 @@ void comm_flush (async_runtime_t* runtime, int slot) {
         comm->flags &= ~C_BUFFERED_WRITE;
 
         const bool waiting_for_websocket_close =
-            (comm->flags & C_WEBSOCKET_READY) &&
-            !(comm->flags & C_WEBSOCKET_CLOSE_RECEIVED);
+            C_WEBSOCKET_IS_READY(comm->flags) &&
+            C_WEBSOCKET_STATE(comm->flags) != WS_CLOSE_RECEIVED;
         if ((comm->flags & C_CLOSING) && !waiting_for_websocket_close) {
             SPDLOG_DEBUG ("comm slot has C_CLOSING flag set, sending shutdown signal to peer");
             if (comm->ssl && (comm->flags & C_TLS_ESTABLISHED)) {
@@ -406,16 +407,17 @@ bool comm_close (async_runtime_t* runtime, int slot) {
     // The close control frame must be the final WebSocket frame.  In
     // particular, HOOK_DISCONNECT may have queued a final message above, so
     // wait until it has drained before sending Close.
-    if ((comm->flags & C_WEBSOCKET_READY) &&
-        !(comm->flags & (C_WEBSOCKET_CLOSE_SENT | C_WEBSOCKET_CLOSE_RECEIVED))) {
+    if (C_WEBSOCKET_IS_READY(comm->flags) &&
+        C_WEBSOCKET_STATE(comm->flags) != WS_CLOSE_SENT &&
+        C_WEBSOCKET_STATE(comm->flags) != WS_CLOSE_RECEIVED) {
         const char normal_close[] = {0x03, static_cast<char>(0xe8)}; // 1000
         SPDLOG_DEBUG("outbound data drained; initiating WebSocket close on slot {}", slot);
         (void) comm_websocket_queue_close(comm, std::string_view(normal_close, sizeof(normal_close)));
         return false;
     }
 
-    if ((comm->flags & C_WEBSOCKET_READY) &&
-        !(comm->flags & C_WEBSOCKET_CLOSE_RECEIVED)) {
+    if (C_WEBSOCKET_IS_READY(comm->flags) &&
+        C_WEBSOCKET_STATE(comm->flags) != WS_CLOSE_RECEIVED) {
         return false;
     }
 
