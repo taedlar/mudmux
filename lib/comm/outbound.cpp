@@ -168,7 +168,7 @@ void comm_buffered_write_comm (comm_abstract_ptr& comm, const void *buf, size_t 
     // RFC 6455 forbids data frames after Close. A relaxed hook that was
     // already queued can otherwise append output after the handshake starts.
     if (C_WEBSOCKET_IS_READY(comm->flags) &&
-        C_WEBSOCKET_STATE(comm->flags) == C_WEBSOCKET_CLOSE_SENT) {
+        C_WEBSOCKET_STATE(comm->flags) == WS_CLOSE_SENT) {
         SPDLOG_DEBUG("discarding {} application bytes after WebSocket Close on slot {}", len, comm.slot());
         return;
     }
@@ -282,8 +282,8 @@ void comm_flush (async_runtime_t* runtime, int slot) {
 
     // The HTTP upgrade response has drained. Queue the Telnet negotiation only
     // now, so it is sent as WebSocket data after the response bytes.
-    if (!comm->outbound && C_WEBSOCKET_STATE(comm->flags) == C_WEBSOCKET_TELNET_PENDING) {
-        C_WEBSOCKET_SET_STATE(comm->flags, C_WEBSOCKET_READY);
+    if (!comm->outbound && C_WEBSOCKET_STATE(comm->flags) == WS_TELNET_PENDING) {
+        C_WEBSOCKET_SET_STATE(comm->flags, WS_READY);
         if (!(comm->flags & C_CLOSING)) {
             comm_start_telnet_negotiation(slot);
             comm_flush(runtime, slot);
@@ -333,7 +333,7 @@ void comm_flush (async_runtime_t* runtime, int slot) {
 
         const bool waiting_for_websocket_close =
             C_WEBSOCKET_IS_READY(comm->flags) &&
-            C_WEBSOCKET_STATE(comm->flags) != C_WEBSOCKET_CLOSE_RECEIVED;
+            C_WEBSOCKET_STATE(comm->flags) != WS_CLOSE_RECEIVED;
         if ((comm->flags & C_CLOSING) && !waiting_for_websocket_close) {
             SPDLOG_DEBUG ("comm slot has C_CLOSING flag set, sending shutdown signal to peer");
             if (comm->ssl && (comm->flags & C_TLS_ESTABLISHED)) {
@@ -408,8 +408,8 @@ bool comm_close (async_runtime_t* runtime, int slot) {
     // particular, HOOK_DISCONNECT may have queued a final message above, so
     // wait until it has drained before sending Close.
     if (C_WEBSOCKET_IS_READY(comm->flags) &&
-        C_WEBSOCKET_STATE(comm->flags) != C_WEBSOCKET_CLOSE_SENT &&
-        C_WEBSOCKET_STATE(comm->flags) != C_WEBSOCKET_CLOSE_RECEIVED) {
+        C_WEBSOCKET_STATE(comm->flags) != WS_CLOSE_SENT &&
+        C_WEBSOCKET_STATE(comm->flags) != WS_CLOSE_RECEIVED) {
         const char normal_close[] = {0x03, static_cast<char>(0xe8)}; // 1000
         SPDLOG_DEBUG("outbound data drained; initiating WebSocket close on slot {}", slot);
         (void) comm_websocket_queue_close(comm, std::string_view(normal_close, sizeof(normal_close)));
@@ -417,7 +417,7 @@ bool comm_close (async_runtime_t* runtime, int slot) {
     }
 
     if (C_WEBSOCKET_IS_READY(comm->flags) &&
-        C_WEBSOCKET_STATE(comm->flags) != C_WEBSOCKET_CLOSE_RECEIVED) {
+        C_WEBSOCKET_STATE(comm->flags) != WS_CLOSE_RECEIVED) {
         return false;
     }
 

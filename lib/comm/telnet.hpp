@@ -15,6 +15,7 @@
 #define TELOPT_NEW_ENVIRON 39
 #endif
 
+#include "mudmux/hooks.h"
 #include "abstract.hpp"
 
 // telnet negotiation state-machine states
@@ -99,5 +100,7 @@ void comm_telnet_send_wont(comm_abstract_ptr& comm, int option);
 void comm_telnet_send_do(comm_abstract_ptr& comm, int option);
 void comm_telnet_send_dont(comm_abstract_ptr& comm, int option);
 void comm_telnet_send_subnegotiation(comm_abstract_ptr& comm, int option, const char* data, size_t len);
+void comm_process_telnet_options (comm_abstract_ptr& comm, comm_telnet_negotiation_t* negotiation);
+mudmux_dispatch_result_t comm_dispatch_telnet_subnegotiation(async_runtime_t* runtime, comm_abstract_ptr& comm, const comm_telnet_negotiation_t& telnet_neg);
 
 #endif // COMM_TELNET_HPP

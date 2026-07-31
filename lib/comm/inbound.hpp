@@ -4,6 +4,7 @@
 #include "abstract.hpp"
 #include "async/async_runtime.h"
 
+#include <atomic>
 #include <stddef.h>
 
 enum comm_process_result_t {
@@ -41,6 +42,9 @@ bool comm_refill_inbound_buffers (comm_abstract_ptr& comm, const char* src = nul
 
 void comm_free_inbound_buffers (comm_abstract_ptr& comm);
 
+size_t comm_copy_inbound_data_prefix(comm_abstract_ptr& comm, size_t limit, std::string& out);
+void comm_consume_inbound_data(comm_abstract_ptr& comm, size_t bytes);
+
 /**
  * @brief Process input data from the specified comm slot's inbound buffer.
  *
@@ -50,5 +54,7 @@ void comm_free_inbound_buffers (comm_abstract_ptr& comm);
  * @return 0 on success, 1 if the connection was closed, -1 on error.
  */
 comm_process_result_t comm_process_input (async_runtime_t* runtime, comm_abstract_ptr& comm, int max_message = -1);
+
+extern std::atomic<bool> has_deferred_input;
 
 #endif /* COMM_INBOUND_HPP */

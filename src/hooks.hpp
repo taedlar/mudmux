@@ -3,12 +3,6 @@
 
 #include "mudmux/hooks.h"
 
-enum mudmux_dispatch_result_t {
-	MUDMUX_DISPATCH_ERROR = -1,
-	MUDMUX_DISPATCH_OK = 0,
-	MUDMUX_DISPATCH_QUEUE_FULL = 1,
-};
-
 using mudmux_hook_completion_t = void (*)(void* context, int msg);
 
 int mudmux_invoke_registered_hook(enum mudmux_hook_type_t hook_type, void* ctx, int msg, void* data, size_t size, bool flush_after);

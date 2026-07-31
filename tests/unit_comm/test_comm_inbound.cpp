@@ -445,7 +445,7 @@ TEST_F(CommInboundTest, ConnectHookCanSelectWebSocketOnly) {
     packet.push_back(static_cast<char>('i' ^ 0x02));
     ASSERT_TRUE(comm_refill_inbound_buffers(comm, packet.data(), packet.size()));
     EXPECT_EQ(comm_process_input(runtime, comm, -1), COMM_PROCESS_OK);
-    EXPECT_EQ(C_WEBSOCKET_STATE(comm_get_flags(slot)), C_WEBSOCKET_READY);
+    EXPECT_EQ(C_WEBSOCKET_STATE(comm_get_flags(slot)), WS_READY);
     EXPECT_EQ(comm_get_flags(slot) & C_ENABLE_TELNET, 0u);
     ASSERT_EQ(inbound_messages.size(), 1u);
     EXPECT_EQ(inbound_messages[0], "hi");
@@ -502,7 +502,7 @@ TEST_F(CommInboundTest, WebSocketUpgradeDispatchesBinaryUtf8StreamAndFramesOutbo
     EXPECT_NE(response.find("101 Switching Protocols"), std::string::npos);
     EXPECT_NE(response.find("Sec-WebSocket-Accept:"), std::string::npos);
     EXPECT_NE(response.find(std::string("\x82\x02ok", 4)), std::string::npos);
-    EXPECT_EQ(C_WEBSOCKET_STATE(comm_get_flags(slot)), C_WEBSOCKET_READY);
+    EXPECT_EQ(C_WEBSOCKET_STATE(comm_get_flags(slot)), WS_READY);
 
     async_runtime_deinit(runtime);
 }
@@ -511,7 +511,7 @@ TEST_F(CommInboundTest, ServerInitiatedWebSocketCloseWaitsForPeerReplyBeforeRemo
     async_runtime_t* runtime = async_runtime_init(this);
     ASSERT_NE(runtime, nullptr);
 
-    const int slot = add_memory_comm(C_WEBSOCKET_READY);
+    const int slot = add_memory_comm(WS_READY);
     ASSERT_NE(slot, -1);
 
     // Application output queued by a disconnect hook must drain before the
@@ -534,7 +534,7 @@ TEST_F(CommInboundTest, ServerInitiatedWebSocketCloseWaitsForPeerReplyBeforeRemo
     const int close_len = BIO_read(comm_abstract_get(slot)->wbio, outbound.data(), static_cast<int>(outbound.size()));
     ASSERT_EQ(close_len, 4);
     EXPECT_EQ(std::string(outbound.data(), static_cast<size_t>(close_len)), std::string("\x88\x02\x03\xe8", 4));
-    EXPECT_EQ(C_WEBSOCKET_STATE(comm_get_flags(slot)), C_WEBSOCKET_CLOSE_SENT);
+    EXPECT_EQ(C_WEBSOCKET_STATE(comm_get_flags(slot)), WS_CLOSE_SENT);
     comm_abstract_get(slot)->flags &= ~C_BUFFERED_WRITE;
 
     // Late application output from a queued relaxed hook must not follow Close.
@@ -631,7 +631,7 @@ TEST_F(CommInboundTest, WebSocketClientSubprotocolIsIgnoredWithoutServerPreferen
     EXPECT_EQ(comm_process_input(runtime, comm, -1), COMM_PROCESS_OK);
 
     const uint32_t flags = comm_get_flags(slot);
-    EXPECT_EQ(C_WEBSOCKET_STATE(flags), C_WEBSOCKET_READY);
+    EXPECT_EQ(C_WEBSOCKET_STATE(flags), WS_READY);
     EXPECT_TRUE((flags & C_ENABLE_TELNET) == 0);
 
     comm_flush(runtime, slot);

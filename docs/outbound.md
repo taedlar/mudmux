@@ -101,7 +101,7 @@ Required ordering:
 
 `comm_flush_all()` may run between accept and the first request read, so an empty normal
 outbound queue is not sufficient reason to release the upgrade barrier.  It must also be
-known that `C_WEBSOCKET_READY` is set.
+known that `WS_READY` is set.
 
 For inbound processing, decode and unmask a complete WebSocket frame before passing its
 payload to a subprotocol parser.  Applying a Telnet parser to raw WebSocket bytes can

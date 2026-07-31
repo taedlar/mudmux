@@ -345,7 +345,7 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
                         // waiting for, so finish the transport teardown here.
                         if (!closed && !refilled && (comm->flags & C_CLOSING) &&
                             C_WEBSOCKET_IS_READY(comm->flags)) {
-                            C_WEBSOCKET_SET_STATE(comm->flags, C_WEBSOCKET_CLOSE_RECEIVED);
+                            C_WEBSOCKET_SET_STATE(comm->flags, WS_CLOSE_RECEIVED);
                             (void) comm_close(runtime, slot);
                         }
                         continue;
@@ -364,7 +364,7 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
                     const bool closed = comm_close(runtime, slot);
                     if (!closed && (comm->flags & C_CLOSING) &&
                         C_WEBSOCKET_IS_READY(comm->flags)) {
-                        C_WEBSOCKET_SET_STATE(comm->flags, C_WEBSOCKET_CLOSE_RECEIVED);
+                        C_WEBSOCKET_SET_STATE(comm->flags, WS_CLOSE_RECEIVED);
                         (void) comm_close(runtime, slot);
                     }
                     continue;
