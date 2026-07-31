@@ -211,7 +211,7 @@ static void _send_websocket_rejection(async_runtime_t* runtime, comm_abstract_pt
 }
 
 static void _try_upgrade_websocket(async_runtime_t* runtime, comm_abstract_ptr& comm) {
-    if (!comm || !(comm->flags & C_ENABLE_WEBSOCKET) || (comm->flags & C_WEBSOCKET_READY)) {
+    if (!comm || !(comm->flags & C_ENABLE_WEBSOCKET) || C_WEBSOCKET_IS_READY(comm->flags)) {
         return;
     }
 
@@ -249,9 +249,9 @@ static void _try_upgrade_websocket(async_runtime_t* runtime, comm_abstract_ptr& 
     // route it through the pre-upgrade application-output barrier.
     comm_buffered_write_raw_comm(comm, response.data(), response.size());
     _consume_inbound_data(comm, header_len);
-    comm->flags |= C_WEBSOCKET_READY;
+    C_WEBSOCKET_SET_STATE(comm->flags, C_WEBSOCKET_READY);
     if (negotiated_telnet) {
-        comm->flags |= C_WEBSOCKET_TELNET_PENDING;
+        C_WEBSOCKET_SET_STATE(comm->flags, C_WEBSOCKET_TELNET_PENDING);
         comm_enable_telnet(comm.slot());
     }
     SPDLOG_INFO("websocket protocol switch completed for slot {} (telnet subprotocol: {})",
@@ -501,12 +501,12 @@ static bool _refill_inbound_buffers_from_src(comm_abstract_ptr& comm, const char
             break; // no more space to copy data into the current buffer
         size_t bytes_copied = 0;
         const bool websocket_handshake_pending =
-            (comm->flags & C_ENABLE_WEBSOCKET) && !(comm->flags & C_WEBSOCKET_READY);
+            (comm->flags & C_ENABLE_WEBSOCKET) && !C_WEBSOCKET_IS_READY(comm->flags);
         // WebSocket frames must remain intact until the WebSocket decoder has
         // removed framing and client masking.  For Telnet-over-WebSocket, the
         // decoded payload is passed through the Telnet parser later in
         // _dispatch_websocket_telnet_payload().
-        const bool websocket_ready = (comm->flags & C_WEBSOCKET_READY) != 0;
+        const bool websocket_ready = C_WEBSOCKET_IS_READY(comm->flags);
         if ((comm->flags & C_ENABLE_TELNET) && !websocket_handshake_pending && !websocket_ready && !telnet_parsing_paused) {
             // copy telnet data from src, preserving telnet state in comm flags
             uint32_t state = comm->flags & M_TELNET_STATE; // restore saved telnet state from comm flags
@@ -540,7 +540,7 @@ static bool _refill_inbound_buffers_from_src(comm_abstract_ptr& comm, const char
         remaining -= bytes_to_copy; // decrease remaining bytes to copy from source
     }
 
-    if ((comm->flags & C_ENABLE_WEBSOCKET) && !(comm->flags & C_WEBSOCKET_READY)) {
+    if ((comm->flags & C_ENABLE_WEBSOCKET) && !C_WEBSOCKET_IS_READY(comm->flags)) {
         _try_upgrade_websocket(runtime, comm);
     }
 
@@ -860,7 +860,7 @@ comm_process_result_t comm_process_input (async_runtime_t* runtime, comm_abstrac
     comm->flags &= ~C_DEFERRED_INBOUND;
     inbound_buffer_t* ibb = _skip_non_data_head_buffers(comm);
     int num_messages_processed = 0;
-    if ((comm->flags & C_ENABLE_WEBSOCKET) && !(comm->flags & C_WEBSOCKET_READY)) {
+    if ((comm->flags & C_ENABLE_WEBSOCKET) && !C_WEBSOCKET_IS_READY(comm->flags)) {
         // Input may have arrived while the asynchronous connect hook was still
         // configuring the slot. In that case it is already buffered when the
         // hook enables WebSocket support, so retry the upgrade here rather than
@@ -870,11 +870,11 @@ comm_process_result_t comm_process_input (async_runtime_t* runtime, comm_abstrac
         // through the input state machine with the now-invalid guard.
         if (!comm)
             return COMM_PROCESS_CLOSED;
-        if (!(comm->flags & C_WEBSOCKET_READY))
+        if (!C_WEBSOCKET_IS_READY(comm->flags))
             return COMM_PROCESS_OK;
     }
 
-    if (comm->flags & C_WEBSOCKET_READY) {
+    if (C_WEBSOCKET_IS_READY(comm->flags)) {
         return _process_websocket_input(runtime, comm, max_message, num_messages_processed);
     }
     else if (comm->flags & C_LINE_INPUT) {

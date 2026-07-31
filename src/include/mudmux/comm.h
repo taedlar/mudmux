@@ -17,16 +17,24 @@
 #define C_ENABLE_TELNET             (1u<<25)
 #define C_ENABLE_ANSI               (1u<<24)
 #define C_ENABLE_WEBSOCKET          (1u<<23)
-#define C_WEBSOCKET_READY           (1u<<22)
-#define C_WEBSOCKET_TELNET_PENDING  (1u<<21)
-#define C_WEBSOCKET_CLOSE_SENT      (1u<<20)
-#define C_WEBSOCKET_CLOSE_RECEIVED  (1u<<19)
 #define C_ENABLE_PROMPT             (1u<<18)
 #define C_INVOKED_PROMPT            (1u<<17)
 #define C_BUFFERED_WRITE            (1u<<16)
 #define C_TLS_ESTABLISHED           (1u<<15)
-#define M_WEBSOCKET_STATE   0x000000f0      /* used by WEBSOCKET */
+#define M_WEBSOCKET_STATE           0x000000f0u /* used by WEBSOCKET */
 #define M_TELNET_STATE      0x0000000f      /* used by TELNET */
+
+/* WebSocket lifecycle states. C_ENABLE_WEBSOCKET is intentionally separate. */
+#define C_WEBSOCKET_HANDSHAKE       0x00000000u
+#define C_WEBSOCKET_READY           0x00000010u
+#define C_WEBSOCKET_TELNET_PENDING  0x00000020u
+#define C_WEBSOCKET_CLOSE_SENT      0x00000030u
+#define C_WEBSOCKET_CLOSE_RECEIVED  0x00000040u
+
+#define C_WEBSOCKET_STATE(flags)    ((flags) & M_WEBSOCKET_STATE)
+#define C_WEBSOCKET_IS_READY(flags) (C_WEBSOCKET_STATE(flags) != C_WEBSOCKET_HANDSHAKE)
+#define C_WEBSOCKET_SET_STATE(flags, state) \
+    ((flags) = ((flags) & ~M_WEBSOCKET_STATE) | ((state) & M_WEBSOCKET_STATE))
 
 typedef struct comm_abstract_s comm_abstract_t;
 

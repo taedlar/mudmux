@@ -26,7 +26,7 @@ void comm_enable_telnet (int slot) {
     comm_abstract_ptr comm(slot, comm_slots_mtx);
     if (!comm)
         return;
-    if ((comm->flags & C_ENABLE_WEBSOCKET) && !(comm->flags & C_WEBSOCKET_READY)) {
+    if ((comm->flags & C_ENABLE_WEBSOCKET) && !C_WEBSOCKET_IS_READY(comm->flags)) {
         SPDLOG_WARN("cannot enable TELNET on slot {} before WebSocket upgrade completes", slot);
         return;
     }
@@ -35,7 +35,7 @@ void comm_enable_telnet (int slot) {
     comm->flags |= C_ENABLE_TELNET;
     SPDLOG_DEBUG ("enabled TELNET for comm slot {}", slot);
 
-    if (!(comm->flags & C_WEBSOCKET_TELNET_PENDING))
+    if (C_WEBSOCKET_STATE(comm->flags) != C_WEBSOCKET_TELNET_PENDING)
         _start_telnet_negotiation(comm);
 }
 

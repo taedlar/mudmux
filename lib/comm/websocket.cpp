@@ -230,14 +230,15 @@ bool comm_websocket_encode_frame(std::string_view payload, uint8_t opcode, std::
 }
 
 bool comm_websocket_queue_close(comm_abstract_ptr& comm, std::string_view payload) {
-    if (!comm || (comm->flags & C_WEBSOCKET_CLOSE_SENT))
+    if (!comm || C_WEBSOCKET_STATE(comm->flags) == C_WEBSOCKET_CLOSE_SENT ||
+        C_WEBSOCKET_STATE(comm->flags) == C_WEBSOCKET_CLOSE_RECEIVED)
         return static_cast<bool>(comm);
 
     std::string frame;
     if (!comm_websocket_encode_frame(payload, 0x8, frame))
         return false;
     comm_buffered_write_raw_comm(comm, frame.data(), frame.size());
-    comm->flags |= C_WEBSOCKET_CLOSE_SENT;
+    C_WEBSOCKET_SET_STATE(comm->flags, C_WEBSOCKET_CLOSE_SENT);
     log_websocket_close("queued", comm.slot(), payload);
     return true;
 }
@@ -308,8 +309,8 @@ bool comm_websocket_process_inbound(comm_abstract_ptr& comm, std::string_view wi
         if (opcode == 0x8) { // close
             if (payload.size() == 1) return false;
             log_websocket_close("received", comm.slot(), payload);
-            comm->flags |= C_WEBSOCKET_CLOSE_RECEIVED;
             (void) comm_websocket_queue_close(comm, payload);
+            C_WEBSOCKET_SET_STATE(comm->flags, C_WEBSOCKET_CLOSE_RECEIVED);
             if (close_code) *close_code = 0; // normal peer-initiated close
             return false;
         }
