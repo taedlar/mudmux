@@ -121,24 +121,38 @@ void comm_enable_tls (int slot) {
 		return;
 	}
 
-	BIO* transport_rbio = comm->rbio;
-	if (!transport_rbio || BIO_up_ref(transport_rbio) != 1) {
-		SPDLOG_ERROR("BIO_up_ref failed for TLS transport read BIO on slot {}", slot);
-		SSL_free(ssl);
-		return;
-	}
-
 	BIO* transport_wbio = comm->wbio;
 	if (!transport_wbio || BIO_up_ref(transport_wbio) != 1) {
 		SPDLOG_ERROR("BIO_up_ref failed for TLS transport write BIO on slot {}", slot);
-		BIO_free_all(transport_rbio);
 		SSL_free(ssl);
 		return;
 	}
 
 	SSL_set_accept_state(ssl);
 	SSL_set_mode(ssl, SSL_MODE_ENABLE_PARTIAL_WRITE | SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
-	SSL_set_bio(ssl, transport_rbio, transport_wbio); // SSL owns both BIO refs
+#ifdef _WIN32
+	// IOCP's WSARecv consumes ciphertext before the event reaches the comm
+	// layer. Feed those completion buffers to SSL through a memory read BIO
+	// while retaining the socket BIO as SSL's write transport.
+	BIO* tls_rbio = BIO_new(BIO_s_mem());
+	if (!tls_rbio) {
+		SPDLOG_ERROR("BIO_new(BIO_s_mem) failed for TLS read BIO on slot {}", slot);
+		BIO_free_all(transport_wbio);
+		SSL_free(ssl);
+		return;
+	}
+	BIO_set_mem_eof_return(tls_rbio, -1);
+	SSL_set_bio(ssl, tls_rbio, transport_wbio); // SSL owns the memory BIO and write transport ref
+#else
+	BIO* transport_rbio = comm->rbio;
+	if (!transport_rbio || BIO_up_ref(transport_rbio) != 1) {
+		SPDLOG_ERROR("BIO_up_ref failed for TLS transport read BIO on slot {}", slot);
+		BIO_free_all(transport_wbio);
+		SSL_free(ssl);
+		return;
+	}
+	SSL_set_bio(ssl, transport_rbio, transport_wbio); // SSL owns both transport BIO refs
+#endif
 	comm->ssl = ssl;
 	comm->flags &= ~C_TLS_ESTABLISHED;
 

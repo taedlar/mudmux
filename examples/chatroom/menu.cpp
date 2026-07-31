@@ -43,5 +43,15 @@ void Menu::receiveCharInput (int slot, const std::string& message) {
         // Option selected, handle it as needed
         selected_index = cursor_position;
         write_slot_text(slot, "\r\x1B[J"); // clear the line and move cursor to the beginning
+    } else if (message.length() > 0) {
+        char input_char = message[0];
+        for (size_t i = 0; i < options.size(); ++i) {
+            if (tolower(options[i][0]) == tolower(input_char)) {
+                cursor_position = static_cast<int>(i);
+                selected_index = cursor_position;
+                write_slot_text(slot, "\r\x1B[J"); // clear the line and move cursor to the beginning
+                break;
+            }
+        }
     }
 }
