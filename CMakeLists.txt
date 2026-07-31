@@ -36,7 +36,7 @@ cmake_dependent_option(MUDMUX_BUILD_EXAMPLES
 
 # compiler settings
 if(MSVC)
-    add_compile_options(/W3 /permissive- /utf-8 /nologo)
+    add_compile_options(/W3 /permissive- /EHsc /utf-8 /nologo)
 elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
 	add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
