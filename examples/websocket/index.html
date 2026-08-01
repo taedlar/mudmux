@@ -3,31 +3,32 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>mudmux WebSocket test client</title>
+  <title>mudmux xterm.js WebSocket client</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
   <style>
     :root { color-scheme: dark; font-family: system-ui, sans-serif; }
-    body { margin: 2rem auto; max-width: 52rem; padding: 0 1rem; }
-    fieldset, textarea, input, select, button { font: inherit; }
+    body { margin: 2rem auto; max-width: 72rem; padding: 0 1rem; }
+    fieldset, input, select, button { font: inherit; }
     fieldset { display: grid; gap: .7rem; margin-bottom: 1rem; }
     label { display: grid; gap: .25rem; }
-    input, select, textarea { box-sizing: border-box; padding: .45rem; width: 100%; }
-    textarea { min-height: 8rem; resize: vertical; }
+    input, select { box-sizing: border-box; padding: .45rem; width: 100%; }
     button { padding: .45rem .8rem; }
     #status { font-weight: 600; }
-    #log { background: #151515; border: 1px solid #555; min-height: 16rem; overflow: auto; padding: .75rem; white-space: pre-wrap; }
-    .in { color: #8ee; } .out { color: #9e9; } .event { color: #fc8; } .error { color: #f88; }
+    #terminal { background: #151515; border: 1px solid #555; height: min(65vh, 42rem); padding: .5rem; }
+    #events { color: #fc8; margin: .5rem 0 0; min-height: 1.4rem; }
   </style>
 </head>
 <body>
-  <h1>mudmux WebSocket test client</h1>
+  <h1>mudmux xterm.js WebSocket client</h1>
   <p>
-    This client sends and receives binary WebSocket frames containing UTF-8 text.
-    Select a Telnet protocol to exercise Telnet-over-WebSocket negotiation.
+    Connect to a mudmux WebSocket endpoint, then type directly into the terminal.
+    Input is buffered locally and sent as one binary WebSocket frame when Enter is pressed.
+    The chatroom example enables TLS, so its default endpoint uses <code>wss://</code>.
   </p>
 
   <fieldset>
     <label>WebSocket URL
-      <input id="url" value="ws://localhost:4000/" spellcheck="false">
+      <input id="url" value="wss://localhost:4000/" spellcheck="false">
     </label>
     <label>Requested subprotocol
       <select id="protocol">
@@ -43,81 +44,192 @@
     </div>
   </fieldset>
 
-  <fieldset>
-    <label>Message
-      <textarea id="message" placeholder="Type a UTF-8 message"></textarea>
-    </label>
-    <div><button id="send" type="button" disabled>Send binary UTF-8 frame</button></div>
-  </fieldset>
+  <div id="terminal" aria-label="MUD terminal"></div>
+  <p id="events" aria-live="polite"></p>
 
-  <div id="log" aria-live="polite"></div>
-
+  <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
   <script>
     (() => {
       const encoder = new TextEncoder();
-      const decoder = new TextDecoder("utf-8", { fatal: false });
       const $ = (id) => document.getElementById(id);
-      const log = (kind, text) => {
-        const line = document.createElement("div");
-        line.className = kind;
-        line.textContent = `${new Date().toLocaleTimeString()}  ${text}`;
-        $("log").append(line);
-        $("log").scrollTop = $("log").scrollHeight;
-      };
+      const event = (text) => { $("events").textContent = text; };
+      let terminal = null;
+      let fitAddon = null;
+      try {
+        terminal = new Terminal({
+          cursorBlink: true,
+          convertEol: true,
+          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+          fontSize: 15,
+          scrollback: 5000,
+          theme: { background: '#151515' },
+        });
+        fitAddon = new FitAddon.FitAddon();
+        terminal.loadAddon(fitAddon);
+        terminal.open($("terminal"));
+      } catch (error) {
+        event(`Terminal initialization failed: ${error.message}`);
+      }
 
       let socket = null;
+      let pendingInput = "";
+      let localEcho = true;
+      const telnet = { state: "data" };
+      const IAC = 255;
+      const DO = 253;
+      const DONT = 254;
+      const WILL = 251;
+      const WONT = 252;
+      const SB = 250;
+      const SE = 240;
+      const ECHO = 1;
+      const SGA = 3;
+      const LINEMODE = 34;
+      const fitTerminal = () => {
+        if (!fitAddon) return;
+        try { fitAddon.fit(); } catch (_) { /* terminal is not visible yet */ }
+      };
       const setConnected = (connected, status) => {
         $("connect").disabled = connected;
         $("disconnect").disabled = !connected;
-        $("send").disabled = !connected;
         $("status").textContent = status;
       };
+      const sendBytes = (bytes) => {
+        if (socket?.readyState === WebSocket.OPEN)
+          socket.send(bytes);
+      };
+      const telnetEnabled = () => socket?.protocol === "telnet.ietf.org"
+        || socket?.protocol === "telnet.mudstandards.org";
+      const sendTelnetCommand = (command, option) => sendBytes(new Uint8Array([IAC, command, option]));
+      const sendApplicationInput = (text) => {
+        const bytes = encoder.encode(text);
+        if (!telnetEnabled()) {
+          sendBytes(bytes);
+          return;
+        }
+        const escaped = [];
+        for (const byte of bytes) {
+          escaped.push(byte);
+          if (byte === IAC) escaped.push(IAC);
+        }
+        sendBytes(new Uint8Array(escaped));
+      };
+      const handleTelnetOption = (command, option) => {
+        if (command === WILL) {
+          if (option === SGA || option === ECHO) {
+            sendTelnetCommand(DO, option);
+            if (option === ECHO) localEcho = false;
+          } else {
+            sendTelnetCommand(DONT, option);
+          }
+        } else if (command === WONT) {
+          sendTelnetCommand(DONT, option);
+          if (option === ECHO) localEcho = true;
+        } else if (command === DO) {
+          sendTelnetCommand(option === LINEMODE ? WILL : WONT, option);
+        } else if (command === DONT) {
+          sendTelnetCommand(WONT, option);
+        }
+      };
+      const decodeTelnetOutput = (bytes) => {
+        const output = [];
+        for (const byte of bytes) {
+          switch (telnet.state) {
+            case "data":
+              telnet.state = byte === IAC ? "iac" : "data";
+              if (byte !== IAC) output.push(byte);
+              break;
+            case "iac":
+              if (byte === IAC) output.push(byte);
+              else if ([DO, DONT, WILL, WONT].includes(byte)) telnet.command = byte;
+              else if (byte === SB) telnet.state = "subnegotiation";
+              else telnet.state = "data";
+              if (byte === IAC) telnet.state = "data";
+              else if ([DO, DONT, WILL, WONT].includes(byte)) telnet.state = "option";
+              break;
+            case "option":
+              handleTelnetOption(telnet.command, byte);
+              telnet.state = "data";
+              break;
+            case "subnegotiation":
+              if (byte === IAC) telnet.state = "subnegotiation-iac";
+              break;
+            case "subnegotiation-iac":
+              telnet.state = byte === SE ? "data" : "subnegotiation";
+              break;
+          }
+        }
+        return new Uint8Array(output);
+      };
+      const submitInput = () => {
+        if (localEcho) terminal?.write("\r\n");
+        sendApplicationInput(`${pendingInput}\r\n`);
+        pendingInput = "";
+      };
+      const handleTerminalInput = (data) => {
+        for (const char of data) {
+          if (char === "\r" || char === "\n") {
+            submitInput();
+          } else if (char === "\u007f" || char === "\b") {
+            if (pendingInput) {
+              pendingInput = Array.from(pendingInput).slice(0, -1).join("");
+              if (localEcho) terminal?.write("\b \b");
+            }
+          } else {
+            pendingInput += char;
+            if (localEcho) terminal?.write(char);
+          }
+        }
+      };
+
+      terminal?.onData(handleTerminalInput);
+      window.addEventListener('resize', fitTerminal);
+      requestAnimationFrame(() => {
+        fitTerminal();
+        terminal?.focus();
+      });
 
       $("connect").addEventListener("click", () => {
         if (socket) return;
         const protocol = $("protocol").value;
         try {
-          socket = protocol ? new WebSocket($("url").value, [protocol]) : new WebSocket($("url").value);
+          socket = protocol
+            ? new WebSocket($("url").value, [protocol])
+            : new WebSocket($("url").value);
         } catch (error) {
-          log("error", `Could not create WebSocket: ${error.message}`);
+          event(`Could not create WebSocket: ${error.message}`);
           return;
         }
         socket.binaryType = "arraybuffer";
+        pendingInput = "";
+        localEcho = true;
+        telnet.state = "data";
         $("status").textContent = "Connecting…";
         socket.addEventListener("open", () => {
           setConnected(true, `Connected${socket.protocol ? ` (${socket.protocol})` : ""}`);
-          log("event", `Connected; selected protocol: ${socket.protocol || "none"}`);
+          event(`Connected; selected protocol: ${socket.protocol || "none"}`);
+          fitTerminal();
+          terminal?.focus();
         });
-        socket.addEventListener("message", async (event) => {
-          const bytes = typeof event.data === "string"
-            ? encoder.encode(event.data)
-            : event.data instanceof ArrayBuffer
-              ? new Uint8Array(event.data)
-              : new Uint8Array(await event.data.arrayBuffer());
-          log("in", `← ${decoder.decode(bytes)}`);
+        socket.addEventListener("message", async (message) => {
+          const bytes = typeof message.data === "string"
+            ? encoder.encode(message.data)
+            : message.data instanceof ArrayBuffer
+              ? new Uint8Array(message.data)
+              : new Uint8Array(await message.data.arrayBuffer());
+          terminal?.write(telnetEnabled() ? decodeTelnetOutput(bytes) : bytes);
         });
-        socket.addEventListener("error", () => log("error", "WebSocket error"));
-        socket.addEventListener("close", (event) => {
-          log("event", `Disconnected (code ${event.code}${event.reason ? `: ${event.reason}` : ""})`);
+        socket.addEventListener("error", () => event("WebSocket error"));
+        socket.addEventListener("close", (close) => {
+          event(`Disconnected (code ${close.code}${close.reason ? `: ${close.reason}` : ""})`);
           socket = null;
           setConnected(false, "Disconnected");
+          terminal?.focus();
         });
       });
 
-      $("disconnect").addEventListener("click", () => socket?.close(1000, "test client disconnect"));
-      $("send").addEventListener("click", () => {
-        if (!socket || socket.readyState !== WebSocket.OPEN) return;
-        const text = $("message").value;
-        socket.send(encoder.encode(text));
-        log("out", `→ ${text}`);
-        $("message").value = "";
-      });
-      $("message").addEventListener("keydown", (event) => {
-        if (event.key === "Enter" && !event.shiftKey) {
-          event.preventDefault();
-          $("send").click();
-        }
-      });
+      $("disconnect").addEventListener("click", () => socket?.close(1000, "client disconnect"));
     })();
   </script>
 </body>
