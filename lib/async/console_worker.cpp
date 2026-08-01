@@ -242,8 +242,36 @@ static void console_worker_proc_win32(console_worker_context_t* cctx) {
                 else {
                     chars_read = 0;
                 }
+            } else if (console_type == CONSOLE_TYPE_PIPE) {
+                /*
+                 * Anonymous-pipe handles can appear signaled before readable
+                 * bytes are available. Guard ReadFile with PeekNamedPipe so
+                 * shutdown does not get stuck in a blocking pipe read.
+                 */
+                DWORD available = 0;
+                if (!PeekNamedPipe(hStdin, NULL, 0, NULL, &available, NULL)) {
+                    err = GetLastError();
+                    if (err == ERROR_BROKEN_PIPE) {
+                        SPDLOG_INFO ("EOF detected (pipe)");
+                        console_worker_set_eof(cctx);
+                        break;
+                    }
+                    SPDLOG_ERROR ("PeekNamedPipe() failed: {}", err);
+                    break;
+                }
+
+                if (available == 0) {
+                    continue;
+                }
+
+                DWORD to_read = (available < static_cast<DWORD>(CONSOLE_MAX_LINE - 1))
+                    ? available
+                    : static_cast<DWORD>(CONSOLE_MAX_LINE - 1);
+                result = ReadFile(hStdin, line_buffer, to_read, &chars_read, NULL);
+                if (!result)
+                    err = GetLastError();
             } else {
-                /* Pipe or file: Use ReadFile (synchronous) */
+                /* File input: regular blocking ReadFile is acceptable. */
                 result = ReadFile (hStdin, line_buffer, CONSOLE_MAX_LINE - 1, &chars_read, NULL);
                 if (!result)
                     err = GetLastError();

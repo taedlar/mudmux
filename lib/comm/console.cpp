@@ -4,6 +4,7 @@
 
 #include "console.hpp"
 
+#include <atomic>
 #include <cstring>
 #include <mutex>
 #include <thread>
@@ -17,6 +18,7 @@
 #include "inbound.hpp"
 #include "input_mode.hpp"
 #include "async/console_worker.h"
+#include "execution.hpp"
 #include "mudmux/hooks.h"
 #include "mudmux/comm.h"
 #include "mudmux/mudmux.h"
@@ -24,10 +26,12 @@
 static std::mutex console_mutex;
 static async_queue_t* console_queue{nullptr};
 static console_worker_context_t* console_ctx{nullptr};
+static std::atomic_bool console_disconnect_pending{false};
 
 bool comm_init_console (async_runtime_t *runtime) {
 
     std::lock_guard<std::mutex> lock(console_mutex);
+    console_disconnect_pending.store(false, std::memory_order_release);
     auto console_type = async_runtime_get_console_type (runtime);
 
     // create console queue if it doesn't exist
@@ -82,6 +86,7 @@ void comm_signal_console_eof (async_runtime_t *runtime) {
 void comm_shutdown_console (async_runtime_t *runtime) {
     (void)runtime; // unused parameter
     std::lock_guard<std::mutex> lock(console_mutex);
+    console_disconnect_pending.store(false, std::memory_order_release);
     
     if (console_ctx) {
 #ifdef _WIN32
@@ -161,6 +166,7 @@ int comm_process_console_input (async_runtime_t *runtime, bool allow_reconnect) 
                 console_ctx = console_worker_init (runtime, console_queue, CONSOLE_COMPLETION_KEY);
             }
             disconnected = true;
+            console_disconnect_pending.store(true, std::memory_order_release);
         }
 
         comm_abstract_ptr console_comm(COMM_SLOT_CONSOLE, comm_slots_mtx);
@@ -194,13 +200,21 @@ int comm_process_console_input (async_runtime_t *runtime, bool allow_reconnect) 
     }
     comm_process_input (runtime, comm);
 
-    if (disconnected) {
+    if (console_disconnect_pending.load(std::memory_order_acquire)) {
+        if (!allow_reconnect && comm) {
+            const bool prompt_pending = (comm->flags & C_ENABLE_PROMPT) && !(comm->flags & C_INVOKED_PROMPT);
+            if (mudmux_execution_slot_busy(COMM_SLOT_CONSOLE) || (comm->flags & C_DEFERRED_INBOUND) || prompt_pending) {
+                return 0;
+            }
+        }
+
         if (comm) {
             if (!(comm->flags & C_CLOSING))
                 comm_invoke_disconnect (runtime, COMM_SLOT_CONSOLE); // invoke disconnect hook for console user
             comm_abstract_remove (COMM_SLOT_CONSOLE); // remove console from comm_abstract
         }
         async_queue_clear (console_queue); // clear any pending lines in the queue
+        console_disconnect_pending.store(false, std::memory_order_release);
         if (!allow_reconnect) {
             // stdin is either a pipe or a file, so EOF means the end of input; shut down the server
             SPDLOG_INFO ("EOF detected, shutting down server");

@@ -188,26 +188,31 @@
         {
             "name": "units-linux-gcc",
             "configurePreset": "linux-gcc",
+            "configuration": "Debug",
             "description": "Run tests on Linux using GCC."
         },
         {
             "name": "units-linux-clang",
             "configurePreset": "linux-clang",
+            "configuration": "Debug",
             "description": "Run tests on Linux using Clang."
         },
         {
             "name": "units-clangcl-x64",
             "configurePreset": "clangcl-x64",
+            "configuration": "Debug",
             "description": "Run tests on Windows using Visual Studio 2019 x64 with ClangCL."
         },
         {
             "name": "units-vs16-x64",
             "configurePreset": "vs16-x64",
+            "configuration": "Debug",
             "description": "Run tests on Windows using Visual Studio 2019 x64."
         },
         {
             "name": "units-vs18-x64",
             "configurePreset": "vs18-x64",
+            "configuration": "Debug",
             "description": "Run tests on Windows using Visual Studio 2026 x64."
         }
     ]
