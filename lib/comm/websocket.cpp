@@ -17,6 +17,7 @@
 
 #include "abstract.hpp"
 #include "hooks.hpp"
+#include "inbound.hpp"
 #include "outbound.hpp"
 #include "telnet.hpp"
 #include "mudmux/comm.h"
@@ -247,6 +248,13 @@ static void _send_websocket_rejection(async_runtime_t* runtime, comm_abstract_pt
     }
     response += "\r\n";
 
+    // The connect hook may already have queued application output behind the
+    // pending WebSocket upgrade.  A rejected upgrade must send only the HTTP
+    // error and must not leave the original request eligible for another
+    // rejection while the graceful close drains that error response.
+    comm_free_outbound_buffers(comm);
+    comm_free_inbound_buffers(comm);
+    comm->flags &= ~C_ENABLE_WEBSOCKET;
     comm_buffered_write_raw_comm(comm, response.data(), response.size());
     comm_close(runtime, comm.slot());
 }
