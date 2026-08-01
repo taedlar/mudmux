@@ -201,7 +201,10 @@ static void _resume_input_after_connect_hook(void*, int slot) {
     if (!comm)
         return;
 
-    comm->flags &= ~C_AWAITING_CONNECT_HOOK;
+    // If close was requested while HOOK_CONNECT ran, its queued
+    // HOOK_DISCONNECT now owns this shared await flag until it completes.
+    if (!(comm->flags & C_CLOSING))
+        comm->flags &= ~C_AWAITING_HOOK;
     comm->flags |= C_DEFERRED_INBOUND;
     has_deferred_input.store(true, std::memory_order_release);
 }
@@ -222,7 +225,7 @@ int comm_invoke_connect (async_runtime_t* runtime, int slot, int entry_slot) {
     if (await_connect_hook) {
         comm_abstract_ptr comm(slot, comm_slots_mtx);
         if (comm)
-            comm->flags |= C_AWAITING_CONNECT_HOOK;
+            comm->flags |= C_AWAITING_HOOK;
     }
 
     const mudmux_dispatch_result_t result = mudmux_dispatch_hook_after(
@@ -236,7 +239,7 @@ int comm_invoke_connect (async_runtime_t* runtime, int slot, int entry_slot) {
     if (await_connect_hook && result != MUDMUX_DISPATCH_OK) {
         comm_abstract_ptr comm(slot, comm_slots_mtx);
         if (comm)
-            comm->flags &= ~C_AWAITING_CONNECT_HOOK;
+            comm->flags &= ~C_AWAITING_HOOK;
     }
     return static_cast<int>(result);
 }
@@ -246,7 +249,6 @@ static void _resume_input_after_inbound_hook(void*, int slot) {
     if (!comm)
         return;
 
-    comm->flags &= ~(C_AWAITING_TELNET_HOOK | C_AWAITING_INBOUND_HOOK);
     // The hook has now had an opportunity to choose the input mode. Resume
     // buffered bytes using that post-hook mode.
     comm->flags |= C_DEFERRED_INBOUND;
@@ -262,7 +264,6 @@ int comm_invoke_inbound_message (async_runtime_t* runtime, comm_abstract_ptr& co
     SPDLOG_DEBUG ("invoking inbound message hook for slot {} with {} bytes of data", comm.slot(), size);
     const bool await_inbound_hook = mudmux_execution_should_dispatch_async(HOOK_MESSAGE_INBOUND);
     if (await_inbound_hook) {
-        comm->flags |= C_AWAITING_INBOUND_HOOK;
         comm->flags |= C_DEFERRED_INBOUND;
         has_deferred_input.store(true, std::memory_order_release);
     }
@@ -275,8 +276,6 @@ int comm_invoke_inbound_message (async_runtime_t* runtime, comm_abstract_ptr& co
         size,
         await_inbound_hook ? _resume_input_after_inbound_hook : nullptr,
         nullptr);
-    if (await_inbound_hook && result != MUDMUX_DISPATCH_OK)
-        comm->flags &= ~C_AWAITING_INBOUND_HOOK;
     return static_cast<int>(result);
 }
 
@@ -641,7 +640,7 @@ static inbound_buffer_t* _recycle_current_inbound_buffer(comm_abstract_ptr& comm
 comm_process_result_t comm_process_input (async_runtime_t* runtime, comm_abstract_ptr& comm, int max_message) {
     if (!comm)
         return COMM_PROCESS_ERROR;
-    if (comm->flags & (C_AWAITING_CONNECT_HOOK | C_AWAITING_TELNET_HOOK | C_AWAITING_INBOUND_HOOK))
+    if (comm->flags & C_AWAITING_HOOK)
         return COMM_PROCESS_DEFERRED;
     if (mudmux_execution_slot_busy(comm.slot()))
         return COMM_PROCESS_DEFERRED;
@@ -691,7 +690,7 @@ comm_process_result_t comm_process_input (async_runtime_t* runtime, comm_abstrac
                 ++num_messages_processed;
                 if (!comm)
                     break; // comm slot may have been closed by the inbound message hook
-                if (comm->flags & C_AWAITING_INBOUND_HOOK)
+                if (mudmux_execution_slot_busy(comm.slot()))
                     break; // do not parse another message before its hook returns
             }
             SPDLOG_DEBUG ("next_line_start={}, ibb->start={}, ibb->end={}", next_line_start, ibb->start, ibb->end);

@@ -59,10 +59,10 @@ different slots can run concurrently, but the following invariant still holds:
 > earlier same-slot hook callback is running.
 
 The execution subsystem permits exactly one in-flight hook per slot.  There is
-no per-slot inbound-hook or decoded-message queue.  An inbound hook sets
-`C_AWAITING_INBOUND_HOOK` and `C_DEFERRED_INBOUND`; completion wakes the event
-loop, which resumes parsing the raw buffered transport bytes only after that
-hook is idle.  Consequences:
+no per-slot inbound-hook or decoded-message queue.  The execution state marks
+the one in-flight hook, while `C_DEFERRED_INBOUND` records that buffered
+transport bytes need another parsing pass. Completion wakes the event loop,
+which resumes parsing only after the hook is idle. Consequences:
 
 - Line and character input dispatch at most one asynchronous message before
   pausing.

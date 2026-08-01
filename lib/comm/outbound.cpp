@@ -362,7 +362,7 @@ void comm_flush_all (async_runtime_t* runtime) {
         {
             comm_abstract_ptr comm(slot, comm_slots_mtx);
             should_progress = comm && (comm->flags & C_CLOSING) &&
-                !(comm->flags & (C_AWAITING_DISCONNECT_HOOK | C_DISCONNECT_PENDING));
+                !(comm->flags & C_AWAITING_HOOK);
         }
         if (should_progress)
             (void)comm_close(runtime, slot);
@@ -372,7 +372,7 @@ void comm_flush_all (async_runtime_t* runtime) {
 static void _disconnect_hook_complete(void*, int slot) {
     comm_abstract_ptr comm(slot, comm_slots_mtx);
     if (comm)
-        comm->flags &= ~C_AWAITING_DISCONNECT_HOOK;
+        comm->flags &= ~C_AWAITING_HOOK;
 }
 
 bool comm_close (async_runtime_t* runtime, int slot) {
@@ -387,7 +387,7 @@ bool comm_close (async_runtime_t* runtime, int slot) {
         // let logic layer handle disconnect (e.g., cleanup, logging, etc.)
         comm->flags |= C_CLOSING;
         comm->flags &= ~C_DISCONNECT_PENDING;
-        comm->flags |= C_AWAITING_DISCONNECT_HOOK;
+        comm->flags |= C_AWAITING_HOOK;
         const mudmux_dispatch_result_t dispatch_result = mudmux_dispatch_hook_after(
             HOOK_DISCONNECT,
             async_runtime_get_context(runtime),
@@ -401,11 +401,11 @@ bool comm_close (async_runtime_t* runtime, int slot) {
             // terminal lifecycle transition; no application payload is kept.
             // Its completion wakes the event loop, which retries comm_close().
             comm->flags |= C_DISCONNECT_PENDING;
-            comm->flags &= ~C_AWAITING_DISCONNECT_HOOK;
+            comm->flags &= ~C_AWAITING_HOOK;
             return false;
         }
         if (dispatch_result != MUDMUX_DISPATCH_OK) {
-            comm->flags &= ~C_AWAITING_DISCONNECT_HOOK;
+            comm->flags &= ~C_AWAITING_HOOK;
         } else if (mudmux_execution_should_dispatch_async(HOOK_DISCONNECT)) {
             // Do not remove/reuse the slot while the disconnect callback is
             // executing on a worker.  Its completion wakes the event loop.
@@ -415,7 +415,7 @@ bool comm_close (async_runtime_t* runtime, int slot) {
         comm->flags &= ~C_ENABLE_PROMPT; // disable prompt to avoid corrupted L7 shutdown sequence
     }
 
-    if (comm->flags & C_AWAITING_DISCONNECT_HOOK)
+    if (comm->flags & C_AWAITING_HOOK)
         return false;
 
     if (slot == COMM_SLOT_CONSOLE) {

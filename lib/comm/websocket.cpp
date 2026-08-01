@@ -16,6 +16,7 @@
 #include <openssl/sha.h>
 
 #include "abstract.hpp"
+#include "execution.hpp"
 #include "hooks.hpp"
 #include "inbound.hpp"
 #include "outbound.hpp"
@@ -594,7 +595,7 @@ comm_process_result_t comm_process_websocket_input(async_runtime_t* runtime, com
         ++num_messages_processed;
         if (!comm)
             return COMM_PROCESS_CLOSED;
-        if (comm->flags & C_AWAITING_INBOUND_HOOK)
+        if (mudmux_execution_slot_busy(comm.slot()))
             return COMM_PROCESS_DEFERRED;
     }
     return COMM_PROCESS_OK;

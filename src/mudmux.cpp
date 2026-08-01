@@ -333,7 +333,7 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
                     // buffered as plaintext and can never reach OpenSSL.
                     // epoll/poll are level-triggered, so the read event is
                     // delivered again after the hook completion wakes us.
-                    if ((comm->flags & (C_AWAITING_CONNECT_HOOK | C_AWAITING_INBOUND_HOOK))
+                    if ((comm->flags & C_AWAITING_HOOK)
                         || mudmux_execution_slot_busy(slot))
                         continue;
 #endif
