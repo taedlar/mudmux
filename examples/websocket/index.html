@@ -22,7 +22,7 @@
   <h1>mudmux xterm.js WebSocket client</h1>
   <p>
     Connect to a mudmux WebSocket endpoint, then type directly into the terminal.
-    Browser input and server output use binary WebSocket frames containing UTF-8 text.
+    Input is buffered locally and sent as one binary WebSocket frame when Enter is pressed.
     The chatroom example enables TLS, so its default endpoint uses <code>wss://</code>.
   </p>
 
@@ -32,8 +32,8 @@
     </label>
     <label>Requested subprotocol
       <select id="protocol">
-        <option value="" selected>None</option>
-        <option value="telnet.ietf.org">telnet.ietf.org</option>
+        <option value="">None</option>
+        <option value="telnet.ietf.org" selected>telnet.ietf.org</option>
         <option value="telnet.mudstandards.org">telnet.mudstandards.org</option>
       </select>
     </label>
@@ -73,6 +73,19 @@
       }
 
       let socket = null;
+      let pendingInput = "";
+      let localEcho = true;
+      const telnet = { state: "data" };
+      const IAC = 255;
+      const DO = 253;
+      const DONT = 254;
+      const WILL = 251;
+      const WONT = 252;
+      const SB = 250;
+      const SE = 240;
+      const ECHO = 1;
+      const SGA = 3;
+      const LINEMODE = 34;
       const fitTerminal = () => {
         if (!fitAddon) return;
         try { fitAddon.fit(); } catch (_) { /* terminal is not visible yet */ }
@@ -82,12 +95,95 @@
         $("disconnect").disabled = !connected;
         $("status").textContent = status;
       };
-      const send = (data) => {
+      const sendBytes = (bytes) => {
         if (socket?.readyState === WebSocket.OPEN)
-          socket.send(encoder.encode(data));
+          socket.send(bytes);
+      };
+      const telnetEnabled = () => socket?.protocol === "telnet.ietf.org"
+        || socket?.protocol === "telnet.mudstandards.org";
+      const sendTelnetCommand = (command, option) => sendBytes(new Uint8Array([IAC, command, option]));
+      const sendApplicationInput = (text) => {
+        const bytes = encoder.encode(text);
+        if (!telnetEnabled()) {
+          sendBytes(bytes);
+          return;
+        }
+        const escaped = [];
+        for (const byte of bytes) {
+          escaped.push(byte);
+          if (byte === IAC) escaped.push(IAC);
+        }
+        sendBytes(new Uint8Array(escaped));
+      };
+      const handleTelnetOption = (command, option) => {
+        if (command === WILL) {
+          if (option === SGA || option === ECHO) {
+            sendTelnetCommand(DO, option);
+            if (option === ECHO) localEcho = false;
+          } else {
+            sendTelnetCommand(DONT, option);
+          }
+        } else if (command === WONT) {
+          sendTelnetCommand(DONT, option);
+          if (option === ECHO) localEcho = true;
+        } else if (command === DO) {
+          sendTelnetCommand(option === LINEMODE ? WILL : WONT, option);
+        } else if (command === DONT) {
+          sendTelnetCommand(WONT, option);
+        }
+      };
+      const decodeTelnetOutput = (bytes) => {
+        const output = [];
+        for (const byte of bytes) {
+          switch (telnet.state) {
+            case "data":
+              telnet.state = byte === IAC ? "iac" : "data";
+              if (byte !== IAC) output.push(byte);
+              break;
+            case "iac":
+              if (byte === IAC) output.push(byte);
+              else if ([DO, DONT, WILL, WONT].includes(byte)) telnet.command = byte;
+              else if (byte === SB) telnet.state = "subnegotiation";
+              else telnet.state = "data";
+              if (byte === IAC) telnet.state = "data";
+              else if ([DO, DONT, WILL, WONT].includes(byte)) telnet.state = "option";
+              break;
+            case "option":
+              handleTelnetOption(telnet.command, byte);
+              telnet.state = "data";
+              break;
+            case "subnegotiation":
+              if (byte === IAC) telnet.state = "subnegotiation-iac";
+              break;
+            case "subnegotiation-iac":
+              telnet.state = byte === SE ? "data" : "subnegotiation";
+              break;
+          }
+        }
+        return new Uint8Array(output);
+      };
+      const submitInput = () => {
+        if (localEcho) terminal?.write("\r\n");
+        sendApplicationInput(`${pendingInput}\r\n`);
+        pendingInput = "";
+      };
+      const handleTerminalInput = (data) => {
+        for (const char of data) {
+          if (char === "\r" || char === "\n") {
+            submitInput();
+          } else if (char === "\u007f" || char === "\b") {
+            if (pendingInput) {
+              pendingInput = Array.from(pendingInput).slice(0, -1).join("");
+              if (localEcho) terminal?.write("\b \b");
+            }
+          } else {
+            pendingInput += char;
+            if (localEcho) terminal?.write(char);
+          }
+        }
       };
 
-      terminal?.onData(send);
+      terminal?.onData(handleTerminalInput);
       window.addEventListener('resize', fitTerminal);
       requestAnimationFrame(() => {
         fitTerminal();
@@ -106,6 +202,9 @@
           return;
         }
         socket.binaryType = "arraybuffer";
+        pendingInput = "";
+        localEcho = true;
+        telnet.state = "data";
         $("status").textContent = "Connecting…";
         socket.addEventListener("open", () => {
           setConnected(true, `Connected${socket.protocol ? ` (${socket.protocol})` : ""}`);
@@ -119,7 +218,7 @@
             : message.data instanceof ArrayBuffer
               ? new Uint8Array(message.data)
               : new Uint8Array(await message.data.arrayBuffer());
-          terminal?.write(bytes);
+          terminal?.write(telnetEnabled() ? decodeTelnetOutput(bytes) : bytes);
         });
         socket.addEventListener("error", () => event("WebSocket error"));
         socket.addEventListener("close", (close) => {
