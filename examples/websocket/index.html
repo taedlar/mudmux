@@ -23,11 +23,12 @@
   <p>
     Connect to a mudmux WebSocket endpoint, then type directly into the terminal.
     Browser input and server output use binary WebSocket frames containing UTF-8 text.
+    The chatroom example enables TLS, so its default endpoint uses <code>wss://</code>.
   </p>
 
   <fieldset>
     <label>WebSocket URL
-      <input id="url" value="ws://localhost:4000/" spellcheck="false">
+      <input id="url" value="wss://localhost:4000/" spellcheck="false">
     </label>
     <label>Requested subprotocol
       <select id="protocol">
@@ -47,28 +48,35 @@
   <p id="events" aria-live="polite"></p>
 
   <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.8.0/lib/addon-fit.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
   <script>
     (() => {
       const encoder = new TextEncoder();
       const $ = (id) => document.getElementById(id);
-      const terminal = new Terminal({
-        cursorBlink: true,
-        convertEol: true,
-        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
-        fontSize: 15,
-        scrollback: 5000,
-        theme: { background: '#151515' },
-      });
-      const fitAddon = new FitAddon.FitAddon();
-      terminal.loadAddon(fitAddon);
-      terminal.open($("terminal"));
+      const event = (text) => { $("events").textContent = text; };
+      let terminal = null;
+      let fitAddon = null;
+      try {
+        terminal = new Terminal({
+          cursorBlink: true,
+          convertEol: true,
+          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+          fontSize: 15,
+          scrollback: 5000,
+          theme: { background: '#151515' },
+        });
+        fitAddon = new FitAddon.FitAddon();
+        terminal.loadAddon(fitAddon);
+        terminal.open($("terminal"));
+      } catch (error) {
+        event(`Terminal initialization failed: ${error.message}`);
+      }
 
       let socket = null;
       const fitTerminal = () => {
+        if (!fitAddon) return;
         try { fitAddon.fit(); } catch (_) { /* terminal is not visible yet */ }
       };
-      const event = (text) => { $("events").textContent = text; };
       const setConnected = (connected, status) => {
         $("connect").disabled = connected;
         $("disconnect").disabled = !connected;
@@ -79,11 +87,11 @@
           socket.send(encoder.encode(data));
       };
 
-      terminal.onData(send);
+      terminal?.onData(send);
       window.addEventListener('resize', fitTerminal);
       requestAnimationFrame(() => {
         fitTerminal();
-        terminal.focus();
+        terminal?.focus();
       });
 
       $("connect").addEventListener("click", () => {
@@ -103,7 +111,7 @@
           setConnected(true, `Connected${socket.protocol ? ` (${socket.protocol})` : ""}`);
           event(`Connected; selected protocol: ${socket.protocol || "none"}`);
           fitTerminal();
-          terminal.focus();
+          terminal?.focus();
         });
         socket.addEventListener("message", async (message) => {
           const bytes = typeof message.data === "string"
@@ -111,14 +119,14 @@
             : message.data instanceof ArrayBuffer
               ? new Uint8Array(message.data)
               : new Uint8Array(await message.data.arrayBuffer());
-          terminal.write(bytes);
+          terminal?.write(bytes);
         });
         socket.addEventListener("error", () => event("WebSocket error"));
         socket.addEventListener("close", (close) => {
           event(`Disconnected (code ${close.code}${close.reason ? `: ${close.reason}` : ""})`);
           socket = null;
           setConnected(false, "Disconnected");
-          terminal.focus();
+          terminal?.focus();
         });
       });
 
