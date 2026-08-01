@@ -355,7 +355,7 @@ std::string_view comm_websocket_preferred_protocols(comm_abstract_ptr& comm) {
 }
 
 bool comm_websocket_process_inbound(comm_abstract_ptr& comm, std::string_view wire, size_t* consumed,
-                                    std::vector<std::string>& messages, int* close_code) {
+                                    std::vector<std::string>& messages, int* close_code, size_t max_messages) {
     constexpr size_t kMaxMessageBytes = 64 * 1024;
     if (consumed) *consumed = 0;
     if (close_code) *close_code = 1002;
@@ -432,12 +432,16 @@ bool comm_websocket_process_inbound(comm_abstract_ptr& comm, std::string_view wi
                 }
                 messages.push_back(std::move(state.fragmented_payload));
                 state.fragmented_payload.clear(); state.fragmented_opcode = 0;
+                if (messages.size() >= max_messages)
+                    break;
             }
         } else if (opcode == 0x1 || opcode == 0x2) {
             if (state.fragmented_opcode != 0) return false;
             if (fin) {
                 if (opcode == 0x1 && !is_valid_utf8(payload)) { if (close_code) *close_code = 1007; return false; }
                 messages.push_back(std::move(payload));
+                if (messages.size() >= max_messages)
+                    break;
             } else {
                 state.fragmented_opcode = opcode;
                 state.fragmented_payload = std::move(payload);
@@ -556,6 +560,8 @@ static mudmux_dispatch_result_t _dispatch_websocket_telnet_payload(
 comm_process_result_t comm_process_websocket_input(async_runtime_t* runtime, comm_abstract_ptr& comm,
                                                        int max_message, int& num_messages_processed) {
     (void) max_message; // A decoded WebSocket message is atomic and must not be split across passes.
+    if (!comm->websocket)
+        comm->websocket = new comm_websocket_state_s();
     std::string wire;
     comm_copy_inbound_data_prefix(comm, (std::numeric_limits<size_t>::max)(), wire);
     if (wire.empty())
@@ -564,7 +570,7 @@ comm_process_result_t comm_process_websocket_input(async_runtime_t* runtime, com
     std::vector<std::string> messages;
     size_t consumed = 0;
     int close_code = 1002;
-    if (!comm_websocket_process_inbound(comm, wire, &consumed, messages, &close_code)) {
+    if (!comm_websocket_process_inbound(comm, wire, &consumed, messages, &close_code, 1)) {
         if (close_code != 0) {
             SPDLOG_WARN("invalid WebSocket frame on slot {}; closing with code {}", comm.slot(), close_code);
             std::string close_payload;
@@ -573,11 +579,10 @@ comm_process_result_t comm_process_websocket_input(async_runtime_t* runtime, com
             (void) comm_websocket_queue_close(comm, close_payload);
             (void) comm_close(runtime, comm.slot());
         }
-        return COMM_PROCESS_CLOSED;
+            return COMM_PROCESS_CLOSED;
     }
     comm_consume_inbound_data(comm, consumed);
-
-    for (const std::string& message : messages) {
+    for (std::string& message : messages) {
         const mudmux_dispatch_result_t result = (comm->flags & C_ENABLE_TELNET)
             ? _dispatch_websocket_telnet_payload(runtime, comm, message)
             : static_cast<mudmux_dispatch_result_t>(comm_invoke_inbound_message(runtime, comm, message.data(), message.size()));
@@ -589,6 +594,8 @@ comm_process_result_t comm_process_websocket_input(async_runtime_t* runtime, com
         ++num_messages_processed;
         if (!comm)
             return COMM_PROCESS_CLOSED;
+        if (comm->flags & C_AWAITING_INBOUND_HOOK)
+            return COMM_PROCESS_DEFERRED;
     }
     return COMM_PROCESS_OK;
 }

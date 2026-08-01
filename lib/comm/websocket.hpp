@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -60,7 +61,8 @@ bool comm_websocket_process_inbound(
     std::string_view wire,
     size_t* consumed,
     std::vector<std::string>& messages,
-    int* close_code = nullptr);
+    int* close_code = nullptr,
+    size_t max_messages = (std::numeric_limits<size_t>::max)());
 
 /** Release per-slot WebSocket fragmentation state. */
 void comm_websocket_free_state(comm_abstract_ptr& comm);

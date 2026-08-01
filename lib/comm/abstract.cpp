@@ -109,7 +109,15 @@ int comm_abstract_add_bio (BIO* rbio, BIO* wbio, int slot, uint32_t flags) {
     slot_comm->rbio = rbio;
     slot_comm->wbio = wbio;
     slot_comm->flags = flags;
+    ++slot_comm->generation;
+    if (slot_comm->generation == 0)
+        ++slot_comm->generation;
     return slot;
+}
+
+uint64_t comm_abstract_generation(int slot) {
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
+    return comm ? comm->generation : 0;
 }
 
 int comm_abstract_add_file (const char* fn_in, const char* fn_out, int slot, uint32_t flags) {

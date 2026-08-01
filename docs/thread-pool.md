@@ -90,7 +90,8 @@ The comm layer is responsible for internal synchronization of slot and buffer st
 Guaranteed:
 
 - strict mode preserves deterministic ordering semantics
-- relaxed mode preserves per-slot FIFO ordering
+- relaxed mode permits one hook in flight per slot; later inbound bytes remain
+  in transport buffers until it returns
 - no global hook serialization in relaxed mode
 - queue-full is explicit and observable by callers
 

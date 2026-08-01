@@ -78,5 +78,9 @@ mudmux_dispatch_result_t mudmux_dispatch_hook_after(
         return MUDMUX_DISPATCH_ERROR;
     }
 
-    return mudmux_execution_enqueue_hook(hook_type, ctx, msg, data, size, completion, completion_context);
+    // Only parser-originated input is forbidden from queueing.  A hook/API
+    // request targeting another slot is an explicit lifecycle/action request;
+    // retain it in that target slot's bounded FIFO after the active hook.
+    const bool allow_pending = hook_type != HOOK_MESSAGE_INBOUND;
+    return mudmux_execution_enqueue_hook(hook_type, ctx, msg, data, size, completion, completion_context, allow_pending);
 }
