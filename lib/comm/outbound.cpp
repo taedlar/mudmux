@@ -353,6 +353,20 @@ void comm_flush_all (async_runtime_t* runtime) {
         comm_flush (runtime, max_slot);
         max_slot--;
     }
+
+    // Worker-hook completions wake the runtime without an I/O event context.
+    // Revisit closing slots here so a queued HOOK_DISCONNECT can advance to
+    // transport teardown even when the peer sends no further event.
+    for (int slot = comm_max_slot() - 1; slot >= 0; --slot) {
+        bool should_progress = false;
+        {
+            comm_abstract_ptr comm(slot, comm_slots_mtx);
+            should_progress = comm && (comm->flags & C_CLOSING) &&
+                !(comm->flags & (C_AWAITING_DISCONNECT_HOOK | C_DISCONNECT_PENDING));
+        }
+        if (should_progress)
+            (void)comm_close(runtime, slot);
+    }
 }
 
 static void _disconnect_hook_complete(void*, int slot) {
