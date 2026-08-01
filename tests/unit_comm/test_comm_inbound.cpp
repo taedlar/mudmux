@@ -589,6 +589,11 @@ TEST_F(CommInboundTest, WebSocketUpgradeRejectsInvalidHandshake) {
     std::string response(response_buf.data(), static_cast<size_t>(response_len));
     EXPECT_NE(response.find("400 Bad Request"), std::string::npos);
     EXPECT_TRUE((comm_get_flags(slot) & C_CLOSING) != 0);
+    EXPECT_EQ(comm_get_flags(slot) & C_ENABLE_WEBSOCKET, 0u);
+
+    // The rejected request must not remain pending and trigger another 400
+    // while the first response is being closed.
+    EXPECT_EQ(comm_process_input(runtime, comm, -1), COMM_PROCESS_OK);
 
     async_runtime_deinit(runtime);
 }

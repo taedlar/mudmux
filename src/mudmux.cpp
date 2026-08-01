@@ -326,6 +326,16 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
                 }
 
                 if (event.event_type & EVENT_READ) {
+#ifndef _WIN32
+                    // In relaxed mode HOOK_CONNECT configures the accepted
+                    // slot asynchronously.  Do not consume socket bytes
+                    // before it can enable TLS: otherwise a ClientHello is
+                    // buffered as plaintext and can never reach OpenSSL.
+                    // epoll/poll are level-triggered, so the read event is
+                    // delivered again after the hook completion wakes us.
+                    if (comm->flags & C_AWAITING_CONNECT_HOOK)
+                        continue;
+#endif
 #ifdef _WIN32
                     bool refilled = comm_refill_inbound_buffers (comm, static_cast<char*>(event.buffer), event.bytes_transferred)
                         && 0 == async_runtime_post_read (runtime, event.fd, nullptr, 0); // re-arm IOCP for next read
