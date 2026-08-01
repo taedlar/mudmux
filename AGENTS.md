@@ -98,6 +98,19 @@ In relaxed mode, hook callbacks may run concurrently on worker threads. The comm
 
 Practical rule: if logic code touches shared data from worker threads or from code paths not running under the documented comm API, synchronization is required.
 
+### Inbound Transport Ordering
+
+Inbound state is ordered per slot. In relaxed mode, hooks for different slots may run concurrently, but each slot permits only one hook in flight. A slot must not parse or retain another decoded inbound message while that hook is running; later bytes stay in the raw transport buffers.
+
+- The execution state gates same-slot processing while an inbound hook is in flight; `C_DEFERRED_INBOUND` records that buffered bytes need a resume pass. There is no per-slot inbound-hook/payload queue.
+- Parser-originated inbound hooks never queue. Explicit non-inbound hook/API requests for another slot may use that slot's bounded, generation-checked continuation queue and execute after its active hook.
+- Preserve this gate in every inbound path: line input, character input, WebSocket-decoded messages, Telnet payloads, and any new transport parser.
+- On POSIX readiness backends, do not consume socket data while `HOOK_CONNECT` or an inbound hook is still configuring that slot. This prevents TLS ClientHello bytes from being buffered as plaintext before `comm_enable_tls()` runs.
+- The inbound layering is: transport read → TLS decrypt (if enabled) → WebSocket upgrade/frame decode (if enabled) → Telnet parser (if enabled) → line/character parser → `HOOK_MESSAGE_INBOUND`.
+- WebSocket must be enabled before direct Telnet. Telnet-over-WebSocket is enabled only after negotiating the supported Telnet subprotocol during the HTTP upgrade.
+
+See [docs/inbound.md](docs/inbound.md) for the full state and transport-combination design.
+
 ### Proactive Slot Closing (`comm_close`)
 
 Logic-layer hooks can proactively close a communication slot via `comm_close(runtime, slot)` from `mudmux/comm.h`.

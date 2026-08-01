@@ -11,6 +11,7 @@
 #include <openssl/err.h>
 
 #include "console.hpp"
+#include "execution.hpp"
 #include "file_input.hpp"
 #include "hooks.hpp"
 #include "ssl.hpp"
@@ -352,6 +353,26 @@ void comm_flush_all (async_runtime_t* runtime) {
         comm_flush (runtime, max_slot);
         max_slot--;
     }
+
+    // Worker-hook completions wake the runtime without an I/O event context.
+    // Revisit closing slots here so a queued HOOK_DISCONNECT can advance to
+    // transport teardown even when the peer sends no further event.
+    for (int slot = comm_max_slot() - 1; slot >= 0; --slot) {
+        bool should_progress = false;
+        {
+            comm_abstract_ptr comm(slot, comm_slots_mtx);
+            should_progress = comm && (comm->flags & C_CLOSING) &&
+                !(comm->flags & C_AWAITING_HOOK);
+        }
+        if (should_progress)
+            (void)comm_close(runtime, slot);
+    }
+}
+
+static void _disconnect_hook_complete(void*, int slot) {
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
+    if (comm)
+        comm->flags &= ~C_AWAITING_HOOK;
 }
 
 bool comm_close (async_runtime_t* runtime, int slot) {
@@ -362,13 +383,40 @@ bool comm_close (async_runtime_t* runtime, int slot) {
     if (!runtime)
         runtime = async_get_current_runtime();
 
-    if (!(comm->flags & C_CLOSING)) {
+    if (!(comm->flags & C_CLOSING) || (comm->flags & C_DISCONNECT_PENDING)) {
         // let logic layer handle disconnect (e.g., cleanup, logging, etc.)
         comm->flags |= C_CLOSING;
-        comm_invoke_disconnect(runtime, slot);
+        comm->flags &= ~C_DISCONNECT_PENDING;
+        comm->flags |= C_AWAITING_HOOK;
+        const mudmux_dispatch_result_t dispatch_result = mudmux_dispatch_hook_after(
+            HOOK_DISCONNECT,
+            async_runtime_get_context(runtime),
+            slot,
+            nullptr,
+            0,
+            _disconnect_hook_complete,
+            nullptr);
+        if (dispatch_result == MUDMUX_DISPATCH_QUEUE_FULL) {
+            // A hook for this slot is still running.  Preserve only this
+            // terminal lifecycle transition; no application payload is kept.
+            // Its completion wakes the event loop, which retries comm_close().
+            comm->flags |= C_DISCONNECT_PENDING;
+            comm->flags &= ~C_AWAITING_HOOK;
+            return false;
+        }
+        if (dispatch_result != MUDMUX_DISPATCH_OK) {
+            comm->flags &= ~C_AWAITING_HOOK;
+        } else if (mudmux_execution_should_dispatch_async(HOOK_DISCONNECT)) {
+            // Do not remove/reuse the slot while the disconnect callback is
+            // executing on a worker.  Its completion wakes the event loop.
+            return false;
+        }
 
         comm->flags &= ~C_ENABLE_PROMPT; // disable prompt to avoid corrupted L7 shutdown sequence
     }
+
+    if (comm->flags & C_AWAITING_HOOK)
+        return false;
 
     if (slot == COMM_SLOT_CONSOLE) {
         // Console slots are lifecycle-driven by console/file-input workers rather than

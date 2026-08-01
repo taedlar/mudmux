@@ -127,15 +127,20 @@ int queue_pressure_hot_slot{-1};
 
 std::atomic<int> enqueue_race_processed_count{0};
 
+std::promise<void>* inbound_hook_entered_ptr{nullptr};
+std::shared_future<void>* inbound_hook_release_ptr{nullptr};
+std::promise<void>* inbound_hook_finished_ptr{nullptr};
+std::atomic<int> inbound_hook_call_count{0};
+
 int thread_pool_stress_hook(void*, int slot, void* data, size_t len) {
     (void)data;
     (void)len;
 
     if (slot == 0) {
         const int count = ++thread_pool_first_slot_count;
-        if (count == 1 && thread_pool_first_slot_entered_ptr)
-            thread_pool_first_slot_entered_ptr->set_value();
-        if (count == 2) {
+        if (count == 1) {
+            if (thread_pool_first_slot_entered_ptr)
+                thread_pool_first_slot_entered_ptr->set_value();
             if (thread_pool_first_slot_release_future_ptr)
                 thread_pool_first_slot_release_future_ptr->wait();
             if (thread_pool_first_slot_finished_ptr)
@@ -205,6 +210,19 @@ int enqueue_race_comm_api_hook(void*, int slot, void*, size_t) {
     mudmux_comm_api_v1->set_line_input(slot, true);
     mudmux_comm_api_v1->buffered_write(slot, "r", 1);
     enqueue_race_processed_count.fetch_add(1);
+    return 0;
+}
+
+int blocking_inbound_hook(void*, int, void*, size_t) {
+    const int call_count = inbound_hook_call_count.fetch_add(1) + 1;
+    if (call_count == 1) {
+        if (inbound_hook_entered_ptr)
+            inbound_hook_entered_ptr->set_value();
+        if (inbound_hook_release_ptr)
+            inbound_hook_release_ptr->wait();
+        if (inbound_hook_finished_ptr)
+            inbound_hook_finished_ptr->set_value();
+    }
     return 0;
 }
 
@@ -743,9 +761,9 @@ TEST_F(CommInboundTest, ThreadPoolKeepsPerSlotOrderWhileOtherSlotsAdvance) {
     const char slot0_first[] = "slot0-first";
     const char slot0_second[] = "slot0-second";
     ASSERT_EQ(mudmux_execution_enqueue_hook(HOOK_MESSAGE_INBOUND, this, 0, slot0_first, strlen(slot0_first)), MUDMUX_DISPATCH_OK);
-    ASSERT_EQ(mudmux_execution_enqueue_hook(HOOK_MESSAGE_INBOUND, this, 0, slot0_second, strlen(slot0_second)), MUDMUX_DISPATCH_OK);
-
     ASSERT_EQ(first_slot_entered_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_EQ(mudmux_execution_enqueue_hook(HOOK_MESSAGE_INBOUND, this, 0, slot0_second, strlen(slot0_second)), MUDMUX_DISPATCH_QUEUE_FULL);
+    EXPECT_EQ(mudmux_dispatch_hook(HOOK_PROMPT, this, 0, nullptr, 0), MUDMUX_DISPATCH_OK);
 
     for (int slot = 1; slot <= 5; ++slot) {
         const std::string payload = "slot" + std::to_string(slot);
@@ -760,6 +778,57 @@ TEST_F(CommInboundTest, ThreadPoolKeepsPerSlotOrderWhileOtherSlotsAdvance) {
     thread_pool_other_slots_done_ptr = nullptr;
     thread_pool_first_slot_release_future_ptr = nullptr;
     thread_pool_first_slot_finished_ptr = nullptr;
+    mudmux_execution_stop();
+    mudmux_deinit();
+}
+
+TEST_F(CommInboundTest, RelaxedModeDefersSameSlotParsingUntilInboundHookReturns) {
+    mudmux_deinit();
+    ASSERT_TRUE(mudmux_init("{\"transport\": {\"thread_pool\": {\"size\": 2}}}"));
+
+    std::promise<void> entered_promise;
+    std::future<void> entered_future = entered_promise.get_future();
+    std::promise<void> release_promise;
+    std::shared_future<void> release_future = release_promise.get_future().share();
+    std::promise<void> finished_promise;
+    std::future<void> finished_future = finished_promise.get_future();
+    inbound_hook_entered_ptr = &entered_promise;
+    inbound_hook_release_ptr = &release_future;
+    inbound_hook_finished_ptr = &finished_promise;
+    inbound_hook_call_count.store(0);
+
+    ASSERT_TRUE(mudmux_execution_start());
+    ASSERT_TRUE(mudmux_register_hook(HOOK_MESSAGE_INBOUND, blocking_inbound_hook));
+    async_runtime_t* runtime = async_runtime_init(this);
+    ASSERT_NE(runtime, nullptr);
+    const int slot = add_memory_comm(C_LINE_INPUT);
+    ASSERT_NE(slot, -1);
+    {
+        comm_abstract_ptr comm(slot, comm_slots_mtx);
+        ASSERT_TRUE(comm);
+        ASSERT_TRUE(comm_refill_inbound_buffers(comm, "first\nsecond\n", 13));
+        EXPECT_EQ(comm_process_input(runtime, comm, -1), COMM_PROCESS_DEFERRED);
+    }
+    ASSERT_EQ(entered_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    {
+        comm_abstract_ptr comm(slot, comm_slots_mtx);
+        ASSERT_TRUE(comm);
+        EXPECT_EQ(comm_process_input(runtime, comm, -1), COMM_PROCESS_DEFERRED);
+    }
+    EXPECT_EQ(inbound_hook_call_count.load(), 1);
+
+    release_promise.set_value();
+    ASSERT_EQ(finished_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    for (int i = 0; i < 100 && inbound_hook_call_count.load() != 2; ++i) {
+        comm_resume_deferred_input(runtime);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    EXPECT_EQ(inbound_hook_call_count.load(), 2);
+
+    inbound_hook_entered_ptr = nullptr;
+    inbound_hook_release_ptr = nullptr;
+    inbound_hook_finished_ptr = nullptr;
+    async_runtime_deinit(runtime);
     mudmux_execution_stop();
     mudmux_deinit();
 }
@@ -924,7 +993,7 @@ TEST_F(CommInboundTest, RelaxedModeConcurrentEnqueueAndCommApiMutationsRemainSta
                 const int slot = slots[static_cast<std::size_t>((producer + index) % static_cast<int>(slots.size()))];
                 const std::string msg = "race-" + std::to_string(producer) + "-" + std::to_string(index);
                 bool submitted = false;
-                for (int retry = 0; retry < 2000; ++retry) {
+                for (int retry = 0; retry < 5000; ++retry) {
                     const mudmux_dispatch_result_t rc = mudmux_execution_enqueue_hook(
                         HOOK_MESSAGE_INBOUND, this, slot, msg.data(), msg.size());
                     if (rc == MUDMUX_DISPATCH_OK) {
@@ -936,7 +1005,7 @@ TEST_F(CommInboundTest, RelaxedModeConcurrentEnqueueAndCommApiMutationsRemainSta
                         enqueue_failed.store(true);
                         break;
                     }
-                    std::this_thread::yield();
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
                 }
                 if (!submitted)
                     enqueue_failed.store(true);

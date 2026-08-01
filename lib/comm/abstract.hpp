@@ -23,6 +23,7 @@ typedef struct comm_abstract_s {
     outbound_buffer_t* outbound;
     outbound_buffer_t* websocket_upgrade_barrier;
     comm_websocket_state_t* websocket;
+    uint64_t generation; // changes each time this numeric slot is assigned
     uint32_t flags;
     struct client_capabilities_s { // bitfields of client capabilities (negotiated via TELNET or other protocols)
         uint32_t telnet_linemode : 1; // client says WILL TELOPT_LINEMODE (RFC 1184)
@@ -88,6 +89,7 @@ int comm_abstract_add_bio (BIO *rbio, BIO *wbio, int slot, uint32_t flags);
 int comm_abstract_add_file(const char *fn_in, const char* fn_out, int slot, uint32_t flags);
 comm_abstract_t* comm_abstract_get (int slot);
 int comm_abstract_remove (int slot);
+uint64_t comm_abstract_generation(int slot);
 void comm_abstract_remove_all (void);
 bool comm_abstract_has_rbio (int slot);
 bool comm_abstract_has_wbio (int slot);

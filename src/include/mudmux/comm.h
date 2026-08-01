@@ -18,21 +18,22 @@
 #define C_ENABLE_ANSI               (1u<<24)
 #define C_ENABLE_WEBSOCKET          (1u<<23)
 #define C_ENABLE_PROMPT             (1u<<22)
-#define C_INVOKED_PROMPT            (1u<<15)
-#define C_BUFFERED_WRITE            (1u<<14)
-#define C_TLS_ESTABLISHED           (1u<<13)
-#define C_DEFERRED_INBOUND          (1u<<12)
-#define C_AWAITING_TELNET_HOOK      (1u<<11)
-#define C_AWAITING_CONNECT_HOOK     (1u<<10)
+
+#define C_INVOKED_PROMPT            (1u<<13)
+#define C_BUFFERED_WRITE            (1u<<12)
+#define C_TLS_ESTABLISHED           (1u<<11)
+#define C_DEFERRED_INBOUND          (1u<<10)
+#define C_AWAITING_HOOK             (1u<<9)
+#define C_DISCONNECT_PENDING        (1u<<8)
 #define M_WEBSOCKET_STATE           0x000000f0u     /* used by WEBSOCKET */
 #define M_TELNET_STATE              0x0000000fu     /* used by TELNET */
 
 /* WebSocket lifecycle states. C_ENABLE_WEBSOCKET is intentionally separate. */
-#define WS_HANDSHAKE       0x00000000u
-#define WS_READY           0x00000010u
-#define WS_TELNET_PENDING  0x00000020u
-#define WS_CLOSE_SENT      0x00000030u
-#define WS_CLOSE_RECEIVED  0x00000040u
+#define WS_HANDSHAKE       0x00u
+#define WS_READY           0x10u
+#define WS_TELNET_PENDING  0x20u
+#define WS_CLOSE_SENT      0x30u
+#define WS_CLOSE_RECEIVED  0x40u
 
 #define C_WEBSOCKET_STATE(flags)    ((flags) & M_WEBSOCKET_STATE)
 #define C_WEBSOCKET_IS_READY(flags) (C_WEBSOCKET_STATE(flags) != WS_HANDSHAKE)
