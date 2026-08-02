@@ -511,6 +511,12 @@ bool comm_refill_inbound_buffers (comm_abstract_ptr& comm, const char* src, size
     return BIO_should_retry(comm->rbio); // return true if data read or no data, false if connection closed
 }
 
+bool comm_append_decoded_input(comm_abstract_ptr& comm, const char* src, size_t size) {
+    if (!comm || (!src && size != 0))
+        return false;
+    return _refill_inbound_buffers_from_src(comm, src, size);
+}
+
 /**
  * @brief Find the first newline (LF or CR LF) or null character in the inbound buffer
  * and strip it by removing newline, leading and trailing whitespaces.

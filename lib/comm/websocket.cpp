@@ -570,7 +570,7 @@ static comm_process_result_t _process_websocket_decoded_input(
     if (websocket.decoded_input.empty())
         return COMM_PROCESS_OK;
 
-    if (!comm_refill_inbound_buffers(comm, websocket.decoded_input.data(), websocket.decoded_input.size()))
+    if (!comm_append_decoded_input(comm, websocket.decoded_input.data(), websocket.decoded_input.size()))
         return COMM_PROCESS_ERROR;
     websocket.decoded_input.clear();
 

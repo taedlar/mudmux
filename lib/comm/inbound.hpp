@@ -40,6 +40,13 @@ int comm_invoke_inbound_message (async_runtime_t* runtime, comm_abstract_ptr& co
  */
 bool comm_refill_inbound_buffers (comm_abstract_ptr& comm, const char* src = nullptr, size_t size = 0);
 
+/**
+ * Append application bytes that have already passed all transport decoders.
+ * Unlike comm_refill_inbound_buffers(), this does not feed TLS, WebSocket, or
+ * Telnet processing again.
+ */
+bool comm_append_decoded_input(comm_abstract_ptr& comm, const char* src, size_t size);
+
 void comm_free_inbound_buffers (comm_abstract_ptr& comm);
 
 size_t comm_copy_inbound_data_prefix(comm_abstract_ptr& comm, size_t limit, std::string& out);
