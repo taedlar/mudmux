@@ -670,7 +670,7 @@ TEST_F(CommInboundTest, WebSocketClientSubprotocolIsIgnoredWithoutServerPreferen
     async_runtime_deinit(runtime);
 }
 
-TEST_F(CommInboundTest, WebSocketTelnetSubprotocolHonorsInputModesWithoutLinemode) {
+TEST_F(CommInboundTest, WebSocketTelnetSubprotocolHonorsInputModesAcrossLinemodeNegotiation) {
     async_runtime_t* runtime = async_runtime_init(this);
     ASSERT_NE(runtime, nullptr);
 
@@ -693,16 +693,39 @@ TEST_F(CommInboundTest, WebSocketTelnetSubprotocolHonorsInputModesWithoutLinemod
         "Sec-WebSocket-Version: 13\r\n"
         "Sec-WebSocket-Protocol: telnet.ietf.org, telnet.mudstandards.org\r\n"
         "\r\n";
-    const std::array<unsigned char, 3> telnet_payload{{'g', 'o', '\n'}};
-    packet.push_back(static_cast<char>(0x82)); // binary frame for Telnet bytes
-    packet.push_back(static_cast<char>(0x80 | telnet_payload.size()));
     const std::array<unsigned char, 4> mask{{1, 2, 3, 4}};
-    for (unsigned char byte : mask)
-        packet.push_back(static_cast<char>(byte));
-    for (size_t i = 0; i < telnet_payload.size(); ++i)
-        packet.push_back(static_cast<char>(telnet_payload[i] ^ mask[i % mask.size()]));
+    const auto masked_binary_frame = [&mask](std::string_view payload) {
+        std::string frame;
+        frame.push_back(static_cast<char>(0x82));
+        frame.push_back(static_cast<char>(0x80 | payload.size()));
+        for (unsigned char byte : mask)
+            frame.push_back(static_cast<char>(byte));
+        for (size_t i = 0; i < payload.size(); ++i)
+            frame.push_back(static_cast<char>(payload[i] ^ mask[i % mask.size()]));
+        return frame;
+    };
 
     ASSERT_TRUE(comm_refill_inbound_buffers(comm, packet.data(), packet.size()));
+    EXPECT_EQ(comm_process_input(runtime, comm, -1), COMM_PROCESS_OK);
+    EXPECT_TRUE(inbound_messages.empty());
+
+    const std::string linemode = masked_binary_frame(std::string("\xff\xfb\x22", 3));
+    ASSERT_TRUE(comm_refill_inbound_buffers(comm, linemode.data(), linemode.size()));
+    EXPECT_EQ(comm_process_input(runtime, comm, -1), COMM_PROCESS_OK);
+    EXPECT_TRUE(inbound_messages.empty());
+
+    const std::string key_g = masked_binary_frame("g");
+    ASSERT_TRUE(comm_refill_inbound_buffers(comm, key_g.data(), key_g.size()));
+    EXPECT_EQ(comm_process_input(runtime, comm, -1), COMM_PROCESS_OK);
+    EXPECT_TRUE(inbound_messages.empty());
+
+    const std::string key_o = masked_binary_frame("o");
+    ASSERT_TRUE(comm_refill_inbound_buffers(comm, key_o.data(), key_o.size()));
+    EXPECT_EQ(comm_process_input(runtime, comm, -1), COMM_PROCESS_OK);
+    EXPECT_TRUE(inbound_messages.empty());
+
+    const std::string enter = masked_binary_frame("\r\n");
+    ASSERT_TRUE(comm_refill_inbound_buffers(comm, enter.data(), enter.size()));
     EXPECT_EQ(comm_process_input(runtime, comm, -1), COMM_PROCESS_OK);
     ASSERT_EQ(inbound_messages.size(), 1u);
     EXPECT_EQ(inbound_messages[0], "go");

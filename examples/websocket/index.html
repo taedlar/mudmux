@@ -96,8 +96,10 @@
         $("status").textContent = status;
       };
       const sendBytes = (bytes) => {
-        if (socket?.readyState === WebSocket.OPEN)
-          socket.send(bytes);
+        if (socket?.readyState !== WebSocket.OPEN)
+          return false;
+        socket.send(bytes);
+        return true;
       };
       const telnetEnabled = () => socket?.protocol === "telnet.ietf.org"
         || socket?.protocol === "telnet.mudstandards.org";
@@ -105,15 +107,14 @@
       const sendApplicationInput = (text) => {
         const bytes = encoder.encode(text);
         if (!telnetEnabled()) {
-          sendBytes(bytes);
-          return;
+          return sendBytes(bytes) ? bytes.length : 0;
         }
         const escaped = [];
         for (const byte of bytes) {
           escaped.push(byte);
           if (byte === IAC) escaped.push(IAC);
         }
-        sendBytes(new Uint8Array(escaped));
+        return sendBytes(new Uint8Array(escaped)) ? escaped.length : 0;
       };
       const handleTelnetOption = (command, option) => {
         if (command === WILL) {
@@ -195,7 +196,11 @@
       const handleTerminalInput = (data) => {
         // mudmux's line parser requires LF. Keep character mode byte-for-byte,
         // but turn Enter into the Telnet/NVT CRLF line terminator in line mode.
-        sendApplicationInput(lineInput ? data.replace(/\r/g, "\r\n") : data);
+        const payload = lineInput ? data.replace(/\r/g, "\r\n") : data;
+        const sent = sendApplicationInput(payload);
+        event(sent
+          ? `Sent ${sent} byte${sent === 1 ? "" : "s"} (${lineInput ? "line" : "character"} mode)`
+          : "Input was not sent: WebSocket is not open");
         if (!localEcho) return;
         for (const char of data) {
           if (char === "\r" || char === "\n") {
