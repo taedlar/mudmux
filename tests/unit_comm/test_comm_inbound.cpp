@@ -444,7 +444,7 @@ TEST_F(CommInboundTest, ConnectHookCanSelectWebSocketOnly) {
     async_runtime_t* runtime = async_runtime_init(this);
     ASSERT_NE(runtime, nullptr);
 
-    const int slot = add_memory_comm(0);
+    const int slot = add_memory_comm(C_LINE_INPUT);
     ASSERT_NE(slot, -1);
     comm_abstract_ptr comm(slot, comm_slots_mtx);
     ASSERT_TRUE(comm);
@@ -458,9 +458,10 @@ TEST_F(CommInboundTest, ConnectHookCanSelectWebSocketOnly) {
         "GET /ws HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
         "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n";
     std::string packet = request;
-    packet.append("\x82\x82\x01\x02\x03\x04", 6);
+    packet.append("\x82\x83\x01\x02\x03\x04", 6);
     packet.push_back(static_cast<char>('h' ^ 0x01));
     packet.push_back(static_cast<char>('i' ^ 0x02));
+    packet.push_back(static_cast<char>('\n' ^ 0x03));
     ASSERT_TRUE(comm_refill_inbound_buffers(comm, packet.data(), packet.size()));
     EXPECT_EQ(comm_process_input(runtime, comm, -1), COMM_PROCESS_OK);
     EXPECT_EQ(C_WEBSOCKET_STATE(comm_get_flags(slot)), WS_READY);
@@ -475,7 +476,7 @@ TEST_F(CommInboundTest, WebSocketUpgradeDispatchesBinaryUtf8StreamAndFramesOutbo
     async_runtime_t* runtime = async_runtime_init(this);
     ASSERT_NE(runtime, nullptr);
 
-    const int slot = add_memory_comm(0);
+    const int slot = add_memory_comm(C_LINE_INPUT);
     ASSERT_NE(slot, -1);
     comm_abstract_ptr comm(slot, comm_slots_mtx);
     ASSERT_TRUE(comm);
@@ -495,13 +496,14 @@ TEST_F(CommInboundTest, WebSocketUpgradeDispatchesBinaryUtf8StreamAndFramesOutbo
         "\r\n";
     std::string packet = request;
     packet.push_back(static_cast<char>(0x82));
-    packet.push_back(static_cast<char>(0x82));
+    packet.push_back(static_cast<char>(0x83));
     packet.push_back(static_cast<char>(0x01));
     packet.push_back(static_cast<char>(0x02));
     packet.push_back(static_cast<char>(0x03));
     packet.push_back(static_cast<char>(0x04));
     packet.push_back(static_cast<char>('h' ^ 0x01));
     packet.push_back(static_cast<char>('i' ^ 0x02));
+    packet.push_back(static_cast<char>('\n' ^ 0x03));
 
     ASSERT_TRUE(comm_refill_inbound_buffers(comm, packet.data(), packet.size()));
     EXPECT_EQ(comm_process_input(runtime, comm, -1), COMM_PROCESS_OK);
@@ -668,11 +670,11 @@ TEST_F(CommInboundTest, WebSocketClientSubprotocolIsIgnoredWithoutServerPreferen
     async_runtime_deinit(runtime);
 }
 
-TEST_F(CommInboundTest, WebSocketTelnetSubprotocolProcessesBinaryTelnetPayload) {
+TEST_F(CommInboundTest, WebSocketTelnetSubprotocolHonorsInputModesAcrossLinemodeNegotiation) {
     async_runtime_t* runtime = async_runtime_init(this);
     ASSERT_NE(runtime, nullptr);
 
-    const int slot = add_memory_comm(0);
+    const int slot = add_memory_comm(C_LINE_INPUT);
     ASSERT_NE(slot, -1);
     comm_abstract_ptr comm(slot, comm_slots_mtx);
     ASSERT_TRUE(comm);
@@ -691,24 +693,50 @@ TEST_F(CommInboundTest, WebSocketTelnetSubprotocolProcessesBinaryTelnetPayload) 
         "Sec-WebSocket-Version: 13\r\n"
         "Sec-WebSocket-Protocol: telnet.ietf.org, telnet.mudstandards.org\r\n"
         "\r\n";
-    const std::array<unsigned char, 5> telnet_payload{{255, 251, 34, 'g', 'o'}};
-    packet.push_back(static_cast<char>(0x82)); // binary frame for Telnet bytes
-    packet.push_back(static_cast<char>(0x80 | telnet_payload.size()));
     const std::array<unsigned char, 4> mask{{1, 2, 3, 4}};
-    for (unsigned char byte : mask)
-        packet.push_back(static_cast<char>(byte));
-    for (size_t i = 0; i < telnet_payload.size(); ++i)
-        packet.push_back(static_cast<char>(telnet_payload[i] ^ mask[i % mask.size()]));
+    const auto masked_binary_frame = [&mask](std::string_view payload) {
+        std::string frame;
+        frame.push_back(static_cast<char>(0x82));
+        frame.push_back(static_cast<char>(0x80 | payload.size()));
+        for (unsigned char byte : mask)
+            frame.push_back(static_cast<char>(byte));
+        for (size_t i = 0; i < payload.size(); ++i)
+            frame.push_back(static_cast<char>(payload[i] ^ mask[i % mask.size()]));
+        return frame;
+    };
 
     ASSERT_TRUE(comm_refill_inbound_buffers(comm, packet.data(), packet.size()));
+    EXPECT_EQ(comm_process_input(runtime, comm, -1), COMM_PROCESS_OK);
+    EXPECT_TRUE(inbound_messages.empty());
+
+    const std::string linemode = masked_binary_frame(std::string("\xff\xfb\x22", 3));
+    ASSERT_TRUE(comm_refill_inbound_buffers(comm, linemode.data(), linemode.size()));
+    EXPECT_EQ(comm_process_input(runtime, comm, -1), COMM_PROCESS_OK);
+    EXPECT_TRUE(inbound_messages.empty());
+
+    const std::string key_g = masked_binary_frame("g");
+    ASSERT_TRUE(comm_refill_inbound_buffers(comm, key_g.data(), key_g.size()));
+    EXPECT_EQ(comm_process_input(runtime, comm, -1), COMM_PROCESS_OK);
+    EXPECT_TRUE(inbound_messages.empty());
+
+    const std::string key_o = masked_binary_frame("o");
+    ASSERT_TRUE(comm_refill_inbound_buffers(comm, key_o.data(), key_o.size()));
+    EXPECT_EQ(comm_process_input(runtime, comm, -1), COMM_PROCESS_OK);
+    EXPECT_TRUE(inbound_messages.empty());
+
+    const std::string enter = masked_binary_frame("\r\n");
+    ASSERT_TRUE(comm_refill_inbound_buffers(comm, enter.data(), enter.size()));
     EXPECT_EQ(comm_process_input(runtime, comm, -1), COMM_PROCESS_OK);
     ASSERT_EQ(inbound_messages.size(), 1u);
     EXPECT_EQ(inbound_messages[0], "go");
 
-    // This arrives after the WebSocket/Telnet upgrade.  Its WebSocket mask
+    ASSERT_TRUE(comm_set_char_input(slot));
+
+    // This arrives after the WebSocket/Telnet upgrade. Its WebSocket mask
     // begins with IAC (0xff), which must not be interpreted as raw Telnet
-    // input before WebSocket unmasking.
-    const std::array<unsigned char, 2> second_payload{{'h', 'i'}};
+    // input before WebSocket unmasking. Character mode dispatches it without
+    // requiring Telnet LINEMODE negotiation.
+    const std::array<unsigned char, 1> second_payload{{'h'}};
     const std::array<unsigned char, 4> second_mask{{255, 0, 0, 0}};
     std::string second_frame;
     second_frame.push_back(static_cast<char>(0x82));
@@ -719,9 +747,9 @@ TEST_F(CommInboundTest, WebSocketTelnetSubprotocolProcessesBinaryTelnetPayload) 
         second_frame.push_back(static_cast<char>(second_payload[i] ^ second_mask[i % second_mask.size()]));
 
     ASSERT_TRUE(comm_refill_inbound_buffers(comm, second_frame.data(), second_frame.size()));
-    EXPECT_EQ(comm_process_input(runtime, comm, -1), COMM_PROCESS_OK);
+    EXPECT_EQ(comm_process_input(runtime, comm, -1), COMM_PROCESS_DEFERRED);
     ASSERT_EQ(inbound_messages.size(), 2u);
-    EXPECT_EQ(inbound_messages[1], "hi");
+    EXPECT_EQ(inbound_messages[1], "h");
 
     comm_flush(runtime, slot);
     std::array<char, 512> response_buf{};
