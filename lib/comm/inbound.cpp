@@ -637,7 +637,8 @@ static inbound_buffer_t* _recycle_current_inbound_buffer(comm_abstract_ptr& comm
     return _skip_non_data_head_buffers(comm);
 }
 
-comm_process_result_t comm_process_input (async_runtime_t* runtime, comm_abstract_ptr& comm, int max_message) {
+static comm_process_result_t _comm_process_input (async_runtime_t* runtime, comm_abstract_ptr& comm,
+                                                   int max_message, bool decode_transport) {
     if (!comm)
         return COMM_PROCESS_ERROR;
     if (comm->flags & C_AWAITING_HOOK)
@@ -661,7 +662,7 @@ comm_process_result_t comm_process_input (async_runtime_t* runtime, comm_abstrac
             return COMM_PROCESS_OK;
     }
 
-    if (C_WEBSOCKET_IS_READY(comm->flags)) {
+    if (decode_transport && C_WEBSOCKET_IS_READY(comm->flags)) {
         return comm_process_websocket_input(runtime, comm, max_message, num_messages_processed);
     }
     else if (comm->flags & C_LINE_INPUT) {
@@ -792,4 +793,12 @@ comm_process_result_t comm_process_input (async_runtime_t* runtime, comm_abstrac
     if (comm->flags & C_DEFERRED_INBOUND)
         return COMM_PROCESS_DEFERRED;
     return COMM_PROCESS_OK;
+}
+
+comm_process_result_t comm_process_input (async_runtime_t* runtime, comm_abstract_ptr& comm, int max_message) {
+    return _comm_process_input(runtime, comm, max_message, true);
+}
+
+comm_process_result_t comm_process_decoded_input (async_runtime_t* runtime, comm_abstract_ptr& comm, int max_message) {
+    return _comm_process_input(runtime, comm, max_message, false);
 }

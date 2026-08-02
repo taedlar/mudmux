@@ -22,7 +22,7 @@
   <h1>mudmux xterm.js WebSocket client</h1>
   <p>
     Connect to a mudmux WebSocket endpoint, then type directly into the terminal.
-    Input is buffered locally and sent as one binary WebSocket frame when Enter is pressed.
+    Each terminal key event is sent in its own binary WebSocket frame. Line mode is assembled by mudmux; character mode is delivered immediately.
     The chatroom example enables TLS, so its default endpoint uses <code>wss://</code>.
   </p>
 
@@ -73,9 +73,9 @@
       }
 
       let socket = null;
-      let pendingInput = "";
       let localEcho = true;
-      const telnet = { state: "data" };
+      let lineInput = true;
+      const telnet = { state: "data", subnegotiation: [] };
       const IAC = 255;
       const DO = 253;
       const DONT = 254;
@@ -119,18 +119,38 @@
         if (command === WILL) {
           if (option === SGA || option === ECHO) {
             sendTelnetCommand(DO, option);
-            if (option === ECHO) localEcho = false;
+            if (option === ECHO) {
+              // mudmux uses server echo as the Kludge line-mode fallback for
+              // Telnet clients that do not support RFC 1184 LINEMODE.
+              localEcho = false;
+              lineInput = false;
+              event("Telnet input mode: character");
+            }
           } else {
             sendTelnetCommand(DONT, option);
           }
         } else if (command === WONT) {
           sendTelnetCommand(DONT, option);
-          if (option === ECHO) localEcho = true;
+          if (option === ECHO) {
+            localEcho = true;
+            lineInput = true;
+            event("Telnet input mode: line");
+          }
         } else if (command === DO) {
           sendTelnetCommand(option === LINEMODE ? WILL : WONT, option);
         } else if (command === DONT) {
           sendTelnetCommand(WONT, option);
         }
+      };
+      const handleTelnetSubnegotiation = () => {
+        const data = telnet.subnegotiation;
+        // RFC 1184: LINEMODE MODE. mudmux sends MODE EDIT (1) for line input
+        // and MODE 0 for character input.
+        if (data.length >= 3 && data[0] === LINEMODE && data[1] === 1) {
+          lineInput = (data[2] & 1) !== 0;
+          event(`Telnet input mode: ${lineInput ? "line" : "character"}`);
+        }
+        telnet.subnegotiation = [];
       };
       const decodeTelnetOutput = (bytes) => {
         const output = [];
@@ -143,7 +163,10 @@
             case "iac":
               if (byte === IAC) output.push(byte);
               else if ([DO, DONT, WILL, WONT].includes(byte)) telnet.command = byte;
-              else if (byte === SB) telnet.state = "subnegotiation";
+              else if (byte === SB) {
+                telnet.subnegotiation = [];
+                telnet.state = "subnegotiation";
+              }
               else telnet.state = "data";
               if (byte === IAC) telnet.state = "data";
               else if ([DO, DONT, WILL, WONT].includes(byte)) telnet.state = "option";
@@ -154,31 +177,35 @@
               break;
             case "subnegotiation":
               if (byte === IAC) telnet.state = "subnegotiation-iac";
+              else telnet.subnegotiation.push(byte);
               break;
             case "subnegotiation-iac":
-              telnet.state = byte === SE ? "data" : "subnegotiation";
+              if (byte === SE) {
+                handleTelnetSubnegotiation();
+                telnet.state = "data";
+              } else {
+                if (byte === IAC) telnet.subnegotiation.push(byte);
+                telnet.state = "subnegotiation";
+              }
               break;
           }
         }
         return new Uint8Array(output);
       };
-      const submitInput = () => {
-        if (localEcho) terminal?.write("\r\n");
-        sendApplicationInput(`${pendingInput}\r\n`);
-        pendingInput = "";
-      };
       const handleTerminalInput = (data) => {
+        // mudmux's line parser requires LF. Keep character mode byte-for-byte,
+        // but turn Enter into the Telnet/NVT CRLF line terminator in line mode.
+        sendApplicationInput(lineInput ? data.replace(/\r/g, "\r\n") : data);
+        if (!localEcho) return;
         for (const char of data) {
           if (char === "\r" || char === "\n") {
-            submitInput();
+            // Telnet line mode receives a newline echo from mudmux. Other
+            // WebSocket protocols need the client to advance the terminal.
+            if (!telnetEnabled()) terminal?.write("\r\n");
           } else if (char === "\u007f" || char === "\b") {
-            if (pendingInput) {
-              pendingInput = Array.from(pendingInput).slice(0, -1).join("");
-              if (localEcho) terminal?.write("\b \b");
-            }
+            terminal?.write("\b \b");
           } else {
-            pendingInput += char;
-            if (localEcho) terminal?.write(char);
+            terminal?.write(char);
           }
         }
       };
@@ -202,9 +229,10 @@
           return;
         }
         socket.binaryType = "arraybuffer";
-        pendingInput = "";
         localEcho = true;
+        lineInput = true;
         telnet.state = "data";
+        telnet.subnegotiation = [];
         $("status").textContent = "Connecting…";
         socket.addEventListener("open", () => {
           setConnected(true, `Connected${socket.protocol ? ` (${socket.protocol})` : ""}`);

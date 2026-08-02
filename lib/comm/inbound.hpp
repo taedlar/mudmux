@@ -55,6 +55,14 @@ void comm_consume_inbound_data(comm_abstract_ptr& comm, size_t bytes);
  */
 comm_process_result_t comm_process_input (async_runtime_t* runtime, comm_abstract_ptr& comm, int max_message = -1);
 
+/**
+ * Process application bytes that have already been decoded from a transport
+ * framing layer (for example, a WebSocket message).  This applies the normal
+ * line/character input-mode parser without attempting another transport decode.
+ */
+comm_process_result_t comm_process_decoded_input(async_runtime_t* runtime, comm_abstract_ptr& comm,
+                                                 int max_message = -1);
+
 extern std::atomic<bool> has_deferred_input;
 
 #endif /* COMM_INBOUND_HPP */
