@@ -60,7 +60,7 @@ void User::logon() {
 
 void User::disconnect() {
     std::lock_guard<std::recursive_mutex> lock(users_mutex);
-    write_slot_text(comm_slot, "Bye!\n\r");
+    write_slot_text(comm_slot, "Bye!\r\n");
     state = UserState::Disconnected;
     comm_slot = -1; // mark the communication slot as invalid
 }
@@ -90,15 +90,15 @@ void User::dispatchInboundMessage(const std::string& message) {
         if (message.front() == '/') {
             // Handle slash commands
             if (!Command::find_and_execute(message.substr(1), shared_from_this())) { // remove the leading '/' before searching for the command
-                write_slot_text(comm_slot, "Unknown slash command: " + message + "\n\r");
+                write_slot_text(comm_slot, "Unknown slash command: " + message + "\r\n");
             }
         } else {
             // Handle regular chat messages
-            write_slot_text(comm_slot, "You said: " + message + "\n\r"); // echo the message back to the user
+            write_slot_text(comm_slot, "You said: " + message + "\r\n"); // echo the message back to the user
             // Broadcast the message to all other connected users
             for (const auto& user_ptr : User::snapshot()) {
                 if (user_ptr && user_ptr->getState() == UserState::LoggedIn && user_ptr->comm_slot != comm_slot) {
-                    write_slot_text(user_ptr->comm_slot, username + " says: " + message + "\n\r"); // broadcast the message to other users
+                    write_slot_text(user_ptr->comm_slot, username + " says: " + message + "\r\n"); // broadcast the message to other users
                 }
             }
         }
@@ -114,9 +114,9 @@ void User::receiveUsername(const std::string& name) {
     username = name;
     state = UserState::LoggedIn; // set state to LoggedIn after receiving the username
     inbound_handler = nullptr; // reset the inbound handler to nullptr since we no longer need it
-    write_slot_text(comm_slot, fmt::format("Welcome, {}!\n\r", username));
-    write_slot_text(comm_slot, "You are now logged in. Type your messages to chat with others.\n\r");
-    write_slot_text(comm_slot, "You can also use slash commands like /help, /quit, etc. to interact with the chatroom.\n\r");
+    write_slot_text(comm_slot, fmt::format("Welcome, {}!\r\n", username));
+    write_slot_text(comm_slot, "You are now logged in. Type your messages to chat with others.\r\n");
+    write_slot_text(comm_slot, "You can also use slash commands like /help, /quit, etc. to interact with the chatroom.\r\n");
 }
 
 void User::receiveExitConfirmation(const std::string& message) {

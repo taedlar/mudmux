@@ -279,6 +279,29 @@ TEST_F(CommInboundTest, ProcessLineInputModeDispatchesCompleteLines) {
     async_runtime_deinit(runtime);
 }
 
+TEST_F(CommInboundTest, ProcessLineInputModeDispatchesCarriageReturnTerminatedLines) {
+    async_runtime_t* runtime = async_runtime_init(this);
+    ASSERT_NE(runtime, nullptr);
+
+    const int slot = add_memory_comm(C_LINE_INPUT);
+    ASSERT_NE(slot, -1);
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
+    ASSERT_TRUE(comm);
+
+    inbound_messages.clear();
+    mudmux_register_hook(HOOK_MESSAGE_INBOUND, CommInboundTest::hook_message_inbound);
+
+    const char* data = "alpha\rbeta\r";
+    ASSERT_TRUE(comm_refill_inbound_buffers(comm, data, strlen(data)));
+    EXPECT_EQ(comm_process_input(runtime, comm, -1), COMM_PROCESS_OK);
+
+    ASSERT_EQ(inbound_messages.size(), 2u);
+    EXPECT_EQ(inbound_messages[0], "alpha");
+    EXPECT_EQ(inbound_messages[1], "beta");
+
+    async_runtime_deinit(runtime);
+}
+
 TEST_F(CommInboundTest, ProcessCharInputModeDispatchesOneCharacterAtATime) {
     async_runtime_t* runtime = async_runtime_init(this);
     ASSERT_NE(runtime, nullptr);

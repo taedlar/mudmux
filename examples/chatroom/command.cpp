@@ -20,10 +20,10 @@ void Command::initialize() {
     register_command("help", [](std::shared_ptr<User> user, const std::string& args) {
         (void)args; // suppress unused parameter warning
         const int slot = user->getCommSlot();
-        write_slot_text(slot, "Available commands:\n\r");
-        write_slot_text(slot, "/help - Show this help message\n\r");
-        write_slot_text(slot, "/quit - Disconnect from the chatroom\n\r");
-        write_slot_text(slot, "/exit - Disconnect from the chatroom\n\r");
+        write_slot_text(slot, "Available commands:\r\n");
+        write_slot_text(slot, "/help - Show this help message\r\n");
+        write_slot_text(slot, "/quit - Disconnect from the chatroom\r\n");
+        write_slot_text(slot, "/exit - Disconnect from the chatroom\r\n");
     });
 
     register_command("quit", &command_quit);

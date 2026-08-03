@@ -29,7 +29,7 @@ static void _negotiate_telnet_line_input(comm_abstract_ptr& comm, bool enable) {
         // negotiate LINEMODE
         if (comm->caps.telnet_linemode) {
             // client supports LINEMODE, request it
-            char lm_mode_request[3] = { 1, 1, 0 }; // LM_MODE subnegotiation: 1=MODE, 1=EDIT
+            char lm_mode_request[2] = { 1, 1 }; // LINEMODE MODE: enable EDIT
             comm_telnet_send_subnegotiation(comm, TELOPT_LINEMODE, lm_mode_request, sizeof(lm_mode_request));
         }
         else {
@@ -39,7 +39,7 @@ static void _negotiate_telnet_line_input(comm_abstract_ptr& comm, bool enable) {
         // negotiate CHARACTER mode
         if (comm->caps.telnet_linemode) {
             // client supports LINEMODE, request character mode by turn off local editing
-            char lm_mode_request[3] = { 1, 0, 0 }; // LM_MODE subnegotiation: 1=MODE, 0=CHAR
+            char lm_mode_request[2] = { 1, 0 }; // LINEMODE MODE: disable local edit mode
             comm_telnet_send_subnegotiation(comm, TELOPT_LINEMODE, lm_mode_request, sizeof(lm_mode_request));
             comm_telnet_send_will(comm, TELOPT_ECHO); // take control of local echo for character mode
         }
@@ -259,6 +259,7 @@ bool comm_set_char_input(int slot) {
         return false;
     if (!(comm->flags & C_LINE_INPUT))
         return comm_set_echo (slot, false); // already in char input mode, disable echo
+    bool telnet_char_mode_negotiated = false;
     switch (slot) {
     case COMM_SLOT_CONSOLE:
 #ifdef HAVE_TERMIOS_H
@@ -274,13 +275,14 @@ bool comm_set_char_input(int slot) {
         break;
     default:
         if (comm->flags & C_ENABLE_TELNET) {
-            // we never echo input data to the client when in line input mode.
-            // when in char input mode, we take control of local echo and do echoing ourselves.
-            comm_telnet_send_will(comm, TELOPT_ECHO);
+            _negotiate_telnet_line_input(comm, false);
+            telnet_char_mode_negotiated = true;
         }
         break;
     }
-    comm->flags &= ~C_LINE_INPUT;
+    comm->flags &= ~(C_LINE_INPUT | (telnet_char_mode_negotiated ? C_CLIENT_ECHO : 0));
+    if (telnet_char_mode_negotiated)
+        return true;
     return comm_set_echo (slot, false); // disable echo in char input mode
 }
 

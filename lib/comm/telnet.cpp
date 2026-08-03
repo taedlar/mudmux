@@ -13,6 +13,7 @@
 static void _start_telnet_negotiation(comm_abstract_ptr& comm) {
     // Suppress obsolete Go Ahead (SGA), we are capable of full-duplex
     comm_telnet_send_will(comm, TELOPT_SGA);
+    comm_telnet_send_do(comm, TELOPT_SGA);
 
     // We don't want to echo back what the client types (this will be used in password input)
     // Keeping WONT ECHO also enables Kludge line mode fallback for clients that don't support
@@ -212,7 +213,7 @@ void comm_process_telnet_options (comm_abstract_ptr& comm, comm_telnet_negotiati
         comm->caps.telnet_linemode = 1;
         SPDLOG_DEBUG ("client capabilities updated: TELNET LINEMODE enabled for slot {}", comm.slot());
         if (comm->flags & C_LINE_INPUT) {
-            char lm_mode_request[3] = { 1, 1, 0 }; // LM_MODE subnegotiation: 1=MODE, 1=EDIT
+            char lm_mode_request[2] = { 1, 1 }; // LINEMODE MODE: enable EDIT
             comm_telnet_send_subnegotiation(comm, TELOPT_LINEMODE, lm_mode_request, sizeof(lm_mode_request));
         }
     }

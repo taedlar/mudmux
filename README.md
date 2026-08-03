@@ -70,17 +70,16 @@ $ chatroom -f mud.conf
 $ telnet -zssl localhost 4000
 Trying 127.0.0.1...
 SSL: Server has a self-signed certificate
-SSL: unknown Issuer: /C=US/ST=CA/O=Mudmux
+SSL: unknown Issuer: /CN=localhost
 Connected to localhost.
 Escape character is '^]'.
-Please enter your username: Annihilator^M
+Please enter your username: Annihilator
+
 Welcome, Annihilator!
-You are now logged in. Type your messages to chat with others.
+You are now logged in. Type your messages to chat withothers.
 You can also use slash commands like /help, /quit, etc. to interact with the chatroom.
-[Annihilator] hi
-You said: hi
 [Annihilator] /quit
-Bye!
+
 Connection closed by foreign host.
 ```
 
