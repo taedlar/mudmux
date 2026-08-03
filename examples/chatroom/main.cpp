@@ -40,9 +40,6 @@ static int on_connect (void*, int slot, void* data, size_t len) {
 }
 
 static int on_message_inbound (void*, int slot, void* data, size_t size) {
-    while (size > 0 && (static_cast<char*>(data)[size - 1] == '\n' || static_cast<char*>(data)[size - 1] == '\r')) {
-        size--; // strip trailing newline(s)
-    }
     std::string message(static_cast<char*>(data), size);
     if (auto user = User::find(slot))
         user->dispatchInboundMessage(message);

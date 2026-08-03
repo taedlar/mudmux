@@ -40,13 +40,18 @@ set (MUDMUX_LIB_OBJECTS
     mudmux::async
     mudmux::comm
 )
+set (MUDMUX_LIB_OBJECTS ${MUDMUX_LIB_OBJECTS} PARENT_SCOPE) # for unit tests
 
-# shared library
+# shared library (C/C++ interface)
 add_library(mudmux SHARED dllmain.cpp)
 target_link_libraries(mudmux PRIVATE ${MUDMUX_LIB_OBJECTS})
 
-# export to parent scope for unit-tests
-set (MUDMUX_LIB_OBJECTS ${MUDMUX_LIB_OBJECTS} PARENT_SCOPE)
 target_link_libraries(mudmux PUBLIC mudmux::headers)
 add_library(mudmux::mudmux ALIAS mudmux)
 generate_export_header(mudmux)
+
+# static library (C++ interface)
+add_library(mudmux_static STATIC)
+target_link_libraries(mudmux_static PRIVATE ${MUDMUX_LIB_OBJECTS})
+target_link_libraries(mudmux_static PUBLIC mudmux::headers)
+add_library(mudmux::static ALIAS mudmux_static)

@@ -2,6 +2,8 @@
 
 `mudmux` handles the painful **transport-layer** tasks (low-level network communication and asynchronous I/O) between MUD server and clients, generates **input events** for high-level logics layer, and enables graceful **non-blcoking** event loop to drive the virtual world.
 
+![High-level mudmux architecture: clients connect through mudmux's async transport layer, which exchanges hooks and output with the MUD server.](docs/images/mudmux-overview.svg)
+
 ## Features
 
 Connection types:
