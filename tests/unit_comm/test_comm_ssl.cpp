@@ -396,6 +396,75 @@ TEST_F(CommSslTest, RejectedWebSocketUpgradeOverTlsQueuesBadRequestResponse) {
     SSL_CTX_free(client_ctx);
 }
 
+TEST_F(CommSslTest, CloseWithBufferedTlsDataSurvivesPeerCloseRace) {
+    BIO* server_io = nullptr;
+    BIO* client_io = nullptr;
+    ASSERT_EQ(BIO_new_bio_pair(&server_io, 0, &client_io, 0), 1);
+    ASSERT_NE(server_io, nullptr);
+    ASSERT_NE(client_io, nullptr);
+
+    const int slot = comm_abstract_add_bio(server_io, server_io, -1, C_SOCKET_READABLE);
+    ASSERT_GE(slot, 0);
+
+    SSL_CTX* client_ctx = SSL_CTX_new(TLS_client_method());
+    ASSERT_NE(client_ctx, nullptr);
+    SSL_CTX_set_verify(client_ctx, SSL_VERIFY_NONE, nullptr);
+
+    SSL* client_ssl = SSL_new(client_ctx);
+    ASSERT_NE(client_ssl, nullptr);
+    SSL_set_connect_state(client_ssl);
+    SSL_set_bio(client_ssl, client_io, client_io);
+
+    comm_enable_tls(slot);
+    async_runtime_t* runtime = async_runtime_init(nullptr);
+    ASSERT_NE(runtime, nullptr);
+
+    bool server_done = false;
+    bool client_done = false;
+    for (int i = 0; i < 256 && !(server_done && client_done); ++i) {
+        comm_abstract_ptr comm(slot, comm_slots_mtx);
+        ASSERT_TRUE(comm);
+        ASSERT_TRUE(comm_refill_inbound_buffers(comm));
+        if (!server_done) {
+            const int result = comm_tls_handshake_step(runtime, slot);
+            ASSERT_GE(result, 0);
+            server_done = result == 1;
+        }
+        if (!client_done) {
+            const int result = SSL_do_handshake(client_ssl);
+            if (result == 1) {
+                client_done = true;
+            } else {
+                const int error = SSL_get_error(client_ssl, result);
+                ASSERT_TRUE(error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE);
+            }
+        }
+    }
+    ASSERT_TRUE(server_done);
+    ASSERT_TRUE(client_done);
+
+    comm_buffered_write(slot, "bye", 3);
+    EXPECT_FALSE(comm_close(runtime, slot));
+
+    // Simulate abrupt peer close while server still has buffered TLS data to flush.
+    SSL_free(client_ssl);
+    client_ssl = nullptr;
+
+    comm_flush(runtime, slot);
+
+    comm_abstract_t* comm = comm_abstract_get(slot);
+    ASSERT_NE(comm, nullptr);
+    EXPECT_NE(comm->flags & C_CLOSING, 0u);
+    EXPECT_EQ(comm->flags & C_BUFFERED_WRITE, 0u);
+    EXPECT_EQ(comm->flags & C_TLS_ESTABLISHED, 0u);
+
+    EXPECT_TRUE(comm_close(runtime, slot));
+    EXPECT_EQ(comm_abstract_get(slot), nullptr);
+
+    async_runtime_deinit(runtime);
+    SSL_CTX_free(client_ctx);
+}
+
 #ifdef _WIN32
 TEST_F(CommSslTest, TlsInboundSupportsFragmentedSrcBufferPath) {
     BIO* server_io = nullptr;

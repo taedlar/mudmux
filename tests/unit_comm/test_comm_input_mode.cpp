@@ -4,10 +4,13 @@
 
 #include "comm/input_mode.hpp"
 #include "comm/abstract.hpp"
+#include "comm/outbound.hpp"
 #include "mudmux/comm.h"
 
+#include <array>
 #include <gtest/gtest.h>
 #include <openssl/bio.h>
+#include <string>
 
 using namespace testing;
 
@@ -71,5 +74,32 @@ TEST_F(CommInputModeTest, SetCharInputClearsLineAndEchoFlags) {
 TEST_F(CommInputModeTest, SetInputModeRejectsInvalidSlot) {
 	EXPECT_FALSE(comm_set_line_input(-1, true));
 	EXPECT_FALSE(comm_set_char_input(-1));
+}
+
+TEST_F(CommInputModeTest, SetCharInputWithTelnetLinemodeSendsModeAndEchoNegotiation) {
+	const int slot = add_comm_slot(C_ENABLE_TELNET | C_LINE_INPUT | C_CLIENT_ECHO);
+	ASSERT_NE(slot, -1);
+
+	comm_abstract_t* comm = comm_abstract_get(slot);
+	ASSERT_NE(comm, nullptr);
+	comm->caps.telnet_linemode = 1;
+
+	EXPECT_TRUE(comm_set_char_input(slot));
+	comm_flush(nullptr, slot);
+
+	std::array<char, 64> buf{};
+	const int read_len = BIO_read(comm->wbio, buf.data(), static_cast<int>(buf.size()));
+	ASSERT_GT(read_len, 0);
+	const std::string wire(buf.data(), static_cast<size_t>(read_len));
+
+	const std::string mode_char_req("\xff\xfa\x22\x01\x00\xff\xf0", 7); // IAC SB LINEMODE MODE 0 IAC SE
+	const std::string will_echo("\xff\xfb\x01", 3); // IAC WILL ECHO
+
+	EXPECT_NE(wire.find(mode_char_req), std::string::npos);
+	EXPECT_NE(wire.find(will_echo), std::string::npos);
+	EXPECT_EQ(wire.find(will_echo), wire.rfind(will_echo)); // must not emit duplicate WILL ECHO
+
+	EXPECT_EQ(comm->flags & C_LINE_INPUT, 0u);
+	EXPECT_EQ(comm->flags & C_CLIENT_ECHO, 0u);
 }
 

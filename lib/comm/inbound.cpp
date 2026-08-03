@@ -373,7 +373,7 @@ static bool _refill_inbound_buffers_from_src(comm_abstract_ptr& comm, const char
 
             if (telnet_neg.sb_len > 0) {
                 const mudmux_dispatch_result_t dispatch_result = comm_dispatch_telnet_subnegotiation(runtime, comm, telnet_neg);
-                if (dispatch_result == MUDMUX_DISPATCH_QUEUE_FULL || mudmux_execution_slot_busy(comm.slot())) {
+                if (dispatch_result == MUDMUX_DISPATCH_QUEUE_FULL) {
                     telnet_parsing_paused = true;
                     comm->flags |= C_DEFERRED_INBOUND;
                     has_deferred_input.store(true, std::memory_order_release);
@@ -518,7 +518,7 @@ bool comm_append_decoded_input(comm_abstract_ptr& comm, const char* src, size_t 
 }
 
 /**
- * @brief Find the first newline (LF or CR LF) or null character in the inbound buffer
+ * @brief Find the first newline sequence (LF, NUL, CR LF, CR NUL) in the inbound buffer
  * and strip it by removing newline, leading and trailing whitespaces.
  * Stripped characters are replaced with null characters.
  *
@@ -535,23 +535,27 @@ static ssize_t _find_newline_and_strip (inbound_buffer_t* ibb, size_t* line_len 
         return -1;
     SPDLOG_DEBUG ("searching for newline in inbound buffer: start={}, end={}", ibb->start, ibb->end);
     for (size_t i = ibb->start; i < ibb->end; ++i) {
-        if (ibb->buffer[i] == '\n' || ibb->buffer[i] == '\0') {
-            // strip CR LF or LF by replacing with null terminators
+        if (ibb->buffer[i] == '\r' || ibb->buffer[i] == '\n' || ibb->buffer[i] == '\0') {
+            // Accept CRLF, CRNUL, LF, NUL, and bare CR line endings.
+            size_t line_end = i;
             ssize_t ret = static_cast<ssize_t>(i + 1);
-            if (i > ibb->start && ibb->buffer[i - 1] == '\r') {
-                ibb->buffer[i--] = '\0';
+            if (ibb->buffer[i] == '\r' && i + 1 < ibb->end && (ibb->buffer[i + 1] == '\n' || ibb->buffer[i + 1] == '\0')) {
+                ibb->buffer[i + 1] = '\0';
+                ret = static_cast<ssize_t>(i + 2);
+            } else if ((ibb->buffer[i] == '\n' || ibb->buffer[i] == '\0') && i > ibb->start && ibb->buffer[i - 1] == '\r') {
+                line_end = i - 1;
             }
-            ibb->buffer[i] = '\0';
+            ibb->buffer[line_end] = '\0';
             // strip leading and trailing whitespace
-            while (ibb->start < i && isspace(static_cast<unsigned char>(ibb->buffer[ibb->start]))) {
+            while (ibb->start < line_end && isspace(static_cast<unsigned char>(ibb->buffer[ibb->start]))) {
                 ibb->buffer[ibb->start++] = '\0';
             }
-            while (i > ibb->start && isspace(static_cast<unsigned char>(ibb->buffer[i - 1]))) {
-                ibb->buffer[--i] = '\0';
+            while (line_end > ibb->start && isspace(static_cast<unsigned char>(ibb->buffer[line_end - 1]))) {
+                ibb->buffer[--line_end] = '\0';
             }
-            SPDLOG_DEBUG ("stripped line: [{}], length={}, next_line_start={}", ibb->buffer + ibb->start, i - ibb->start, ret);
+            SPDLOG_DEBUG ("stripped line: [{}], length={}, next_line_start={}", ibb->buffer + ibb->start, line_end - ibb->start, ret);
             if (line_len) {
-                *line_len = i - ibb->start; // length of stripped line
+                *line_len = line_end - ibb->start; // length of stripped line
             }
             return ret;
         }
@@ -683,7 +687,7 @@ static comm_process_result_t _comm_process_input (async_runtime_t* runtime, comm
             if ((next_line_start = _find_newline_and_strip(ibb, &line_len)) >= 0) {
                 if (comm->flags & C_ENABLE_TELNET) {
                     if (!(comm->flags & C_CLOSING))
-                        comm_buffered_write_comm(comm, "\n", 1); // echo newline for Telnet clients
+                        comm_buffered_write_comm(comm, "\r\n", 2); // echo newline for Telnet clients
                 }
                 // invoke inbound message hook for each complete line
                 const mudmux_dispatch_result_t dispatch_result = static_cast<mudmux_dispatch_result_t>(

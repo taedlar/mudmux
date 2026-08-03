@@ -15,12 +15,12 @@ static void write_slot_text(int slot, const std::string& text) {
 void Menu::writeMenu (int slot) const {
     if (slot < 0)
         return;
-    write_slot_text(slot, std::string(CLR) + "\n\r"); // clear from cursor to end of screen
+    write_slot_text(slot, std::string(CLR) + "\r\n"); // clear from cursor to end of screen
     for (size_t i = 0; i < options.size(); ++i) {
         if (static_cast<int>(i) == cursor_position) {
-            write_slot_text(slot, "> " + options[i] + "\n\r"); // highlight the selected option
+            write_slot_text(slot, "> " + options[i] + "\r\n"); // highlight the selected option
         } else {
-            write_slot_text(slot, "  " + options[i] + "\n\r");
+            write_slot_text(slot, "  " + options[i] + "\r\n");
         }
     }
     write_slot_text(slot, CUU(options.size() + 1) + "\r"); // move cursor up to the prompt line

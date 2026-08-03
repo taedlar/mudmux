@@ -290,7 +290,7 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
             SPDLOG_CRITICAL ("async_runtime_wait failed"); // TODO: initiate retry or shutdown
             break;
         }
-        SPDLOG_DEBUG ("async_runtime_wait returned {} events", num_events);
+        SPDLOG_TRACE ("async_runtime_wait returned {} events", num_events);
 
         // Process console input before event loop (needed for mode switching and ReadConsoleW limitations)
         if (enable_console || enable_standard_input)
@@ -319,7 +319,7 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
                     // This can happen if the comm was removed (e.g., due to disconnect) while events were still pending
                     continue;
                 }
-                SPDLOG_DEBUG ("processing event for slot {} (event.fd={}, type=0x{:x})", slot, event.fd, event.event_type);
+                SPDLOG_TRACE ("processing event for slot {} (event.fd={}, type=0x{:x})", slot, event.fd, event.event_type);
                 if (comm->flags & C_SOCKET_LISTENING) {
                     comm_process_listener_event (runtime, slot, event.fd);
                     continue;

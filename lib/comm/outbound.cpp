@@ -246,7 +246,14 @@ void comm_flush (async_runtime_t* runtime, int slot) {
                 if (ok != 1) {
                     const int ssl_err = SSL_get_error(comm->ssl, ok);
                     if (ssl_err != SSL_ERROR_WANT_READ && ssl_err != SSL_ERROR_WANT_WRITE) {
-                        SPDLOG_ERROR("SSL_write_ex failed during flush for slot {} (ssl_err={})", slot, ssl_err);
+                        if (comm->flags & C_CLOSING) {
+                            SPDLOG_DEBUG("SSL_write_ex failed during closing flush for slot {} (ssl_err={})", slot, ssl_err);
+                            // Closing teardown can race with peer close; stop treating this slot as TLS-established
+                            // so we do not retry TLS close-notify on subsequent close progression.
+                            comm->flags &= ~C_TLS_ESTABLISHED;
+                        } else {
+                            SPDLOG_ERROR("SSL_write_ex failed during flush for slot {} (ssl_err={})", slot, ssl_err);
+                        }
                         comm_free_outbound_buffers(comm); // drop any buffered outbound data
                         comm->flags &= ~C_BUFFERED_WRITE;
                         if (!(comm->flags & C_CLOSING))

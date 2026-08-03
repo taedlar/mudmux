@@ -142,7 +142,6 @@ bool comm_enable_virtual_terminal (int slot) {
 #endif
 
 int comm_process_console_input (async_runtime_t *runtime, bool allow_reconnect) {
-    bool disconnected = false;
     // check EOF on console worker and handle disconnect/re-connect if needed
     {
         std::lock_guard<std::mutex> lock(console_mutex);
@@ -165,7 +164,6 @@ int comm_process_console_input (async_runtime_t *runtime, bool allow_reconnect) 
                 SPDLOG_INFO ("----- console user disconnected (press ENTER to reconnect)");
                 console_ctx = console_worker_init (runtime, console_queue, CONSOLE_COMPLETION_KEY);
             }
-            disconnected = true;
             console_disconnect_pending.store(true, std::memory_order_release);
         }
 
