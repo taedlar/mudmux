@@ -16,6 +16,7 @@
 #include <yaml-cpp/yaml.h>
 
 #include "async/async_event.h"
+#include "async/async_queue.h"
 #include "async/console_worker.h"
 #include "comm/accept.hpp"
 #include "comm/abstract.hpp"
@@ -93,6 +94,14 @@ static void init_async_api (void) {
     async_api.event_reset = async_event_reset;
     async_api.event_wait = async_event_wait;
     async_api.event_get_wait_handle = async_event_get_wait_handle;
+    async_api.queue_create = async_queue_create;
+    async_api.queue_destroy = async_queue_destroy;
+    async_api.queue_enqueue = async_queue_enqueue;
+    async_api.queue_dequeue = async_queue_dequeue;
+    async_api.queue_is_empty = async_queue_is_empty;
+    async_api.queue_is_full = async_queue_is_full;
+    async_api.queue_clear = async_queue_clear;
+    async_api.queue_get_stats = async_queue_get_stats;
 
     mudmux_async_api_v1 = &async_api; // set global pointer to initialized struct
 }
