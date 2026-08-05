@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <mutex>
+#include <vector>
 #include <openssl/bio.h>
 #include <openssl/err.h>
 
@@ -199,6 +200,27 @@ void comm_buffered_write (int slot, const void *buf, size_t len) {
     if (!comm)
         return;
     comm_buffered_write_comm(comm, buf, len);
+}
+
+void comm_write_message (int from_slot, int to_slot, const void *buf, size_t len) {
+    if (!buf || len == 0)
+        return;
+
+    if (!mudmux_get_registered_hook(HOOK_MESSAGE_OUTBOUND)) {
+        comm_buffered_write(to_slot, buf, len);
+        return;
+    }
+
+    // The hook receives an isolated payload. This keeps the caller's input
+    // immutable even when the generic hook signature exposes a void pointer.
+    std::vector<char> message(static_cast<const char*>(buf), static_cast<const char*>(buf) + len);
+    async_runtime_t* runtime = async_get_current_runtime();
+    (void)mudmux_dispatch_hook(HOOK_MESSAGE_OUTBOUND,
+        runtime ? async_runtime_get_context(runtime) : nullptr,
+        static_cast<int>((static_cast<uint32_t>(from_slot) & 0xffffu) << 16 |
+                         (static_cast<uint32_t>(to_slot) & 0xffffu)),
+        message.data(),
+        len);
 }
 
 void comm_free_outbound_buffers(comm_abstract_ptr& comm) {

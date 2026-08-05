@@ -101,6 +101,18 @@ public:
 
 namespace {
 
+int outbound_hook_slot{-1};
+int outbound_hook_from_slot{-1};
+std::string outbound_hook_message;
+
+int rewrite_outbound_message(void*, int slots, void* data, size_t len) {
+    outbound_hook_from_slot = static_cast<int>(static_cast<uint32_t>(slots) >> 16);
+    outbound_hook_slot = static_cast<int>(static_cast<uint32_t>(slots) & 0xffffu);
+    outbound_hook_message.assign(static_cast<char*>(data), len);
+    comm_buffered_write(outbound_hook_slot, data, len);
+    return 0;
+}
+
 std::promise<void>* thread_pool_first_slot_entered_ptr{nullptr};
 std::promise<void>* thread_pool_other_slots_done_ptr{nullptr};
 std::shared_future<void>* thread_pool_first_slot_release_future_ptr{nullptr};
@@ -227,6 +239,37 @@ int blocking_inbound_hook(void*, int, void*, size_t) {
 }
 
 } // namespace
+
+TEST_F(CommInboundTest, WriteMessageBuffersDirectlyOrRoutesThroughOutboundHook) {
+    async_runtime_t* runtime = async_runtime_init(this);
+    ASSERT_NE(runtime, nullptr);
+    const int slot = add_memory_comm(0);
+    ASSERT_NE(slot, -1);
+
+    char direct[] = "direct";
+    constexpr int from_slot = 7;
+    comm_write_message(from_slot, slot, direct, sizeof(direct) - 1);
+    comm_flush(runtime, slot);
+    std::array<char, 16> output{};
+    ASSERT_EQ(BIO_read(comm_abstract_get(slot)->wbio, output.data(), static_cast<int>(output.size())), 6);
+    EXPECT_EQ(std::string(output.data(), 6), "direct");
+
+    outbound_hook_slot = -1;
+    outbound_hook_from_slot = -1;
+    outbound_hook_message.clear();
+    ASSERT_TRUE(mudmux_register_hook(HOOK_MESSAGE_OUTBOUND, rewrite_outbound_message));
+    char hooked[] = "hello";
+    comm_write_message(from_slot, slot, hooked, sizeof(hooked) - 1);
+    EXPECT_EQ(outbound_hook_from_slot, from_slot);
+    EXPECT_EQ(outbound_hook_slot, slot);
+    EXPECT_EQ(outbound_hook_message, "hello");
+    EXPECT_EQ(std::string(hooked, sizeof(hooked) - 1), "hello");
+
+    comm_flush(runtime, slot);
+    ASSERT_EQ(BIO_read(comm_abstract_get(slot)->wbio, output.data(), static_cast<int>(output.size())), 5);
+    EXPECT_EQ(std::string(output.data(), 5), "hello");
+    async_runtime_deinit(runtime);
+}
 
 TEST_F(CommInboundTest, RefillInboundBuffers) {
     async_runtime_t* runtime = async_runtime_init(this);

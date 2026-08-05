@@ -5,6 +5,8 @@
 
 #include "async/async_runtime.h"
 
+extern "C" void comm_write_message (int from_slot, int to_slot, const void *buf, size_t len);
+
 extern "C" void comm_buffered_write (int slot, const void *buf, size_t len);
 void comm_buffered_write_comm (comm_abstract_ptr& comm, const void *buf, size_t len);
 /** Queue already-framed transport bytes (used for WebSocket control frames). */

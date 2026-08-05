@@ -17,6 +17,15 @@ The design goal is simple:
 Today, `comm_buffered_write(slot, buf, len)` appends plaintext bytes to a per-slot outbound queue.
 `comm_flush()` later drains that queue to the slot's write BIO.
 
+`comm_write_message(from_slot, to_slot, buf, len)` is the logic-layer message path. If a
+`HOOK_MESSAGE_OUTBOUND` callback is registered, it receives an immutable copy
+of the message and a `msg` value with `from_slot` in its high 16 bits and
+`to_slot` in its low 16 bits. In relaxed mode, the copied payload may be queued
+for the destination slot. The hook is responsible for sending the resulting
+bytes (normally with `comm_buffered_write(to_slot, ...)`).
+Without that hook, `comm_write_message` directly calls `comm_buffered_write` for
+the destination slot.
+
 That means the current buffering policy is:
 
 - application code owns plaintext buffering

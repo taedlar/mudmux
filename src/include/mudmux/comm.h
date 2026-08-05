@@ -76,6 +76,13 @@ typedef struct mudmux_comm_api_s {
     void (*enable_prompt)(int slot, bool enable);
     bool (*enable_virtual_terminal)(int slot);
     void (*enable_tls)(int slot);
+    /**
+     * Deliver a message from from_slot to to_slot through HOOK_MESSAGE_OUTBOUND,
+     * or buffer it directly to to_slot when no outbound hook is registered.
+     * The hook's msg value packs from_slot in the high 16 bits and to_slot in
+     * the low 16 bits.
+     */
+    void (*write_message)(int from_slot, int to_slot, const void *buf, size_t len);
 } mudmux_comm_api_v1_t;
 
 #if !defined(MUDMUX_STATIC_DEFINE) && !defined(mudmux_EXPORTS)
@@ -96,6 +103,7 @@ typedef struct mudmux_comm_api_s {
 #define comm_enable_websocket           mudmux_comm_api_v1->enable_websocket
 #define comm_enable_virtual_terminal    mudmux_comm_api_v1->enable_virtual_terminal
 #define comm_enable_tls                 mudmux_comm_api_v1->enable_tls
+#define comm_write_message              mudmux_comm_api_v1->write_message
 #endif
 
 #ifdef __cplusplus
