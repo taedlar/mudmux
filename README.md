@@ -53,18 +53,39 @@ ctest --preset units-linux-gcc
 
 The [chatroom](examples/chatroom/) example server provides a simple demonstration for using `mudmux` to create a chatroom server.
 
-The example enables both TELNET and TLS/SSL in its connection hook function:
-```c++
-comm_enable_telnet(slot);
-comm_enable_tls(slot);
+Select the network transport with `--transport` (the default is `tls-telnet`,
+which preserves the original example behaviour):
+
+| Value | Protocol |
+| --- | --- |
+| `plaintext` | Plain TCP |
+| `telnet` | TELNET over TCP |
+| `tls-telnet` | TLS + TELNET |
+| `ws` / `wss` | WebSocket over TCP / TLS |
+| `ws-telnet` / `wss-telnet` | WebSocket with the TELNET subprotocol, over TCP / TLS |
+
+TLS variants require the certificate and private-key settings in `mud.conf`.
+
+To run a TLS variant, prepare a server certificate and private key (using
+`openssl`, for example) and configure them in `mud.conf`.
+
+For local development, [`mkcert`](https://github.com/FiloSottile/mkcert) can
+create a certificate trusted by the local machine. From the directory that
+contains `mud.conf`, run:
+
+```bash
+mkcert -install
+mkcert -cert-file cert.pem -key-file key.pem localhost 127.0.0.1 ::1
 ```
 
-To run the example, you'll need to prepare a server certificate and the private key (using `openssl`, for example) and setup in the configuration file `mud.conf`.
+On Windows, import the `rootCA.pem` from the directory printed by
+`mkcert -CAROOT` into the OS **Trusted Root Certification Authorities** store
+so browsers trust the locally generated `wss://` certificate.
 
 You also need a telnet client with SSL support (on Ubuntu: `sudo apt-get install telnet-ssl`):
 ```bash
 # start the example chatroom server
-$ chatroom -f mud.conf
+$ chatroom -f mud.conf --transport tls-telnet
 
 # then, in another terminal, connect to the chatroom server
 $ telnet -zssl localhost 4000
@@ -83,3 +104,22 @@ You can also use slash commands like /help, /quit, etc. to interact with the cha
 Connection closed by foreign host.
 ```
 
+### WebSocket client
+
+The browser client at [`examples/websocket/index.html`](examples/websocket/index.html)
+uses xterm.js and requests the TELNET WebSocket subprotocol. Start chatroom with
+one of the WebSocket TELNET transports:
+
+```bash
+# Plain WebSocket
+chatroom -f mud.conf --transport ws-telnet
+
+# Or WebSocket over TLS (uses the certificate and key configured in mud.conf)
+chatroom -f mud.conf --transport wss-telnet
+```
+
+Open `examples/websocket/index.html` directly in a browser, choose the matching
+transport, and connect to
+`ws://localhost:4000/` or `wss://localhost:4000/`. The `wss-telnet` option
+requires the browser to trust the configured certificate; the `mkcert` commands
+above set this up for local development.

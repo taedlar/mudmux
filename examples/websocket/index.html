@@ -23,16 +23,23 @@
   <p>
     Connect to a mudmux WebSocket endpoint, then type directly into the terminal.
     Each terminal key event is sent in its own binary WebSocket frame. Line mode is assembled by mudmux; character mode is delivered immediately.
-    The chatroom example enables TLS, so its default endpoint uses <code>wss://</code>.
+    Start chatroom with <code>--transport ws-telnet</code> or
+    <code>--transport wss-telnet</code>. This client requests the negotiated
+    TELNET subprotocol required by both variants.
   </p>
 
   <fieldset>
+    <label>Chatroom transport
+      <select id="transport">
+        <option value="ws-telnet">ws-telnet (ws://)</option>
+        <option value="wss-telnet" selected>wss-telnet (wss://)</option>
+      </select>
+    </label>
     <label>WebSocket URL
       <input id="url" value="wss://localhost:4000/" spellcheck="false">
     </label>
-    <label>Requested subprotocol
+    <label>TELNET subprotocol
       <select id="protocol">
-        <option value="">None</option>
         <option value="telnet.ietf.org" selected>telnet.ietf.org</option>
         <option value="telnet.mudstandards.org">telnet.mudstandards.org</option>
       </select>
@@ -103,6 +110,15 @@
       };
       const telnetEnabled = () => socket?.protocol === "telnet.ietf.org"
         || socket?.protocol === "telnet.mudstandards.org";
+      const updateUrlScheme = () => {
+        try {
+          const url = new URL($("url").value);
+          url.protocol = $("transport").value === "wss-telnet" ? "wss:" : "ws:";
+          $("url").value = url.toString();
+        } catch (_) {
+          event("Enter a valid WebSocket URL before selecting a transport");
+        }
+      };
       const sendTelnetCommand = (command, option) => sendBytes(new Uint8Array([IAC, command, option]));
       const sendApplicationInput = (text) => {
         const bytes = encoder.encode(text);
@@ -216,6 +232,7 @@
       };
 
       terminal?.onData(handleTerminalInput);
+      $("transport").addEventListener("change", updateUrlScheme);
       window.addEventListener('resize', fitTerminal);
       requestAnimationFrame(() => {
         fitTerminal();
@@ -240,6 +257,11 @@
         telnet.subnegotiation = [];
         $("status").textContent = "Connecting…";
         socket.addEventListener("open", () => {
+          if (!telnetEnabled()) {
+            event("The server did not select a TELNET subprotocol; use --transport ws-telnet or wss-telnet");
+            socket.close(1002, "TELNET subprotocol required");
+            return;
+          }
           setConnected(true, `Connected${socket.protocol ? ` (${socket.protocol})` : ""}`);
           event(`Connected; selected protocol: ${socket.protocol || "none"}`);
           fitTerminal();

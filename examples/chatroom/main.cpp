@@ -23,14 +23,64 @@
 static void sigint_handler (int signal);
 static void process_command_line (int argc, char* argv[]);
 
+enum class Transport {
+    Plaintext,
+    Telnet,
+    TlsTelnet,
+    WebSocket,
+    SecureWebSocket,
+    WebSocketTelnet,
+    SecureWebSocketTelnet,
+};
+
+static Transport selected_transport = Transport::TlsTelnet;
+
+static bool configure_transport (int slot) {
+    switch (selected_transport) {
+    case Transport::Plaintext:
+        return true;
+    case Transport::Telnet:
+        comm_enable_telnet (slot);
+        return true;
+    case Transport::TlsTelnet:
+        comm_enable_tls (slot);
+        comm_enable_telnet (slot);
+        return true;
+    case Transport::WebSocket:
+        return comm_enable_websocket (slot, nullptr);
+    case Transport::SecureWebSocket:
+        comm_enable_tls (slot);
+        return comm_enable_websocket (slot, nullptr);
+    case Transport::WebSocketTelnet:
+        return comm_enable_websocket (slot, "telnet.ietf.org, telnet.mudstandards.org");
+    case Transport::SecureWebSocketTelnet:
+        comm_enable_tls (slot);
+        return comm_enable_websocket (slot, "telnet.ietf.org, telnet.mudstandards.org");
+    }
+    return false;
+}
+
+static bool parse_transport (const std::string& name, Transport& transport) {
+    if (name == "plaintext") transport = Transport::Plaintext;
+    else if (name == "telnet") transport = Transport::Telnet;
+    else if (name == "tls-telnet") transport = Transport::TlsTelnet;
+    else if (name == "ws") transport = Transport::WebSocket;
+    else if (name == "wss") transport = Transport::SecureWebSocket;
+    else if (name == "ws-telnet") transport = Transport::WebSocketTelnet;
+    else if (name == "wss-telnet") transport = Transport::SecureWebSocketTelnet;
+    else return false;
+    return true;
+}
+
 static int on_connect (void*, int slot, void* data, size_t len) {
     std::string entry_name{static_cast<const char*>(data), len};
     SPDLOG_INFO ("New connection on slot {} from entry '{}'", slot, entry_name);
     auto user = User::connect(slot);
     if (entry_name != "-") {
-        comm_enable_tls (slot); // enable TLS for secure connections
-        comm_enable_telnet (slot); // enable TELNET for non-console connections
-        // comm_enable_websocket (slot, "telnet.ietf.org, telnet.mudstandards.org"); // enable WebSocket for web clients
+        if (!configure_transport(slot)) {
+            SPDLOG_ERROR ("failed to enable selected transport on slot {}", slot);
+            return -1;
+        }
     }
     comm_enable_virtual_terminal (slot); // enable ANSI/VT100 processing for console and TELNET connections
     comm_enable_prompt (slot, true); // enable prompt for console user
@@ -109,6 +159,8 @@ static void process_command_line (int argc, char* argv[]) {
         .help("specify input file (default: stdin)");
     program.add_argument("-o", "--output").metavar("FILE").default_value(std::string("stdout"))
         .help("specify output file (default: stdout)");
+    program.add_argument("-t", "--transport").metavar("TYPE").default_value(std::string("tls-telnet"))
+        .help("network transport: plaintext, telnet, tls-telnet, ws, wss, ws-telnet, or wss-telnet");
     program.add_argument("-V", "--verbose").default_value(false).implicit_value(true).nargs(0)
         .action([&](const auto & /*unused*/) {
             if (log_level > spdlog::level::trace)
@@ -131,6 +183,13 @@ static void process_command_line (int argc, char* argv[]) {
     if (program.get<bool>("--version")) {
         std::cout << "1.0" << std::endl;
         std::exit(EXIT_SUCCESS);
+    }
+
+    const std::string transport_name = program.get<std::string>("--transport");
+    if (!parse_transport(transport_name, selected_transport)) {
+        std::cerr << "invalid transport '" << transport_name
+                  << "' (expected plaintext, telnet, tls-telnet, ws, wss, ws-telnet, or wss-telnet)" << std::endl;
+        std::exit(EXIT_FAILURE);
     }
 
     // call mudmux_init() to process configuration file (or use defaults if no file is specified)
