@@ -8,6 +8,8 @@
 #include <cstdlib>
 #include <cstdint>
 #include <filesystem>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -46,6 +48,17 @@ static std::vector<std::string> accept_names; // array of names for BIO_set_acce
 static std::filesystem::path server_certificate_path; // path to server certificate file (PEM format)
 static std::filesystem::path server_private_key_path; // path to server private key file (PEM format)
 
+struct event_registration_t {
+    async_event_t* event;
+    mudmux_hook_func_t hook_func;
+};
+
+static std::mutex event_registrations_mutex;
+static std::vector<std::unique_ptr<event_registration_t>> event_registrations;
+static async_event_t timer_event;
+static bool timer_event_initialized{false};
+static bool timer_event_registered{false};
+
 static bool comm_api_thread_guard(const char* api_name) {
     if (mud_logic_thread_id == std::thread::id())
         return true; // logic thread not bound yet (before mudmux_run)
@@ -78,7 +91,7 @@ static void init_async_api (void) {
     async_api.event_destroy = async_event_destroy;
     async_api.event_set = async_event_set;
     async_api.event_reset = async_event_reset;
-    // async_api.event_wait = async_event_wait;
+    async_api.event_wait = async_event_wait;
     async_api.event_get_wait_handle = async_event_get_wait_handle;
 
     mudmux_async_api_v1 = &async_api; // set global pointer to initialized struct
@@ -163,6 +176,18 @@ MUDMUX_EXPORT bool mudmux_init (const char* config_yaml) {
     mudmux_execution_configure(1);
     init_async_api();
     init_comm_api();
+    if (!timer_event_initialized) {
+        if (!async_event_init(&timer_event, true, false)) {
+            SPDLOG_ERROR("failed to initialize timer event");
+            return false;
+        }
+        timer_event_initialized = true;
+    }
+    if (!timer_event_registered) {
+        std::lock_guard<std::mutex> lock(event_registrations_mutex);
+        event_registrations.emplace_back(std::make_unique<event_registration_t>(event_registration_t{&timer_event, nullptr}));
+        timer_event_registered = true;
+    }
     try {
         YAML::Node config = YAML::Load (config_yaml ? config_yaml : "{\"transport\":{\"console\":false}}");
         const YAML::Node& transport = config["transport"];
@@ -209,9 +234,65 @@ MUDMUX_EXPORT void mudmux_deinit (void) {
     mud_logic_thread_id = std::thread::id();
     mudmux_execution_configure(1);
     accept_names.clear();
+    {
+        std::lock_guard<std::mutex> lock(event_registrations_mutex);
+        event_registrations.clear();
+    }
+    timer_event_registered = false;
+    if (timer_event_initialized) {
+        async_event_destroy(&timer_event);
+        timer_event_initialized = false;
+    }
     memset(mudmux_comm_api_v1, 0, sizeof(mudmux_comm_api_v1_t));
     memset(mudmux_async_api_v1, 0, sizeof(mudmux_async_api_v1_t));
     comm_ssl_deinit();
+}
+
+MUDMUX_EXPORT bool mudmux_register_event(async_event_t* event, mudmux_hook_func_t hook_func) {
+    if (!event || !hook_func || is_running.load()) {
+        SPDLOG_ERROR("mudmux_register_event() requires an initialized event and must be called before mudmux_run()");
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(event_registrations_mutex);
+    for (const auto& registration : event_registrations) {
+        if (registration->event == event) {
+            SPDLOG_ERROR("mudmux_register_event() called more than once for the same event");
+            return false;
+        }
+    }
+    event_registrations.emplace_back(std::make_unique<event_registration_t>(event_registration_t{event, hook_func}));
+    return true;
+}
+
+MUDMUX_EXPORT async_event_t* mudmux_get_timer_event(void) {
+    return timer_event_initialized ? &timer_event : nullptr;
+}
+
+MUDMUX_EXPORT bool mudmux_trigger_timer(void) {
+    if (!timer_event_initialized)
+        return false;
+    async_event_set(&timer_event);
+    return true;
+}
+
+static event_registration_t* find_event_registration(void* context) {
+    std::lock_guard<std::mutex> lock(event_registrations_mutex);
+    for (const auto& registration : event_registrations) {
+        if (registration.get() == context)
+            return registration.get();
+    }
+    return nullptr;
+}
+
+static bool register_runtime_events(async_runtime_t* runtime) {
+    std::lock_guard<std::mutex> lock(event_registrations_mutex);
+    for (const auto& registration : event_registrations) {
+        if (async_runtime_add_event(runtime, registration->event, registration.get()) < 0) {
+            SPDLOG_ERROR("failed to register an async event with the runtime");
+            return false;
+        }
+    }
+    return true;
 }
 
 MUDMUX_EXPORT int mudmux_run (void* context) {
@@ -233,6 +314,9 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
             return EXIT_FAILURE;
         }
     }
+
+    if (success)
+        success = register_runtime_events(runtime);
 
     if (success) {
         if (enable_console || enable_standard_input) { // console input is enabled, initialize console worker
@@ -305,6 +389,18 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
         // Process I/O events from transports (non-blocking)
         for (int i = 0; i < num_events; ++i) {
             auto& event = events[i];
+
+            if (event_registration_t* registration = find_event_registration(event.context)) {
+                // Reset before dispatch so a signal delivered while the hook is
+                // running schedules another invocation instead of being lost.
+                async_event_reset(registration->event);
+                mudmux_hook_func_t hook_func = registration->hook_func
+                    ? registration->hook_func
+                    : mudmux_get_registered_hook(HOOK_TIMER);
+                if (hook_func && !mudmux_execution_dispatch_event(hook_func, async_runtime_get_context(runtime)))
+                    SPDLOG_WARN("failed to dispatch async event hook");
+                continue;
+            }
 
             if (!event.context) {
                 // completion events: we always drain completion queue before processing

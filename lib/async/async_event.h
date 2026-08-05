@@ -20,11 +20,6 @@
  * Use this to synchronize main threads and worker threads. The waitable handle can be integrated
  * with I/O multiplexing APIs (poll, select, epoll, kqueue) for event-driven programming.
  */
-typedef struct async_event_s {
-    /* Opaque storage sized for the platform-specific implementation */
-    uint64_t _opaque[20];
-} async_event_t;
-
 /**
  * Initialize an event
  * @param manual_reset If true, event stays signaled until reset; if false, auto-resets after one wait

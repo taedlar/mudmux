@@ -2,6 +2,8 @@
 #define MUDMUX_MUDMUX_H
 
 #include "mudmux_export.h"
+#include "mudmux/async.h"
+#include "mudmux/hooks.h"
 
 /* In-process APIs for hosted MUD servers */
 
@@ -40,6 +42,19 @@ MUDMUX_EXPORT void mudmux_enable_console (bool enable);
  * @return true on success, false on failure.
  */
 MUDMUX_EXPORT bool mudmux_init (const char* config_yaml);
+
+/**
+ * Register a manual or auto-reset async event.  The event is watched by
+ * mudmux_run(); an observed signal is reset before hook_func is invoked. The event
+ * must remain initialized until mudmux_deinit() returns.
+ */
+MUDMUX_EXPORT bool mudmux_register_event(async_event_t* event, mudmux_hook_func_t hook_func);
+
+/** Return mudmux's initialized timer event; setting it invokes HOOK_TIMER. */
+MUDMUX_EXPORT async_event_t* mudmux_get_timer_event(void);
+
+/** Signal mudmux's timer event, causing HOOK_TIMER to be dispatched. */
+MUDMUX_EXPORT bool mudmux_trigger_timer(void);
 
 /**
  * @brief Deinitialize the mudmux server library.

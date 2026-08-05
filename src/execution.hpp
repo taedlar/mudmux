@@ -19,6 +19,9 @@ mudmux_determinism_mode_t mudmux_execution_mode();
 const char* mudmux_execution_mode_name();
 bool mudmux_execution_is_worker_thread();
 
+/** Dispatch a non-slot event hook.  Relaxed mode serializes all event hooks. */
+bool mudmux_execution_dispatch_event(mudmux_hook_func_t hook_func, void* ctx);
+
 /** True while the slot has its one permitted relaxed-mode hook in flight. */
 bool mudmux_execution_slot_busy(int slot);
 
