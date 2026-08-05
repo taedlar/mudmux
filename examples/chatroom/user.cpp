@@ -96,9 +96,10 @@ void User::dispatchInboundMessage(const std::string& message) {
             // Handle regular chat messages
             write_slot_text(comm_slot, "You said: " + message + "\r\n"); // echo the message back to the user
             // Broadcast the message to all other connected users
+            std::string msg = username + " says: " + message + "\r\n";
             for (const auto& user_ptr : User::snapshot()) {
                 if (user_ptr && user_ptr->getState() == UserState::LoggedIn && user_ptr->comm_slot != comm_slot) {
-                    write_slot_text(user_ptr->comm_slot, username + " says: " + message + "\r\n"); // broadcast the message to other users
+                    comm_write_message(comm_slot, user_ptr->comm_slot, msg.data(), msg.size()); // broadcast the message to other users
                 }
             }
         }

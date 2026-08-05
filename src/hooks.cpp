@@ -89,5 +89,9 @@ mudmux_dispatch_result_t mudmux_dispatch_hook_after(
     // request targeting another slot is an explicit lifecycle/action request;
     // retain it in that target slot's bounded FIFO after the active hook.
     const bool allow_pending = hook_type != HOOK_MESSAGE_INBOUND;
-    return mudmux_execution_enqueue_hook (hook_type, ctx, msg, data, size, completion, completion_context, allow_pending);
+    const int queue_slot = hook_type == HOOK_MESSAGE_OUTBOUND
+        ? static_cast<int>(static_cast<uint32_t>(msg) & 0xffffu)
+        : -1;
+    return mudmux_execution_enqueue_hook(
+        hook_type, ctx, msg, data, size, completion, completion_context, allow_pending, queue_slot);
 }

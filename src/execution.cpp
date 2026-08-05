@@ -212,15 +212,16 @@ bool mudmux_execution_slot_busy(int slot) {
 }
 
 mudmux_dispatch_result_t mudmux_execution_enqueue_hook(
-    enum mudmux_hook_type_t hook_type, void* ctx, int slot, const void* data, size_t size,
-    mudmux_hook_completion_t completion, void* completion_context, bool allow_pending) {
+    enum mudmux_hook_type_t hook_type, void* ctx, int msg, const void* data, size_t size,
+    mudmux_hook_completion_t completion, void* completion_context, bool allow_pending, int queue_slot) {
+    const int slot = queue_slot >= 0 ? queue_slot : msg;
     if (!execution_state.running.load() || slot < 0)
         return MUDMUX_DISPATCH_ERROR;
 
     in_flight_hook_t task;
     task.hook_type = hook_type;
     task.ctx = ctx;
-    task.msg = slot;
+    task.msg = msg;
     task.generation = comm_abstract_generation(slot);
     task.completion = completion;
     task.completion_context = completion_context;

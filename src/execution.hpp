@@ -29,20 +29,21 @@ bool mudmux_execution_slot_busy(int slot);
  * @brief Enqueue a hook for execution in the thread pool.
  * @param hook_type The type of hook to enqueue.
  * @param ctx The context pointer to pass to the hook.
- * @param slot The communication slot associated with the hook.
+ * @param msg The hook message argument.
  * @param data Optional pointer to additional data to pass to the hook.
  * @param size The size of the additional data in bytes.
  * @param completion Optional completion callback to invoke after the hook has been executed.
  * @param completion_context Optional context pointer to pass to the completion callback.
  * @param allow_pending If true, allows the hook to be queued if the slot is busy; otherwise, returns MUDMUX_DISPATCH_QUEUE_FULL if the slot is busy.
+ * @param queue_slot Slot used to preserve per-slot ordering. Defaults to msg.
  * @retval MUDMUX_DISPATCH_OK if the hook was successfully enqueued
  * @retval MUDMUX_DISPATCH_QUEUE_FULL if the slot is busy and allow_pending is false
  * @retval MUDMUX_DISPATCH_ERROR on any other error
  */
 mudmux_dispatch_result_t mudmux_execution_enqueue_hook(
-    enum mudmux_hook_type_t hook_type, void* ctx, int slot, const void* data, size_t size,
+    enum mudmux_hook_type_t hook_type, void* ctx, int msg, const void* data, size_t size,
     mudmux_hook_completion_t completion = nullptr, void* completion_context = nullptr,
-    bool allow_pending = false);
+    bool allow_pending = false, int queue_slot = -1);
 
 mudmux_dispatch_result_t mudmux_execution_enqueue_telnet_subneg(void* ctx, int slot, int option, const void* data, size_t size);
 
