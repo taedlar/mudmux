@@ -95,6 +95,29 @@ TEST(MudmuxTest, InitializationWithThreadPoolSize) {
     ASSERT_NO_FATAL_FAILURE(mudmux_deinit());
 }
 
+TEST(MudmuxTest, AsyncApiExposesQueueOperations) {
+    ASSERT_TRUE(mudmux_init(nullptr));
+    async_queue_t* queue = async_queue_create(2, 16, ASYNC_QUEUE_DROP_OLDEST);
+    ASSERT_NE(queue, nullptr);
+    EXPECT_TRUE(async_queue_is_empty(queue));
+
+    const char message[] = "event";
+    ASSERT_TRUE(async_queue_enqueue(queue, message, sizeof(message)));
+    EXPECT_TRUE(async_queue_is_full(queue) == false);
+    char received[16]{};
+    size_t received_size = 0;
+    ASSERT_TRUE(async_queue_dequeue(queue, received, sizeof(received), &received_size));
+    EXPECT_EQ(received_size, sizeof(message));
+    EXPECT_STREQ(received, message);
+
+    async_queue_stats_t stats{};
+    async_queue_get_stats(queue, &stats);
+    EXPECT_EQ(stats.enqueue_count, 1u);
+    EXPECT_EQ(stats.dequeue_count, 1u);
+    async_queue_destroy(queue);
+    mudmux_deinit();
+}
+
 TEST(MudmuxTest, EventLoopRun) {
     // Test that the mudmux event loop can run and shutdown correctly
     ASSERT_TRUE(mudmux_init(nullptr));
