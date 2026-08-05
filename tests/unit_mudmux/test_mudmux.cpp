@@ -32,9 +32,11 @@ static int write_and_close_console_on_quit(void*, int slot, void* data, size_t l
 }
 
 static std::atomic<int> timer_hook_calls{0};
+static std::atomic<int> timer_hook_msg{-1};
 
-static int shutdown_on_timer(void*, int, void*, size_t) {
+static int shutdown_on_timer(void*, int msg, void*, size_t) {
     ++timer_hook_calls;
+    timer_hook_msg.store(msg);
     mudmux_shutdown();
     return 0;
 }
@@ -44,6 +46,13 @@ static std::atomic<int> custom_event_hook_calls{0};
 static int shutdown_on_custom_event(void*, int, void*, size_t) {
     ++custom_event_hook_calls;
     mudmux_shutdown();
+    return 0;
+}
+
+static std::atomic<int> garbage_collection_hook_calls{0};
+
+static int count_garbage_collection(void*, int, void*, size_t) {
+    ++garbage_collection_hook_calls;
     return 0;
 }
 
@@ -141,6 +150,7 @@ TEST(MudmuxTest, EventLoopRun) {
 
 TEST(MudmuxTest, TimerEventDispatchesTimerHook) {
     timer_hook_calls.store(0);
+    timer_hook_msg.store(-1);
     ASSERT_TRUE(mudmux_init(nullptr));
     ASSERT_NE(mudmux_get_timer_event(), nullptr);
     ASSERT_TRUE(mudmux_register_hook(HOOK_TIMER, shutdown_on_timer));
@@ -152,11 +162,36 @@ TEST(MudmuxTest, TimerEventDispatchesTimerHook) {
     });
 
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    ASSERT_TRUE(mudmux_trigger_timer());
+    ASSERT_TRUE(mudmux_trigger_timer(42));
     ASSERT_EQ(run_result.wait_for(std::chrono::seconds(2)), std::future_status::ready);
     EXPECT_EQ(run_result.get(), EXIT_SUCCESS);
     server_thread.join();
     EXPECT_EQ(timer_hook_calls.load(), 1);
+    EXPECT_EQ(timer_hook_msg.load(), 42);
+    mudmux_deinit();
+}
+
+TEST(MudmuxTest, GarbageCollectionHookWakesIdleEventLoop) {
+    garbage_collection_hook_calls.store(0);
+    ASSERT_TRUE(mudmux_init("{\"transport\": {\"keep_alive_interval\": 1}}"));
+    ASSERT_TRUE(mudmux_register_hook(HOOK_GARBAGE_COLLECTION, count_garbage_collection));
+
+    std::promise<int> run_result_promise;
+    auto run_result = run_result_promise.get_future();
+    std::thread server_thread([&run_result_promise]() {
+        run_result_promise.set_value(mudmux_run(nullptr));
+    });
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (garbage_collection_hook_calls.load() == 0 && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    const bool garbage_collection_called = garbage_collection_hook_calls.load() > 0;
+
+    mudmux_shutdown();
+    ASSERT_EQ(run_result.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_EQ(run_result.get(), EXIT_SUCCESS);
+    server_thread.join();
+    EXPECT_TRUE(garbage_collection_called);
     mudmux_deinit();
 }
 

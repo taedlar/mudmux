@@ -1,6 +1,7 @@
 #ifndef CHATROOM_USER_HPP
 #define CHATROOM_USER_HPP
 
+#include <chrono>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -23,13 +24,15 @@ private:
     std::string username;
     int comm_slot;
     UserState state;
+    std::chrono::steady_clock::time_point idle_time;
     void (User::* inbound_handler)(const std::string& message) = nullptr;
     void (User::* prompt_handler)() = nullptr;
 
     std::unique_ptr<Menu> menu;
 
 public:
-    User(int slot) : comm_slot(slot), state(UserState::Disconnected) {}
+    User(int slot)
+        : comm_slot(slot), state(UserState::Disconnected), idle_time(std::chrono::steady_clock::now()) {}
 
     /** Create and register a user for a communication slot. */
     static std::shared_ptr<User> connect(int slot);
@@ -60,7 +63,20 @@ public:
 
     void closeComm() {
         std::lock_guard<std::recursive_mutex> lock(users_mutex);
-        comm_close(nullptr, comm_slot);
+        if (comm_slot >= 0)
+            comm_close(nullptr, comm_slot);
+    }
+
+    /** Record activity received from this user's transport. */
+    void resetIdleTime() {
+        std::lock_guard<std::recursive_mutex> lock(users_mutex);
+        idle_time = std::chrono::steady_clock::now();
+    }
+
+    /** Return whether this connected user has been inactive for at least timeout. */
+    bool isIdleFor(std::chrono::steady_clock::duration timeout) const {
+        std::lock_guard<std::recursive_mutex> lock(users_mutex);
+        return comm_slot >= 0 && std::chrono::steady_clock::now() - idle_time > timeout;
     }
 
     void setCharInput () {
