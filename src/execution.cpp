@@ -61,6 +61,9 @@ struct execution_state_t {
     std::atomic<bool> running{false};
     std::mutex slot_states_mutex;
     std::deque<slot_execution_state_t> slot_states;
+    std::mutex event_mutex;
+    std::deque<std::pair<mudmux_hook_func_t, void*>> pending_events;
+    bool event_active{false};
 };
 
 execution_state_t execution_state;
@@ -137,12 +140,60 @@ void mudmux_execution_stop() {
     execution_state.worker_pool.stop();
     std::lock_guard<std::mutex> lock(execution_state.slot_states_mutex);
     execution_state.slot_states.clear();
+    std::lock_guard<std::mutex> event_lock(execution_state.event_mutex);
+    execution_state.pending_events.clear();
+    execution_state.event_active = false;
 }
 
 int mudmux_execution_thread_pool_size() { return execution_state.thread_pool_size; }
 mudmux_determinism_mode_t mudmux_execution_mode() { return execution_state.determinism_mode; }
 const char* mudmux_execution_mode_name() { return execution_state.determinism_mode == MUDMUX_DETERMINISM_STRICT ? "strict" : "relaxed"; }
 bool mudmux_execution_is_worker_thread() { return is_execution_worker_thread; }
+
+static void run_event_task(mudmux_hook_func_t hook_func, void* ctx) {
+    worker_thread_scope_t worker_scope;
+    (void)mudmux_invoke_hook_function(hook_func, ctx, -1, nullptr, 0, true);
+
+    std::pair<mudmux_hook_func_t, void*> next;
+    bool run_next = false;
+    {
+        std::lock_guard<std::mutex> lock(execution_state.event_mutex);
+        if (!execution_state.pending_events.empty()) {
+            next = execution_state.pending_events.front();
+            execution_state.pending_events.pop_front();
+            run_next = true;
+        } else {
+            execution_state.event_active = false;
+        }
+    }
+    if (run_next && !execution_state.worker_pool.submit([next] { run_event_task(next.first, next.second); })) {
+        std::lock_guard<std::mutex> lock(execution_state.event_mutex);
+        execution_state.pending_events.clear();
+        execution_state.event_active = false;
+    }
+}
+
+bool mudmux_execution_dispatch_event(mudmux_hook_func_t hook_func, void* ctx) {
+    if (!hook_func || !execution_state.running.load())
+        return false;
+    if (execution_state.determinism_mode == MUDMUX_DETERMINISM_STRICT) {
+        (void)mudmux_invoke_hook_function(hook_func, ctx, -1, nullptr, 0, true);
+        return true;
+    }
+    {
+        std::lock_guard<std::mutex> lock(execution_state.event_mutex);
+        if (execution_state.event_active) {
+            execution_state.pending_events.emplace_back(hook_func, ctx);
+            return true;
+        }
+        execution_state.event_active = true;
+    }
+    if (execution_state.worker_pool.submit([hook_func, ctx] { run_event_task(hook_func, ctx); }))
+        return true;
+    std::lock_guard<std::mutex> lock(execution_state.event_mutex);
+    execution_state.event_active = false;
+    return false;
+}
 
 bool mudmux_execution_slot_busy(int slot) {
     if (execution_state.determinism_mode != MUDMUX_DETERMINISM_RELAXED || slot < 0)

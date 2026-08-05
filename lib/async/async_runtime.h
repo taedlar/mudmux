@@ -86,6 +86,7 @@ typedef enum console_type_e {
  * Opaque runtime handle
  */
 typedef struct async_runtime_s async_runtime_t;
+typedef struct async_event_s async_event_t;
 
 /**
  * Get the current async runtime (recently created or awaited on, or NULL if none)
@@ -163,6 +164,12 @@ int async_runtime_modify(async_runtime_t* runtime, socket_fd_t fd, uint32_t even
  * @returns 0 on success, -1 on failure
  */
 int async_runtime_remove(async_runtime_t* runtime, socket_fd_t fd);
+
+/**
+ * Register a pollable async event with the runtime.  When the event is set,
+ * its context is returned as an EVENT_READ io_event.
+ */
+int async_runtime_add_event(async_runtime_t* runtime, async_event_t* event, void* context);
 
 /**
  * Wake up a blocked async_runtime_wait() call

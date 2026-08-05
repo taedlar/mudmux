@@ -3,12 +3,14 @@
 #endif
 
 #include <gtest/gtest.h>
+#include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <future>
 #include <thread>
 
 #include "mudmux/mudmux.h"
+#include "mudmux/async.h"
 #include "mudmux/comm.h"
 #include "mudmux/hooks.h"
 
@@ -26,6 +28,22 @@ static int write_and_close_console_on_quit(void*, int slot, void* data, size_t l
         comm_buffered_write(slot, pending, strlen(pending));
         (void)comm_close(nullptr, slot);
     }
+    return 0;
+}
+
+static std::atomic<int> timer_hook_calls{0};
+
+static int shutdown_on_timer(void*, int, void*, size_t) {
+    ++timer_hook_calls;
+    mudmux_shutdown();
+    return 0;
+}
+
+static std::atomic<int> custom_event_hook_calls{0};
+
+static int shutdown_on_custom_event(void*, int, void*, size_t) {
+    ++custom_event_hook_calls;
+    mudmux_shutdown();
     return 0;
 }
 
@@ -96,6 +114,55 @@ TEST(MudmuxTest, EventLoopRun) {
     server_thread.join();
 
     ASSERT_NO_FATAL_FAILURE(mudmux_deinit());
+}
+
+TEST(MudmuxTest, TimerEventDispatchesTimerHook) {
+    timer_hook_calls.store(0);
+    ASSERT_TRUE(mudmux_init(nullptr));
+    ASSERT_NE(mudmux_get_timer_event(), nullptr);
+    ASSERT_TRUE(mudmux_register_hook(HOOK_TIMER, shutdown_on_timer));
+
+    std::promise<int> run_result_promise;
+    auto run_result = run_result_promise.get_future();
+    std::thread server_thread([&run_result_promise]() {
+        run_result_promise.set_value(mudmux_run(nullptr));
+    });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    ASSERT_TRUE(mudmux_trigger_timer());
+    ASSERT_EQ(run_result.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_EQ(run_result.get(), EXIT_SUCCESS);
+    server_thread.join();
+    EXPECT_EQ(timer_hook_calls.load(), 1);
+    mudmux_deinit();
+}
+
+TEST(MudmuxTest, CustomAsyncEventDispatchesRegisteredHook) {
+    custom_event_hook_calls.store(0);
+    ASSERT_TRUE(mudmux_init(nullptr));
+    async_event_t event{};
+    ASSERT_TRUE(async_event_init(&event, true, false));
+    ASSERT_TRUE(mudmux_register_event(&event, shutdown_on_custom_event));
+
+    std::promise<int> run_result_promise;
+    auto run_result = run_result_promise.get_future();
+    std::thread server_thread([&run_result_promise]() {
+        run_result_promise.set_value(mudmux_run(nullptr));
+    });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    async_event_set(&event);
+    const auto status = run_result.wait_for(std::chrono::seconds(2));
+    if (status != std::future_status::ready) {
+        mudmux_shutdown();
+        server_thread.join();
+        FAIL() << "custom async event did not wake mudmux_run";
+    }
+    EXPECT_EQ(run_result.get(), EXIT_SUCCESS);
+    server_thread.join();
+    EXPECT_EQ(custom_event_hook_calls.load(), 1);
+    async_event_destroy(&event);
+    mudmux_deinit();
 }
 
 TEST(MudmuxTest, EventLoopRunWithConsoleEnabled) {

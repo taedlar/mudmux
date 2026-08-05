@@ -10,6 +10,7 @@
 #endif /* HAVE_CONFIG_H */
 
 #include "async_runtime.h"
+#include "async_event.h"
 
 #include <atomic>
 #pragma comment(lib, "ws2_32.lib")
@@ -32,6 +33,7 @@
 /* Completion keys for special events */
 #define ACCEPT_COMPLETION_KEY  IOCP_COMPLETION_KEY(1)
 #define WAKEUP_COMPLETION_KEY  IOCP_COMPLETION_KEY(2)
+#define EVENT_COMPLETION_KEY   IOCP_COMPLETION_KEY(3)
 
 /**
  * IOCP context for each I/O operation
@@ -54,6 +56,13 @@ typedef struct listening_socket_s {
     void* context;
 } listening_socket_t;
 
+typedef struct event_wait_registration_s {
+    HANDLE wait_handle;
+    HANDLE event_handle;
+    async_runtime_t* runtime;
+    void* context;
+} event_wait_registration_t;
+
 /**
  * Async runtime implementation for Windows
  */
@@ -75,12 +84,22 @@ struct async_runtime_s {
     int listen_count;
     int listen_capacity;
     volatile int accept_thread_running;
+
+    event_wait_registration_t** event_waits;
+    int event_wait_count;
+    int event_wait_capacity;
     
     /* Console support */
     console_type_t console_type;
 };
 
 static std::atomic<async_runtime_t*> current_runtime(nullptr);
+
+static VOID CALLBACK event_wait_callback(PVOID parameter, BOOLEAN) {
+    event_wait_registration_t* registration = static_cast<event_wait_registration_t*>(parameter);
+    (void) PostQueuedCompletionStatus(registration->runtime->iocp_handle, 0,
+        EVENT_COMPLETION_KEY, reinterpret_cast<LPOVERLAPPED>(registration));
+}
 
 /* Context pool management */
 
@@ -203,9 +222,17 @@ extern "C" async_runtime_t* async_runtime_init(void* context) {
     
     runtime->context = context;
 
+    runtime->event_wait_capacity = 8;
+    runtime->event_waits = (event_wait_registration_t**)calloc(runtime->event_wait_capacity, sizeof(*runtime->event_waits));
+    if (!runtime->event_waits) {
+        free(runtime);
+        return NULL;
+    }
+
     /* Create IOCP with 1 concurrent thread (single-threaded model) */
     runtime->iocp_handle = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 1);
     if (!runtime->iocp_handle) {
+        free(runtime->event_waits);
         free(runtime);
         return NULL;
     }
@@ -215,6 +242,7 @@ extern "C" async_runtime_t* async_runtime_init(void* context) {
     runtime->context_pool = (iocp_context_t**) calloc(runtime->pool_capacity, sizeof(iocp_context_t*));
     if (!runtime->context_pool) {
         CloseHandle(runtime->iocp_handle);
+        free(runtime->event_waits);
         free(runtime);
         return NULL;
     }
@@ -225,6 +253,7 @@ extern "C" async_runtime_t* async_runtime_init(void* context) {
     if (!runtime->listen_sockets) {
         free(runtime->context_pool);
         CloseHandle(runtime->iocp_handle);
+        free(runtime->event_waits);
         free(runtime);
         return NULL;
     }
@@ -237,6 +266,7 @@ extern "C" async_runtime_t* async_runtime_init(void* context) {
         free(runtime->listen_sockets);
         free(runtime->context_pool);
         CloseHandle(runtime->iocp_handle);
+        free(runtime->event_waits);
         free(runtime);
         return NULL;
     }
@@ -264,6 +294,12 @@ extern "C" void async_runtime_deinit(async_runtime_t* runtime) {
     
     DeleteCriticalSection(&runtime->listen_lock);
     free(runtime->listen_sockets);
+
+    for (int i = 0; i < runtime->event_wait_count; ++i) {
+        UnregisterWaitEx(runtime->event_waits[i]->wait_handle, INVALID_HANDLE_VALUE);
+        free(runtime->event_waits[i]);
+    }
+    free(runtime->event_waits);
     
     /* Free context pool */
     for (int i = 0; i < runtime->pool_size; i++) {
@@ -363,6 +399,39 @@ extern "C" int async_runtime_remove(async_runtime_t* runtime, socket_fd_t fd) {
     return 0;
 }
 
+extern "C" int async_runtime_add_event(async_runtime_t* runtime, async_event_t* event, void* context) {
+    if (!runtime || !event)
+        return -1;
+    HANDLE event_handle = async_event_get_wait_handle(event);
+    if (!event_handle)
+        return -1;
+    event_wait_registration_t* registration = (event_wait_registration_t*)calloc(1, sizeof(*registration));
+    if (!registration)
+        return -1;
+    registration->event_handle = event_handle;
+    registration->runtime = runtime;
+    registration->context = context;
+    if (!RegisterWaitForSingleObject(&registration->wait_handle, event_handle, event_wait_callback,
+            registration, INFINITE, WT_EXECUTEDEFAULT)) {
+        free(registration);
+        return -1;
+    }
+    if (runtime->event_wait_count == runtime->event_wait_capacity) {
+        const int new_capacity = runtime->event_wait_capacity * 2;
+        event_wait_registration_t** waits = (event_wait_registration_t**)realloc(
+            runtime->event_waits, new_capacity * sizeof(*waits));
+        if (!waits) {
+            UnregisterWaitEx(registration->wait_handle, INVALID_HANDLE_VALUE);
+            free(registration);
+            return -1;
+        }
+        runtime->event_waits = waits;
+        runtime->event_wait_capacity = new_capacity;
+    }
+    runtime->event_waits[runtime->event_wait_count++] = registration;
+    return 0;
+}
+
 extern "C" int async_runtime_wakeup(async_runtime_t* runtime) {
     if (!runtime || !runtime->iocp_handle) return -1;
     
@@ -433,6 +502,18 @@ extern "C" int async_runtime_wait (async_runtime_t* runtime, io_event_t* events,
                     continue;
                 }
                 if (entries[i].lpCompletionKey == CONSOLE_COMPLETION_KEY) {
+                    continue;
+                }
+                if (entries[i].lpCompletionKey == EVENT_COMPLETION_KEY) {
+                    event_wait_registration_t* registration = reinterpret_cast<event_wait_registration_t*>(entries[i].lpOverlapped);
+                    events[event_count].fd = INVALID_SOCKET_FD;
+                    events[event_count].handle = registration->event_handle;
+                    events[event_count].completion_key = entries[i].lpCompletionKey;
+                    events[event_count].context = registration->context;
+                    events[event_count].event_type = EVENT_READ;
+                    events[event_count].bytes_transferred = 0;
+                    events[event_count].buffer = NULL;
+                    event_count++;
                     continue;
                 }
                 if (entries[i].lpCompletionKey == ASYNC_IO_ERROR_KEY) {

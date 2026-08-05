@@ -6,6 +6,8 @@
 using mudmux_hook_completion_t = void (*)(void* context, int msg);
 
 int mudmux_invoke_registered_hook(enum mudmux_hook_type_t hook_type, void* ctx, int msg, void* data, size_t size, bool flush_after);
+int mudmux_invoke_hook_function(mudmux_hook_func_t hook_func, void* ctx, int msg, void* data, size_t size, bool flush_after);
+mudmux_hook_func_t mudmux_get_registered_hook(enum mudmux_hook_type_t hook_type);
 
 mudmux_dispatch_result_t mudmux_dispatch_hook(enum mudmux_hook_type_t hook_type, void* ctx, int msg, const void* data, size_t size);
 

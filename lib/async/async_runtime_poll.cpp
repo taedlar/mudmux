@@ -12,6 +12,7 @@
 #endif /* HAVE_CONFIG_H */
 
 #include "async_runtime.h"
+#include "async_event.h"
 
 #include <poll.h>
 #include <sys/stat.h>
@@ -230,6 +231,13 @@ extern "C" int async_runtime_remove(async_runtime_t* runtime, socket_fd_t fd) {
     runtime->mappings[runtime->count].fd = -1;
     
     return 0;
+}
+
+extern "C" int async_runtime_add_event(async_runtime_t* runtime, async_event_t* event, void* context) {
+    if (!event)
+        return -1;
+    const async_wait_handle_t handle = async_event_get_wait_handle(event);
+    return handle == ASYNC_INVALID_WAIT_HANDLE ? -1 : async_runtime_add(runtime, handle, EVENT_READ, context);
 }
 
 extern "C" int async_runtime_wakeup(async_runtime_t* runtime) {

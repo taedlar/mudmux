@@ -14,6 +14,10 @@
 
 static mudmux_hook_func_t all_hooks[MAX_HOOK_TYPE] = {nullptr}; // array of hook functions
 
+mudmux_hook_func_t mudmux_get_registered_hook(enum mudmux_hook_type_t hook_type) {
+    return hook_type > 0 && hook_type < MAX_HOOK_TYPE ? all_hooks[hook_type] : nullptr;
+}
+
 int mudmux_invoke_registered_hook(enum mudmux_hook_type_t hook_type, void* ctx, int msg, void* data, size_t size, bool flush_after) {
     if (hook_type <= 0 || hook_type >= MAX_HOOK_TYPE) {
         SPDLOG_ERROR ("mudmux_invoke_hook() called with invalid hook_type");
@@ -24,6 +28,10 @@ int mudmux_invoke_registered_hook(enum mudmux_hook_type_t hook_type, void* ctx, 
     if (!hook_func)
         return 0;
 
+    return mudmux_invoke_hook_function(hook_func, ctx, msg, data, size, flush_after);
+}
+
+int mudmux_invoke_hook_function(mudmux_hook_func_t hook_func, void* ctx, int msg, void* data, size_t size, bool flush_after) {
     int ret = 0;
     if (mudmux_execution_mode() == MUDMUX_DETERMINISM_STRICT) {
         std::lock_guard<std::recursive_mutex> lock(comm_slots_mtx);
