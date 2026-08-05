@@ -6,3 +6,7 @@ out/**
 
 # CTest build directory
 Testing/**
+
+# User credentials
+cert.pem
+key.pem
