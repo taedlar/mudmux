@@ -91,12 +91,10 @@ int comm_accept (async_runtime_t* runtime, const char* accept_name) {
 	return 0;
 }
 
-static int _accept_new_comm (int slot, socket_fd_t event_fd) {
-	comm_abstract_ptr listener_comm (slot, comm_slots_mtx);
+static int _accept_new_comm (comm_abstract_ptr& listener_comm, socket_fd_t event_fd) {
 	BIO* listener_bio = listener_comm ? listener_comm->rbio : nullptr;
-	if (!listener_bio || !(listener_comm->flags & C_SOCKET_LISTENING)) {
-		SPDLOG_WARN ("slot {} is not a valid listener", slot);
-		return -1;
+	if (!listener_comm.has_rbio() || !(listener_comm->flags & C_SOCKET_LISTENING)) {
+		return -1; // invalid listener port
 	}
 
 #ifdef _WIN32
@@ -135,19 +133,19 @@ static int _accept_new_comm (int slot, socket_fd_t event_fd) {
     // Fall back to standard BIO_do_accept path
     if (BIO_do_accept (listener_bio) <= 0) {
         if (!BIO_should_retry (listener_bio)) {
-            SPDLOG_WARN ("BIO_do_accept failed for listener slot {}", slot);
+            SPDLOG_WARN ("BIO_do_accept failed for listener slot {}", listener_comm.slot());
         }
         return -1;
     }
 
     BIO* accepted_bio = BIO_pop (listener_bio);
     if (!accepted_bio) {
-        SPDLOG_WARN ("BIO_pop failed for listener slot {}", slot);
+        SPDLOG_WARN ("BIO_pop failed for listener slot {}", listener_comm.slot());
         return -1;
     }
 	socket_fd_t accepted_fd {INVALID_SOCKET_FD};
 	if (!comm_bio_get_socket_fd(accepted_bio, &accepted_fd) || !set_socket_nonblocking(accepted_fd)) {
-		SPDLOG_ERROR ("failed to set accepted socket non-blocking on listener slot {}", slot);
+		SPDLOG_ERROR ("failed to set accepted socket non-blocking on listener slot {}", listener_comm.slot());
 		BIO_free (accepted_bio);
 		return -1;
 	}
@@ -173,25 +171,25 @@ int _async_poll_read (async_runtime_t* runtime, int slot) {
 	return async_runtime_add (runtime, fd, EVENT_READ, slot_to_context(slot));
 }
 
-int comm_process_listener_event (async_runtime_t* runtime, int listener_slot, socket_fd_t event_fd) {
-	if (!runtime || !comm_abstract_has_rbio(listener_slot)) {
+int comm_process_listener_event (async_runtime_t* runtime, comm_abstract_ptr& listener, socket_fd_t event_fd) {
+	if (!runtime || !listener.has_rbio()) {
 		SPDLOG_WARN ("invalid arguments");
 		return -1;
 	}
-	SPDLOG_DEBUG ("processing listener event on slot {} (fd={})", listener_slot, event_fd);
+	SPDLOG_DEBUG ("processing listener event on slot {} (fd={})", listener.slot(), event_fd);
 
 	// accept and register comm slot for the new connection
 #ifdef _WIN32
 	// [IOCP] Windows IOCP delivers the accepted fd directly in the event (proactive).
-	int accepted_slot = _accept_new_comm (listener_slot, event_fd);
+	int accepted_slot = _accept_new_comm (listener, event_fd);
 #else
 	// [POSIX] epoll/poll only signal readability; accept() must be called to extract fd (reactive).
 	(void)event_fd;
-	int accepted_slot = _accept_new_comm (listener_slot, INVALID_SOCKET_FD);
+	int accepted_slot = _accept_new_comm (listener, INVALID_SOCKET_FD);
 #endif
 	if (accepted_slot < 0)
 		return -1;
-	SPDLOG_INFO ("accepted new connection on listener slot {} -> new comm slot {}", listener_slot, accepted_slot);
+	SPDLOG_INFO ("accepted new connection on listener slot {} -> new comm slot {}", listener.slot(), accepted_slot);
 
 	// validate accepted socket_fd_t
 	if (_async_poll_read (runtime, accepted_slot) < 0) {
@@ -217,7 +215,7 @@ int comm_process_listener_event (async_runtime_t* runtime, int listener_slot, so
 	}
 #endif
 
-	comm_invoke_connect (runtime, accepted_slot, listener_slot);
+	comm_invoke_connect (runtime, accepted_slot, listener.slot());
 
 	return accepted_slot;
 }

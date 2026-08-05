@@ -34,6 +34,9 @@ using namespace testing;
 
 static std::atomic_bool stdin_hook_called{false};
 static std::promise<std::thread::id>* prompt_thread_promise_ptr{nullptr};
+static std::promise<std::thread::id>* garbage_collection_thread_promise_ptr{nullptr};
+static std::atomic_bool garbage_collection_hook_called{false};
+static void* garbage_collection_context_ptr{nullptr};
 static std::promise<void>* connect_hook_promise_ptr{nullptr};
 static std::promise<void>* quit_close_done_promise_ptr{nullptr};
 static std::promise<void>* backpressure_first_entered_ptr{nullptr};
@@ -52,6 +55,15 @@ static int capture_prompt_thread_and_shutdown(void*, int, void*, size_t) {
     if (prompt_thread_promise_ptr)
         prompt_thread_promise_ptr->set_value(std::this_thread::get_id());
     mudmux_shutdown();
+    return 0;
+}
+
+static int capture_garbage_collection_thread_and_shutdown(void* context, int, void*, size_t) {
+    EXPECT_EQ(context, garbage_collection_context_ptr);
+    if (garbage_collection_thread_promise_ptr && !garbage_collection_hook_called.exchange(true)) {
+        garbage_collection_thread_promise_ptr->set_value(std::this_thread::get_id());
+        mudmux_shutdown();
+    }
     return 0;
 }
 
@@ -253,6 +265,81 @@ TEST(MudmuxStdinThreadPoolTest, PromptHookRunsOnWorkerThreadInRelaxedMode) {
 
     EXPECT_NE(prompt_thread_id, loop_thread_id);
     prompt_thread_promise_ptr = nullptr;
+    ASSERT_NO_FATAL_FAILURE(mudmux_deinit());
+}
+
+TEST(MudmuxStdinThreadPoolTest, GarbageCollectionHookRunsOnEventLoopThreadInRelaxedMode) {
+#ifndef _WIN32
+    signal(SIGPIPE, SIG_IGN);
+#endif
+    ASSERT_TRUE(mudmux_init("{\"transport\": {\"thread_pool\": {\"size\": 2}}}"));
+    mudmux_enable_standard_input(true);
+
+#ifdef _WIN32
+    int pipefd[2] = {-1, -1};
+    int saved_stdin = _dup(_fileno(stdin));
+    HANDLE saved_stdin_handle = GetStdHandle(STD_INPUT_HANDLE);
+    ASSERT_NE(saved_stdin, -1);
+    ASSERT_EQ(_pipe(pipefd, 4096, _O_BINARY), 0);
+    ASSERT_NE(_dup2(pipefd[0], _fileno(stdin)), -1);
+    intptr_t pipe_read_handle = _get_osfhandle(pipefd[0]);
+    ASSERT_NE(pipe_read_handle, static_cast<intptr_t>(-1));
+    ASSERT_TRUE(SetStdHandle(STD_INPUT_HANDLE, reinterpret_cast<HANDLE>(pipe_read_handle)));
+#else
+    int pipefd[2] = {-1, -1};
+    int saved_stdin = dup(STDIN_FILENO);
+    ASSERT_NE(saved_stdin, -1);
+    ASSERT_EQ(pipe(pipefd), 0);
+    ASSERT_NE(dup2(pipefd[0], STDIN_FILENO), -1);
+    close(pipefd[0]);
+#endif
+
+    std::promise<std::thread::id> loop_thread_promise;
+    std::future<std::thread::id> loop_thread_future = loop_thread_promise.get_future();
+    std::promise<std::thread::id> garbage_collection_thread_promise;
+    std::future<std::thread::id> garbage_collection_thread_future = garbage_collection_thread_promise.get_future();
+    garbage_collection_thread_promise_ptr = &garbage_collection_thread_promise;
+    garbage_collection_hook_called = false;
+    int runtime_context = 0;
+    garbage_collection_context_ptr = &runtime_context;
+
+    ASSERT_TRUE(mudmux_register_hook(HOOK_GARBAGE_COLLECTION, capture_garbage_collection_thread_and_shutdown));
+
+    std::thread server_thread([&loop_thread_promise]() {
+        loop_thread_promise.set_value(std::this_thread::get_id());
+        EXPECT_EQ(mudmux_run(garbage_collection_context_ptr), EXIT_SUCCESS);
+    });
+
+    const char* test_input = "gc\n";
+#ifdef _WIN32
+    const auto test_input_len = static_cast<unsigned int>(strlen(test_input));
+    ASSERT_EQ(_write(pipefd[1], test_input, test_input_len), static_cast<int>(test_input_len));
+    _close(pipefd[1]);
+#else
+    ASSERT_EQ(write(pipefd[1], test_input, strlen(test_input)), static_cast<ssize_t>(strlen(test_input)));
+    close(pipefd[1]);
+#endif
+
+    const bool garbage_collection_called =
+        garbage_collection_thread_future.wait_for(std::chrono::seconds(2)) == std::future_status::ready;
+    if (!garbage_collection_called)
+        mudmux_shutdown();
+    server_thread.join();
+
+#ifdef _WIN32
+    ASSERT_TRUE(SetStdHandle(STD_INPUT_HANDLE, saved_stdin_handle));
+    ASSERT_NE(_dup2(saved_stdin, _fileno(stdin)), -1);
+    _close(saved_stdin);
+    _close(pipefd[0]);
+#else
+    ASSERT_NE(dup2(saved_stdin, STDIN_FILENO), -1);
+    close(saved_stdin);
+#endif
+
+    garbage_collection_thread_promise_ptr = nullptr;
+    garbage_collection_context_ptr = nullptr;
+    ASSERT_TRUE(garbage_collection_called);
+    EXPECT_EQ(garbage_collection_thread_future.get(), loop_thread_future.get());
     ASSERT_NO_FATAL_FAILURE(mudmux_deinit());
 }
 

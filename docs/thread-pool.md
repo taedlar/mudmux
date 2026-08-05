@@ -26,8 +26,8 @@ Rules:
 
 mudmux exposes two determinism modes:
 
-- strict: selected when thread_pool.size equals 1
-- relaxed: selected when thread_pool.size is greater than 1
+- **strict**: selected when thread_pool.size equals 1
+- **relaxed**: selected when thread_pool.size is greater than 1
 
 In strict mode, behavior remains equivalent to single-thread event-loop semantics.
 In relaxed mode, hooks may run concurrently, with strict FIFO maintained per slot.
@@ -62,7 +62,7 @@ This keeps subneg delivery ordered while avoiding unbounded queue growth.
 
 ## Hook Dispatch Policy
 
-Asynchronous dispatch in relaxed mode is enabled for:
+Asynchronous dispatch in relaxed mode is enabled for slot-bounded hook functions:
 
 - HOOK_CONNECT
 - HOOK_DISCONNECT
@@ -72,13 +72,13 @@ Asynchronous dispatch in relaxed mode is enabled for:
 
 Synchronous behavior is retained in strict mode.
 
-## Public Comm API Threading Contract
+## Comm API Threading Contract
 
-Public comm APIs are slot-based and exposed via mudmux_comm_api_v1.
+Communication APIs for logic layer are slot-based and exposed in header `mudmux/comm.h`.
 Calls are allowed from:
 
-- the logic thread
-- worker threads owned by the execution pool
+- the main event loop thread
+- any additional worker threads owned by the execution pool
 
 Calls from other threads are rejected by the thread guard.
 

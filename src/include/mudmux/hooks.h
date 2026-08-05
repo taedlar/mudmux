@@ -15,6 +15,8 @@ enum mudmux_hook_type_t {
     HOOK_MESSAGE_OUTBOUND = 4,
     HOOK_PROMPT = 5,
     HOOK_TELNET_SUBNEG = 6,
+    HOOK_TIMER = 7,
+    HOOK_GARBAGE_COLLECTION = 8,
     MAX_HOOK_TYPE
 };
 

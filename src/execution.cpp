@@ -233,10 +233,12 @@ bool mudmux_execution_should_dispatch_async(enum mudmux_hook_type_t hook_type) {
     case HOOK_CONNECT:
     case HOOK_DISCONNECT:
     case HOOK_MESSAGE_INBOUND:
+    case HOOK_MESSAGE_OUTBOUND:
     case HOOK_PROMPT:
     case HOOK_TELNET_SUBNEG:
         return true;
-    case HOOK_MESSAGE_OUTBOUND:
+    case HOOK_TIMER:
+    case HOOK_GARBAGE_COLLECTION:
     case MAX_HOOK_TYPE:
     default:
         return false;
