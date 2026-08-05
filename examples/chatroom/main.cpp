@@ -1,5 +1,6 @@
 // main.cpp
 
+#include <chrono>
 #include <csignal>
 #include <iostream>
 #include <fstream>
@@ -91,8 +92,21 @@ static int on_connect (void*, int slot, void* data, size_t len) {
 
 static int on_message_inbound (void*, int slot, void* data, size_t size) {
     std::string message(static_cast<char*>(data), size);
-    if (auto user = User::find(slot))
+    if (auto user = User::find(slot)) {
+        user->resetIdleTime();
         user->dispatchInboundMessage(message);
+    }
+    return 0;
+}
+
+static int on_garbage_collection (void*, int, void*, size_t) {
+    constexpr auto idle_timeout = std::chrono::minutes(1);
+    for (const auto& user : User::snapshot()) {
+        if (user && user->isIdleFor(idle_timeout)) {
+            SPDLOG_INFO("Disconnecting inactive user on slot {}", user->getCommSlot());
+            user->closeComm();
+        }
+    }
     return 0;
 }
 
@@ -129,6 +143,7 @@ int main (int argc, char* argv[]) {
     mudmux_register_hook (HOOK_MESSAGE_INBOUND, on_message_inbound);
     mudmux_register_hook (HOOK_DISCONNECT, on_disconnect);
     mudmux_register_hook (HOOK_PROMPT, on_prompt);
+    mudmux_register_hook (HOOK_GARBAGE_COLLECTION, on_garbage_collection);
 
     // initialize chatroom command handlers
     Command::initialize();

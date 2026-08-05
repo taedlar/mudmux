@@ -59,6 +59,8 @@ static std::vector<std::unique_ptr<event_registration_t>> event_registrations;
 static async_event_t timer_event;
 static bool timer_event_initialized{false};
 static bool timer_event_registered{false};
+static std::atomic<int> timer_event_msg{-1};
+static int keep_alive_interval_seconds{20};
 
 static bool comm_api_thread_guard(const char* api_name) {
     if (mud_logic_thread_id == std::thread::id())
@@ -183,6 +185,8 @@ MUDMUX_EXPORT bool mudmux_init (const char* config_yaml) {
         return false;
     }
     mudmux_execution_configure(1);
+    keep_alive_interval_seconds = 20;
+    timer_event_msg.store(-1, std::memory_order_relaxed);
     init_async_api();
     init_comm_api();
     if (!timer_event_initialized) {
@@ -216,6 +220,14 @@ MUDMUX_EXPORT bool mudmux_init (const char* config_yaml) {
                 return false;
             }
             mudmux_execution_configure(thread_pool_size);
+        }
+        if (transport["keep_alive_interval"].IsDefined()) {
+            const int interval = transport["keep_alive_interval"].as<int>();
+            if (interval < 1) {
+                SPDLOG_ERROR("transport.keep_alive_interval must be at least 1 second");
+                return false;
+            }
+            keep_alive_interval_seconds = interval;
         }
         if (transport["ssl"].IsDefined()) {
             server_certificate_path = transport["ssl"]["certificate"].as<std::string>();
@@ -277,9 +289,10 @@ MUDMUX_EXPORT async_event_t* mudmux_get_timer_event(void) {
     return timer_event_initialized ? &timer_event : nullptr;
 }
 
-MUDMUX_EXPORT bool mudmux_trigger_timer(void) {
+MUDMUX_EXPORT bool mudmux_trigger_timer(int msg) {
     if (!timer_event_initialized)
         return false;
+    timer_event_msg.store(msg, std::memory_order_release);
     async_event_set(&timer_event);
     return true;
 }
@@ -376,9 +389,15 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
     SPDLOG_INFO ("===== entering event loop =====");
     io_event_t events[64];
     while (!is_shutting_down.load()) {
-        // [BLOCKING] wait for I/O events
+        // [BLOCKING] wait for I/O events, but periodically wake for registered GC.
+        timeval keep_alive_timeout{};
+        timeval* timeout = nullptr;
+        if (mudmux_get_registered_hook(HOOK_GARBAGE_COLLECTION)) {
+            keep_alive_timeout.tv_sec = keep_alive_interval_seconds;
+            timeout = &keep_alive_timeout;
+        }
         int num_events = async_runtime_wait(
-            runtime, events, sizeof(events) / sizeof(events[0]), nullptr);
+            runtime, events, sizeof(events) / sizeof(events[0]), timeout);
         if (num_events < 0) {
             SPDLOG_CRITICAL ("async_runtime_wait failed"); // TODO: initiate retry or shutdown
             break;
@@ -406,7 +425,10 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
                 mudmux_hook_func_t hook_func = registration->hook_func
                     ? registration->hook_func
                     : mudmux_get_registered_hook(HOOK_TIMER);
-                if (hook_func && !mudmux_execution_dispatch_event(hook_func, async_runtime_get_context(runtime)))
+                const int msg = registration->event == &timer_event
+                    ? timer_event_msg.exchange(-1, std::memory_order_acq_rel)
+                    : -1;
+                if (hook_func && !mudmux_execution_dispatch_event(hook_func, async_runtime_get_context(runtime), msg))
                     SPDLOG_WARN("failed to dispatch async event hook");
                 continue;
             }

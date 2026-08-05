@@ -13,11 +13,14 @@ int hook_garbage_collection(void* context, int msg, void* data, size_t size);
 
 mudmux invokes this hook once at the end of each completed event-loop
 iteration: after transport events, deferred inbound processing, and prompt
-dispatch, and before the loop advances buffered outbound writes.
+dispatch, and before the loop advances buffered outbound writes. When this
+hook is registered, mudmux also limits an otherwise-idle event-loop wait to a
+keep-alive interval, so the hook continues to run without I/O.
 
-It is not a timer. Its frequency depends on how often the event loop wakes and
-completes an iteration; applications must not assume a fixed interval or use
-one invocation as a measure of elapsed time.
+The keep-alive interval defaults to 20 seconds and is configured in
+`mudmux_init()` YAML as `transport.keep_alive_interval` (in seconds). It must
+be at least one second. I/O and other events may cause earlier invocations, so
+applications must not use one invocation as a measure of elapsed time.
 
 The hook is invoked directly, not dispatched through the execution pool. Its
 return value is ignored.
