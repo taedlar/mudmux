@@ -212,15 +212,20 @@ static void _resume_input_after_connect_hook(void*, int slot) {
 int comm_invoke_connect (async_runtime_t* runtime, int slot, int entry_slot) {
     if (!runtime)
         return -1;
-    const char* entry_name = (entry_slot == COMM_SLOT_CONSOLE) ? "-" : nullptr;
-    {
+    std::string entry_name;
+    if (entry_slot == COMM_SLOT_CONSOLE) {
+        entry_name = "-";
+    } else {
         comm_abstract_ptr comm(entry_slot, comm_slots_mtx);
-        if (comm && (comm->flags & C_SOCKET_LISTENING))
+        if (comm && (comm->flags & C_SOCKET_LISTENING)) {
             entry_name = BIO_get_accept_name(comm->rbio);
+            entry_name += ":";
+            entry_name += BIO_get_accept_port(comm->rbio);
+        }
     }
-    if (!entry_name)
+    if (entry_name.empty())
         entry_name = "unknown";
-    assert(entry_name != nullptr);
+    assert(!entry_name.empty());
     const bool await_connect_hook = mudmux_execution_should_dispatch_async(HOOK_CONNECT);
     if (await_connect_hook) {
         comm_abstract_ptr comm(slot, comm_slots_mtx);
@@ -232,8 +237,8 @@ int comm_invoke_connect (async_runtime_t* runtime, int slot, int entry_slot) {
         HOOK_CONNECT,
         async_runtime_get_context(runtime),
         slot,
-        entry_name,
-        strlen(entry_name),
+        entry_name.data(),
+        entry_name.size(),
         await_connect_hook ? _resume_input_after_connect_hook : nullptr,
         nullptr);
     if (await_connect_hook && result != MUDMUX_DISPATCH_OK) {

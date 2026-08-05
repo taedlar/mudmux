@@ -223,7 +223,10 @@ void comm_flush (async_runtime_t* runtime, int slot) {
         return; // invalid parameters
 
     // EVENT_WRITE should also drive TLS handshaking until the session is ready.
-    if (comm->ssl && !(comm->flags & C_TLS_ESTABLISHED)) {
+    // Once closing has begun, however, a failed final write may clear
+    // C_TLS_ESTABLISHED.  Do not mistake that terminal TLS state for an
+    // incomplete handshake and call SSL_do_handshake() after close_notify.
+    if (comm->ssl && !(comm->flags & C_TLS_ESTABLISHED) && !(comm->flags & C_CLOSING)) {
         int hs = comm_tls_handshake_step(runtime, slot);
         if (hs < 0) {
             if (!(comm->flags & C_CLOSING))
