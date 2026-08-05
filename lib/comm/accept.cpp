@@ -52,6 +52,13 @@ int comm_accept (async_runtime_t* runtime, const char* accept_name) {
 		return -1;
 	}
 
+	// Must be set before BIO_do_accept() creates and binds the listener socket.
+	if (BIO_set_bind_mode(listener_bio, BIO_BIND_REUSEADDR) <= 0) {
+		SPDLOG_ERROR ("BIO_set_bind_mode (SO_REUSEADDR) failed for {}", accept_name);
+		BIO_free(listener_bio);
+		return -1;
+	}
+
 	if (BIO_set_nbio_accept(listener_bio, 1) <= 0) {
 		SPDLOG_ERROR ("BIO_set_nbio_accept failed for {}", accept_name);
 		BIO_free(listener_bio);

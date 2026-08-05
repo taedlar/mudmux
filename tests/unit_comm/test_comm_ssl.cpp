@@ -458,6 +458,10 @@ TEST_F(CommSslTest, CloseWithBufferedTlsDataSurvivesPeerCloseRace) {
     EXPECT_EQ(comm->flags & C_BUFFERED_WRITE, 0u);
     EXPECT_EQ(comm->flags & C_TLS_ESTABLISHED, 0u);
 
+    // A later writable event must not restart a TLS handshake after the
+    // closing write failure cleared the established flag.
+    comm_flush(runtime, slot);
+
     EXPECT_TRUE(comm_close(runtime, slot));
     EXPECT_EQ(comm_abstract_get(slot), nullptr);
 
