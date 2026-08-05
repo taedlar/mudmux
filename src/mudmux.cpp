@@ -321,7 +321,7 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
                 }
                 SPDLOG_TRACE ("processing event for slot {} (event.fd={}, type=0x{:x})", slot, event.fd, event.event_type);
                 if (comm->flags & C_SOCKET_LISTENING) {
-                    comm_process_listener_event (runtime, slot, event.fd);
+                    comm_process_listener_event (runtime, comm, event.fd);
                     continue;
                 }
 
@@ -333,8 +333,7 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
                     // buffered as plaintext and can never reach OpenSSL.
                     // epoll/poll are level-triggered, so the read event is
                     // delivered again after the hook completion wakes us.
-                    if ((comm->flags & C_AWAITING_HOOK)
-                        || mudmux_execution_slot_busy(slot))
+                    if ((comm->flags & C_AWAITING_HOOK) || mudmux_execution_slot_busy(slot))
                         continue;
 #endif
 #ifdef _WIN32
@@ -391,6 +390,12 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
         if (comm_has_deferred_input())
             comm_resume_deferred_input(runtime);
         comm_invoke_prompt(runtime); // invoke prompt hook for all comms with C_ENABLE_PROMPT flag set
+
+        // invoke garbage collection hook before continue to next iteration of event loop
+        // typically used to implement mark-and-sweep garbage collection for scripting languages like Lua, Python, etc.
+        mudmux_invoke_registered_hook(
+            HOOK_GARBAGE_COLLECTION, async_runtime_get_context(runtime), -1, nullptr, 0, false);
+
         comm_flush_all(runtime); // advance buffered writes and TLS state in non-blocking mode
     }
     SPDLOG_INFO ("===== exited event loop =====");
