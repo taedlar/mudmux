@@ -94,7 +94,7 @@ void async_thread_pool_t::worker_loop() {
             // Keep this worker alive as its replacement so the pool remains
             // at its configured capacity.
             try {
-                SPDLOG_ERROR("worker task threw an exception; worker restarted: {}", exception.what());
+                SPDLOG_ERROR("worker task threw an uncaught exception: {}", exception.what());
             }
             catch (...) {
                 // Logging must not defeat task-fault containment.
@@ -102,7 +102,7 @@ void async_thread_pool_t::worker_loop() {
         }
         catch (...) {
             try {
-                SPDLOG_ERROR("worker task threw a non-standard exception; worker restarted");
+                SPDLOG_ERROR("worker task threw a non-standard exception");
             }
             catch (...) {
                 // Logging must not defeat task-fault containment.

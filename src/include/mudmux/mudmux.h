@@ -1,6 +1,7 @@
 #ifndef MUDMUX_MUDMUX_H
 #define MUDMUX_MUDMUX_H
 
+#include <stdbool.h>
 #include "mudmux_export.h"
 #include "mudmux/async.h"
 #include "mudmux/hooks.h"

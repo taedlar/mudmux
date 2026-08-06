@@ -156,8 +156,8 @@ extern "C" MUDMUX_EXPORT void mudmux_workers_stop() {
 
 int mudmux_workers_configured_pool_size() { return execution_state.thread_pool_size; }
 
-extern "C" MUDMUX_EXPORT int mudmux_workers_pool_size() {
-    return static_cast<int>(execution_state.worker_pool.size());
+extern "C" MUDMUX_EXPORT size_t mudmux_workers_pool_size() {
+    return execution_state.worker_pool.size();
 }
 
 mudmux_determinism_mode_t mudmux_execution_mode() { return execution_state.determinism_mode; }

@@ -1,6 +1,9 @@
 #ifndef MUDMUX_WORKERS_H
 #define MUDMUX_WORKERS_H
 
+#include <stdbool.h>
+#include <stddef.h>
+
 #include "mudmux_export.h"
 
 #ifdef __cplusplus
@@ -32,7 +35,7 @@ MUDMUX_EXPORT void mudmux_workers_stop(void);
  *
  * This returns zero after workers have been stopped.
  */
-MUDMUX_EXPORT int mudmux_workers_pool_size(void);
+MUDMUX_EXPORT size_t mudmux_workers_pool_size(void);
 
 #ifdef __cplusplus
 }

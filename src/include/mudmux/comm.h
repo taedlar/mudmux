@@ -5,6 +5,8 @@
 #include <openssl/bio.h>
 #endif
 
+#include <stdbool.h>
+
 #include "mudmux_export.h"
 #include "async.h"
 
