@@ -266,7 +266,7 @@ int comm_invoke_inbound_message (async_runtime_t* runtime, comm_abstract_ptr& co
     }
 
     comm->flags &= ~C_INVOKED_PROMPT; // reset C_INVOKED_PROMPT flag on inbound message
-    SPDLOG_DEBUG ("invoking inbound message hook for slot {} with {} bytes of data", comm.slot(), size);
+    SPDLOG_TRACE ("invoking inbound message hook for slot {} with {} bytes of data", comm.slot(), size);
     const bool await_inbound_hook = mudmux_execution_should_dispatch_async(HOOK_MESSAGE_INBOUND);
     if (await_inbound_hook) {
         comm->flags |= C_DEFERRED_INBOUND;
@@ -289,7 +289,7 @@ static int _invoke_char_input_message(async_runtime_t* runtime, comm_abstract_pt
         return -1;
 
     comm->flags &= ~C_INVOKED_PROMPT;
-    SPDLOG_DEBUG("invoking single-character inbound message hook for slot {} with {} bytes of data", comm.slot(), size);
+    SPDLOG_TRACE("invoking single-character inbound message hook for slot {} with {} bytes of data", comm.slot(), size);
     const int result = comm_invoke_inbound_message(runtime, comm, data, size);
     if (!mudmux_execution_should_dispatch_async(HOOK_MESSAGE_INBOUND))
         _resume_input_after_inbound_hook(nullptr, comm.slot());
@@ -538,7 +538,7 @@ bool comm_append_decoded_input(comm_abstract_ptr& comm, const char* src, size_t 
 static ssize_t _find_newline_and_strip (inbound_buffer_t* ibb, size_t* line_len = nullptr) {
     if (!ibb || ibb->start >= ibb->end)
         return -1;
-    SPDLOG_DEBUG ("searching for newline in inbound buffer: start={}, end={}", ibb->start, ibb->end);
+    SPDLOG_TRACE ("searching for newline in inbound buffer: start={}, end={}", ibb->start, ibb->end);
     for (size_t i = ibb->start; i < ibb->end; ++i) {
         if (ibb->buffer[i] == '\r' || ibb->buffer[i] == '\n' || ibb->buffer[i] == '\0') {
             // Accept CRLF, CRNUL, LF, NUL, and bare CR line endings.
@@ -558,7 +558,7 @@ static ssize_t _find_newline_and_strip (inbound_buffer_t* ibb, size_t* line_len 
             while (line_end > ibb->start && isspace(static_cast<unsigned char>(ibb->buffer[line_end - 1]))) {
                 ibb->buffer[--line_end] = '\0';
             }
-            SPDLOG_DEBUG ("stripped line: [{}], length={}, next_line_start={}", ibb->buffer + ibb->start, line_end - ibb->start, ret);
+            SPDLOG_TRACE ("stripped line: [{}], length={}, next_line_start={}", ibb->buffer + ibb->start, line_end - ibb->start, ret);
             if (line_len) {
                 *line_len = line_end - ibb->start; // length of stripped line
             }
@@ -585,7 +585,7 @@ static ssize_t _find_newline_and_strip (inbound_buffer_t* ibb, size_t* line_len 
 static ssize_t _find_char_input_sequence (inbound_buffer_t* ibb, uint32_t comm_flags, size_t* char_len = nullptr) {
     if (!ibb || ibb->start >= ibb->end)
         return -1;
-    SPDLOG_DEBUG ("searching for character input sequence in inbound buffer: start={}, end={}", ibb->start, ibb->end);
+    SPDLOG_TRACE ("searching for character input sequence in inbound buffer: start={}, end={}", ibb->start, ibb->end);
     if (comm_flags & C_ENABLE_ANSI) {
         size_t i = ibb->start;
         if (ibb->buffer[i] == '\x1B') { // ESC
@@ -790,7 +790,7 @@ static comm_process_result_t _comm_process_input (async_runtime_t* runtime, comm
                     break; // comm slot may have been closed by the inbound message hook
                 break; // Do not dispatch additional buffered characters before the hook re-arms char input.
             }
-            SPDLOG_DEBUG ("next_char_start={}, ibb->start={}, ibb->end={}", next_char_start, ibb->start, ibb->end);
+            SPDLOG_TRACE ("next_char_start={}, ibb->start={}, ibb->end={}", next_char_start, ibb->start, ibb->end);
             if (next_char_start < 0)
                 break; // incomplete character sequence, wait for more data
             if (static_cast<size_t>(next_char_start) < ibb->end)

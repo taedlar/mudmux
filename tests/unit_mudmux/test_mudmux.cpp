@@ -7,7 +7,9 @@
 #include <filesystem>
 #include <fstream>
 #include <future>
+#include <mutex>
 #include <thread>
+#include <vector>
 
 #include "mudmux/mudmux.h"
 #include "mudmux/async.h"
@@ -35,9 +37,20 @@ static std::atomic<int> timer_hook_calls{0};
 static std::atomic<int> timer_hook_msg{-1};
 
 static int shutdown_on_timer(void*, int msg, void*, size_t) {
-    ++timer_hook_calls;
-    timer_hook_msg.store(msg);
-    mudmux_shutdown();
+    if (msg == 42) {
+        ++timer_hook_calls;
+        timer_hook_msg.store(msg);
+        mudmux_shutdown();
+    }
+    return 0;
+}
+
+static std::mutex timer_lifecycle_mutex;
+static std::vector<int> timer_lifecycle_messages;
+
+static int record_timer_lifecycle(void*, int msg, void*, size_t) {
+    std::lock_guard<std::mutex> lock(timer_lifecycle_mutex);
+    timer_lifecycle_messages.push_back(msg);
     return 0;
 }
 
@@ -168,6 +181,31 @@ TEST(MudmuxTest, TimerEventDispatchesTimerHook) {
     server_thread.join();
     EXPECT_EQ(timer_hook_calls.load(), 1);
     EXPECT_EQ(timer_hook_msg.load(), 42);
+    mudmux_deinit();
+}
+
+TEST(MudmuxTest, TimerHookReceivesEventLoopLifecycleNotifications) {
+    {
+        std::lock_guard<std::mutex> lock(timer_lifecycle_mutex);
+        timer_lifecycle_messages.clear();
+    }
+    ASSERT_TRUE(mudmux_init(nullptr));
+    ASSERT_TRUE(mudmux_register_hook(HOOK_TIMER, record_timer_lifecycle));
+
+    std::thread server_thread([]() {
+        EXPECT_EQ(mudmux_run(nullptr), EXIT_SUCCESS);
+    });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    mudmux_shutdown();
+    server_thread.join();
+
+    {
+        std::lock_guard<std::mutex> lock(timer_lifecycle_mutex);
+        ASSERT_EQ(timer_lifecycle_messages.size(), 2u);
+        EXPECT_EQ(timer_lifecycle_messages[0], 0);
+        EXPECT_EQ(timer_lifecycle_messages[1], -1);
+    }
     mudmux_deinit();
 }
 
