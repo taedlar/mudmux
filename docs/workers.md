@@ -4,11 +4,7 @@ mudmux uses one configured thread pool for all asynchronous hook work. The
 pool supplies worker threads; the execution layer decides which hook work runs
 there and coordinates its ordering.
 
-![Worker and execution model: mudmux multiplexes shuffled transport and timer arrivals; slot queues gate HOOK_MESSAGE_INBOUND, queued HOOK_MESSAGE_OUTBOUND, HOOK_CONNECT, and HOOK_TELNET_SUBNEG work, while HOOK_TIMER callbacks remain serialized through the shared worker pool.](images/workers-execution-model.svg)
-
-In the illustration, a purple `1` marker means the slot permits one active
-hook; the green marker is the completion that releases that slot's next queued
-hook. The blue marker identifies the serialized timer lane.
+![Worker and execution model](images/workers-execution-model.svg)
 
 ## Lifecycle
 
@@ -60,8 +56,29 @@ than being decoded into another inbound message.
 
 Explicit non-inbound dispatches may use a bounded continuation queue for the
 same slot. Non-slot async events also use the pool in relaxed mode, but are
-serialized with one another. This preserves their order without consuming a
+**serialized** with one another. This preserves their order without consuming a
 slot's execution state.
+
+Per-slot continuation queue behavior in relaxed mode:
+
+| Hook type | Queued when same-slot hook is in flight? | Notes |
+| --- | --- | --- |
+| `HOOK_CONNECT` | Conditionally | Scheduler allows queueing, but normal accept flow starts with connect as the first slot hook. |
+| `HOOK_DISCONNECT` | Yes | Queued in the slot bounded FIFO when dispatch is accepted. |
+| `HOOK_MESSAGE_OUTBOUND` | Yes | Queued by `to_slot` target. |
+| `HOOK_PROMPT` | Yes | Queued in the slot bounded FIFO. |
+| `HOOK_MESSAGE_INBOUND` | No | Parser-originated inbound does not queue; it returns queue-full and parsing is deferred. |
+| `HOOK_TELNET_SUBNEG` | No | Uses dedicated dispatch path; if slot is busy it returns queue-full and parsing is deferred. |
+
+Concise `HOOK_CONNECT` ordering contract:
+
+- Connect is the slot-initialization boundary for parser and transport mode setup.
+- While connect is in flight, same-slot parser work is deferred (not queued).
+- If connect requests close, disconnect progression is serialized after connect.
+- Rare queued-connect cases are generation-checked before execution.
+
+`HOOK_TIMER` and other non-slot async events do not use a slot continuation
+queue. They run through the separate serialized event lane.
 
 The event loop remains responsible for transport reads, writes, parser
 progress, and runtime registration. Worker callbacks use the normal comm API
