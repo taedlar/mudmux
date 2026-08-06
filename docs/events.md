@@ -230,6 +230,17 @@ Only one hook is in flight for a slot; parser-originated inbound input remains
 in the transport buffers until that hook finishes. Do not rely on ordering
 between different slots, and synchronize logic-layer state shared by callbacks.
 
+### Current parser slot
+
+`mudmux_comm_api_v1->current_slot()` (normally used as
+`comm_current_slot()`) returns the callback's current communication slot. It
+is available for `HOOK_CONNECT`, `HOOK_MESSAGE_INBOUND`, `HOOK_PROMPT`, and
+`HOOK_TELNET_SUBNEG`, including when those callbacks run on relaxed-mode
+workers. It returns `-1` in every other hook, when called outside a hook, and
+for explicit `mudmux_invoke_hook()` calls. The value is thread-local and is
+restored when the callback returns; do not retain it as a substitute for the
+slot argument supplied to a hook.
+
 Registered custom events and `HOOK_TIMER` are global rather than slot-bound.
 In relaxed mode their callbacks are dispatched through the execution pool but
 are serialized with one another. `HOOK_GARBAGE_COLLECTION` remains on the

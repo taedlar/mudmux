@@ -21,6 +21,7 @@
 #include "comm/accept.hpp"
 #include "comm/abstract.hpp"
 #include "comm/console.hpp"
+#include "comm/current_slot.hpp"
 #include "comm/file_input.hpp"
 #include "comm/inbound.hpp"
 #include "comm/input_mode.hpp"
@@ -114,6 +115,7 @@ static void init_async_api (void) {
 static void init_comm_api (void) {
     static mudmux_comm_api_v1_t comm_api;
     comm_api.max_slot = comm_max_slot;
+    comm_api.current_slot = comm_current_slot;
     comm_api.add_bio = +[](BIO* rbio, BIO* wbio, int slot, uint32_t flags) -> int {
         return guarded_call<int>("add_bio", -1, comm_abstract_add_bio, rbio, wbio, slot, flags);
     };

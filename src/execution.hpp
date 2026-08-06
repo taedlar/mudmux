@@ -36,6 +36,7 @@ bool mudmux_execution_slot_busy(int slot);
  * @param completion_context Optional context pointer to pass to the completion callback.
  * @param allow_pending If true, allows the hook to be queued if the slot is busy; otherwise, returns MUDMUX_DISPATCH_QUEUE_FULL if the slot is busy.
  * @param queue_slot Slot used to preserve per-slot ordering. Defaults to msg.
+ * @param current_slot_ The current slot number, used for slot-specific hooks. Defaults to -1 (no specific slot).
  * @retval MUDMUX_DISPATCH_OK if the hook was successfully enqueued
  * @retval MUDMUX_DISPATCH_QUEUE_FULL if the slot is busy and allow_pending is false
  * @retval MUDMUX_DISPATCH_ERROR on any other error
@@ -43,7 +44,7 @@ bool mudmux_execution_slot_busy(int slot);
 mudmux_dispatch_result_t mudmux_execution_enqueue_hook(
     enum mudmux_hook_type_t hook_type, void* ctx, int msg, const void* data, size_t size,
     mudmux_hook_completion_t completion = nullptr, void* completion_context = nullptr,
-    bool allow_pending = false, int queue_slot = -1);
+    bool allow_pending = false, int queue_slot = -1, int current_slot_ = -1);
 
 mudmux_dispatch_result_t mudmux_execution_enqueue_telnet_subneg(void* ctx, int slot, int option, const void* data, size_t size);
 
