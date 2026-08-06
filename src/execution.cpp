@@ -25,6 +25,7 @@ struct in_flight_hook_t {
     enum mudmux_hook_type_t hook_type{MAX_HOOK_TYPE};
     void* ctx{nullptr};
     int msg{-1};
+    int current_slot{-1};
     uint64_t generation{0};
     std::vector<char> payload;
     mudmux_hook_completion_t completion{nullptr};
@@ -114,7 +115,8 @@ static void run_slot_task(int slot, in_flight_hook_t task) {
     // Do not invoke a hook or completion against that new connection.
     if (comm_abstract_generation(slot) == task.generation) {
         void* data = task.payload.empty() ? nullptr : task.payload.data();
-        (void)mudmux_invoke_registered_hook(task.hook_type, task.ctx, task.msg, data, task.payload.size(), false);
+        (void)mudmux_invoke_registered_hook(
+            task.hook_type, task.ctx, task.msg, data, task.payload.size(), false, task.current_slot);
         if (comm_abstract_generation(slot) == task.generation && task.completion)
             task.completion(task.completion_context, task.msg);
     }
@@ -213,7 +215,7 @@ bool mudmux_execution_slot_busy(int slot) {
 
 mudmux_dispatch_result_t mudmux_execution_enqueue_hook(
     enum mudmux_hook_type_t hook_type, void* ctx, int msg, const void* data, size_t size,
-    mudmux_hook_completion_t completion, void* completion_context, bool allow_pending, int queue_slot) {
+    mudmux_hook_completion_t completion, void* completion_context, bool allow_pending, int queue_slot, int current_slot_) {
     const int slot = queue_slot >= 0 ? queue_slot : msg;
     if (!execution_state.running.load() || slot < 0)
         return MUDMUX_DISPATCH_ERROR;
@@ -222,6 +224,7 @@ mudmux_dispatch_result_t mudmux_execution_enqueue_hook(
     task.hook_type = hook_type;
     task.ctx = ctx;
     task.msg = msg;
+    task.current_slot = current_slot_;
     task.generation = comm_abstract_generation(slot);
     task.completion = completion;
     task.completion_context = completion_context;
@@ -264,6 +267,7 @@ mudmux_dispatch_result_t mudmux_execution_enqueue_telnet_subneg(void* ctx, int s
     task.hook_type = HOOK_TELNET_SUBNEG;
     task.ctx = ctx;
     task.msg = option;
+    task.current_slot = slot;
     task.generation = comm_abstract_generation(slot);
     if (data && size) {
         task.payload.resize(size);

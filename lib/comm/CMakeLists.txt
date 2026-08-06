@@ -4,6 +4,7 @@ add_library(comm OBJECT
     abstract.cpp
     accept.cpp
     console.cpp
+    current_slot.cpp
     file_input.cpp
     input_mode.cpp
     inbound.cpp
@@ -24,6 +25,7 @@ target_sources(comm INTERFACE
         abstract.hpp
         accept.hpp
         console.hpp
+        current_slot.hpp
         file_input.hpp
         input_mode.hpp
         inbound.hpp

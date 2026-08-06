@@ -57,6 +57,11 @@ enum comm_slot_e {
  */
 typedef struct mudmux_comm_api_s {
     int (*max_slot)(void);
+    /**
+     * Return the slot currently being parsed for a parser-initiated callback,
+     * or -1 for any other callback and outside hook dispatch.
+     */
+    int (*current_slot)(void);
 #ifndef MUDMUX_NO_OPENSSL
     int (*add_bio)(BIO *rbio, BIO *wbio, int slot, uint32_t flags);
 #else
@@ -88,6 +93,7 @@ typedef struct mudmux_comm_api_s {
 #if !defined(MUDMUX_STATIC_DEFINE) && !defined(mudmux_EXPORTS)
 /* public interface */
 #define comm_max_slot                   mudmux_comm_api_v1->max_slot
+#define comm_current_slot               mudmux_comm_api_v1->current_slot
 #define comm_abstract_add_bio           mudmux_comm_api_v1->add_bio
 #define comm_abstract_add_file          mudmux_comm_api_v1->add_file
 #define comm_get_flags                  mudmux_comm_api_v1->get_flags
@@ -108,6 +114,11 @@ typedef struct mudmux_comm_api_s {
 
 #ifdef __cplusplus
 extern "C" {
+#endif
+
+#ifndef comm_current_slot
+/* Direct declaration for static-library consumers. Shared consumers use the API table macro above. */
+int comm_current_slot(void);
 #endif
 
 MUDMUX_EXPORT extern mudmux_comm_api_v1_t* mudmux_comm_api_v1;

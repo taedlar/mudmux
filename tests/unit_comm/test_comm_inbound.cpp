@@ -46,6 +46,7 @@ public:
 
     std::vector<std::string> inbound_messages; // Store inbound messages for verification
     ConnectTransport connect_transport{ConnectTransport::Telnet};
+    int observed_current_slot{-2};
 
     int add_memory_comm(uint32_t flags) {
         BIO* rbio = BIO_new(BIO_s_mem());
@@ -71,6 +72,13 @@ public:
     static int hook_message_inbound_and_rearm_char(void* ctx, int slot, void* data, size_t len) {
         const int result = hook_message_inbound(ctx, slot, data, len);
         return comm_set_char_input(slot) ? result : -1;
+    }
+
+    static int hook_record_current_slot(void* ctx, int, void*, size_t) {
+        CommInboundTest* test_instance = static_cast<CommInboundTest*>(ctx);
+        if (test_instance)
+            test_instance->observed_current_slot = comm_current_slot();
+        return 0;
     }
 
     static int hook_connect_select_transport(void* ctx, int slot, void*, size_t) {
@@ -289,6 +297,41 @@ TEST_F(CommInboundTest, RefillInboundBuffers) {
 
     EXPECT_EQ(inbound_messages.size(), 1u); // Expect one inbound message
     EXPECT_EQ(inbound_messages[0], "Test data");
+
+    async_runtime_deinit(runtime);
+}
+
+TEST_F(CommInboundTest, CurrentSlotIsAvailableOnlyToSlotScopedHooks) {
+    async_runtime_t* runtime = async_runtime_init(this);
+    ASSERT_NE(runtime, nullptr);
+    const int slot = add_memory_comm(C_LINE_INPUT);
+    ASSERT_NE(slot, -1);
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
+    ASSERT_TRUE(comm);
+
+    ASSERT_TRUE(mudmux_register_hook(HOOK_MESSAGE_INBOUND, CommInboundTest::hook_record_current_slot));
+    ASSERT_TRUE(comm_refill_inbound_buffers(comm, "message\n", 8));
+    EXPECT_EQ(comm_process_input(runtime, comm, 1), COMM_PROCESS_OK);
+    EXPECT_EQ(observed_current_slot, slot);
+    EXPECT_EQ(comm_current_slot(), -1);
+
+    observed_current_slot = -2;
+    ASSERT_TRUE(mudmux_register_hook(HOOK_CONNECT, CommInboundTest::hook_record_current_slot));
+    EXPECT_EQ(comm_invoke_connect(runtime, slot, slot), MUDMUX_DISPATCH_OK);
+    EXPECT_EQ(observed_current_slot, slot);
+
+    observed_current_slot = -2;
+    ASSERT_TRUE(mudmux_register_hook(HOOK_PROMPT, CommInboundTest::hook_record_current_slot));
+    comm_enable_prompt(slot, true);
+    comm_invoke_prompt(runtime);
+    EXPECT_EQ(observed_current_slot, slot);
+
+    observed_current_slot = -2;
+    ASSERT_TRUE(mudmux_register_hook(HOOK_MESSAGE_OUTBOUND, CommInboundTest::hook_record_current_slot));
+    const char output[] = "message";
+    comm_write_message(slot, slot, output, sizeof(output) - 1);
+    EXPECT_EQ(observed_current_slot, -1);
+    EXPECT_EQ(comm_current_slot(), -1);
 
     async_runtime_deinit(runtime);
 }

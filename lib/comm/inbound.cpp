@@ -95,12 +95,15 @@ void comm_invoke_prompt (async_runtime_t* runtime) {
         if (comm->flags & C_BUFFERED_WRITE)
             continue; // skip comms with pending buffered write
         if ((comm->flags & C_ENABLE_PROMPT) && !(comm->flags & C_INVOKED_PROMPT)) {
-            const mudmux_dispatch_result_t dispatch_result = mudmux_dispatch_hook (
+            const mudmux_dispatch_result_t dispatch_result = mudmux_dispatch_hook_after(
                 HOOK_PROMPT,
                 async_runtime_get_context(runtime),
                 slot,
                 nullptr,
-                0
+                0,
+                nullptr,
+                nullptr,
+                slot
             );
             if (dispatch_result != MUDMUX_DISPATCH_QUEUE_FULL)
                 comm->flags |= C_INVOKED_PROMPT;
@@ -240,7 +243,8 @@ int comm_invoke_connect (async_runtime_t* runtime, int slot, int entry_slot) {
         entry_name.data(),
         entry_name.size(),
         await_connect_hook ? _resume_input_after_connect_hook : nullptr,
-        nullptr);
+        nullptr,
+        slot);
     if (await_connect_hook && result != MUDMUX_DISPATCH_OK) {
         comm_abstract_ptr comm(slot, comm_slots_mtx);
         if (comm)
@@ -280,7 +284,8 @@ int comm_invoke_inbound_message (async_runtime_t* runtime, comm_abstract_ptr& co
         data,
         size,
         await_inbound_hook ? _resume_input_after_inbound_hook : nullptr,
-        nullptr);
+        nullptr,
+        comm.slot());
     return static_cast<int>(result);
 }
 
