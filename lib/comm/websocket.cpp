@@ -16,6 +16,7 @@
 #include <openssl/sha.h>
 
 #include "abstract.hpp"
+#include "current_slot.hpp"
 #include "execution.hpp"
 #include "hooks.hpp"
 #include "inbound.hpp"
@@ -304,7 +305,7 @@ void comm_try_upgrade_websocket(async_runtime_t* runtime, comm_abstract_ptr& com
     C_WEBSOCKET_SET_STATE(comm->flags, WS_READY);
     if (negotiated_telnet) {
         C_WEBSOCKET_SET_STATE(comm->flags, WS_TELNET_PENDING);
-        comm_enable_telnet(comm.slot());
+        comm_enable_telnet_for_slot(comm.slot());
     }
     SPDLOG_INFO("websocket protocol switch completed for slot {} (telnet subprotocol: {})",
         comm.slot(), negotiated_telnet);
@@ -455,7 +456,7 @@ bool comm_websocket_process_inbound(comm_abstract_ptr& comm, std::string_view wi
     return true;
 }
 
-extern "C" bool comm_enable_websocket(int slot, const char* preferred_protocols) {
+bool comm_enable_websocket_for_slot(int slot, const char* preferred_protocols) {
     comm_abstract_ptr comm(slot, comm_slots_mtx);
     if (!comm || !comm->rbio || !comm->wbio) {
         return false;
@@ -472,6 +473,15 @@ extern "C" bool comm_enable_websocket(int slot, const char* preferred_protocols)
     comm->flags |= C_ENABLE_WEBSOCKET;
     SPDLOG_DEBUG("enabled WebSocket upgrade handling for comm slot {}", slot);
     return true;
+}
+
+extern "C" bool comm_enable_websocket(const char* preferred_protocols) {
+    const int slot = comm_current_slot();
+    if (comm_current_hook_type() != HOOK_CONNECT || slot < 0) {
+        SPDLOG_WARN("comm_enable_websocket() is only valid for the current slot during HOOK_CONNECT");
+        return false;
+    }
+    return comm_enable_websocket_for_slot(slot, preferred_protocols);
 }
 
 bool comm_websocket_build_upgrade_response(

@@ -8,6 +8,7 @@
 #include "mudmux_export.h"
 #include "async.h"
 
+/* Communication flags */
 #define C_CLOSING                   (1u<<31)
 #define C_SOCKET_LISTENING          (1u<<30)
 #define C_SOCKET_READABLE           (1u<<29)
@@ -19,6 +20,7 @@
 #define C_ENABLE_WEBSOCKET          (1u<<23)
 #define C_ENABLE_PROMPT             (1u<<22)
 
+/* Internal communication states */
 #define C_INVOKED_PROMPT            (1u<<13)
 #define C_BUFFERED_WRITE            (1u<<12)
 #define C_TLS_ESTABLISHED           (1u<<11)
@@ -69,18 +71,11 @@ typedef struct mudmux_comm_api_s {
 #endif
     int (*add_file)(const char *fn_in, const char* fn_out, int slot, uint32_t flags);
     uint32_t (*get_flags)(int slot);
-    void (*buffered_write)(int slot, const void *buf, size_t len);
-    bool (*close)(async_runtime_t* runtime, int slot);
+    void (*enable_prompt)(int slot, bool enable);
+    bool (*enable_virtual_terminal)(int slot);
     bool (*set_line_input)(int slot, bool echo);
     bool (*set_char_input)(int slot);
     bool (*set_echo)(int slot, bool echo);
-    bool (*ssl_init)(const char* certificate_path, const char* private_key_path);
-    void (*ssl_deinit)(void);
-    void (*enable_telnet)(int slot);
-    bool (*enable_websocket)(int slot, const char* preferred_protocols);
-    void (*enable_prompt)(int slot, bool enable);
-    bool (*enable_virtual_terminal)(int slot);
-    void (*enable_tls)(int slot);
     /**
      * Deliver a message from from_slot to to_slot through HOOK_MESSAGE_OUTBOUND,
      * or buffer it directly to to_slot when no outbound hook is registered.
@@ -88,6 +83,14 @@ typedef struct mudmux_comm_api_s {
      * the low 16 bits.
      */
     void (*write_message)(int from_slot, int to_slot, const void *buf, size_t len);
+    void (*buffered_write)(int slot, const void *buf, size_t len);
+    bool (*close)(async_runtime_t* runtime, int slot);
+    bool (*ssl_init)(const char* certificate_path, const char* private_key_path);
+    void (*ssl_deinit)(void);
+    /** Enable a transport protocol for the current HOOK_CONNECT slot only. */
+    void (*enable_telnet)(void);
+    bool (*enable_websocket)(const char* preferred_protocols);
+    void (*enable_tls)(void);
 } mudmux_comm_api_v1_t;
 
 #if !defined(MUDMUX_STATIC_DEFINE) && !defined(mudmux_EXPORTS)
@@ -97,28 +100,23 @@ typedef struct mudmux_comm_api_s {
 #define comm_abstract_add_bio           mudmux_comm_api_v1->add_bio
 #define comm_abstract_add_file          mudmux_comm_api_v1->add_file
 #define comm_get_flags                  mudmux_comm_api_v1->get_flags
-#define comm_buffered_write             mudmux_comm_api_v1->buffered_write
-#define comm_close                      mudmux_comm_api_v1->close
+#define comm_enable_prompt              mudmux_comm_api_v1->enable_prompt
+#define comm_enable_virtual_terminal    mudmux_comm_api_v1->enable_virtual_terminal
 #define comm_set_line_input             mudmux_comm_api_v1->set_line_input
 #define comm_set_char_input             mudmux_comm_api_v1->set_char_input
 #define comm_set_echo                   mudmux_comm_api_v1->set_echo
+#define comm_write_message              mudmux_comm_api_v1->write_message
+#define comm_buffered_write             mudmux_comm_api_v1->buffered_write
+#define comm_close                      mudmux_comm_api_v1->close
 #define comm_ssl_init                   mudmux_comm_api_v1->ssl_init
 #define comm_ssl_deinit                 mudmux_comm_api_v1->ssl_deinit
-#define comm_enable_prompt              mudmux_comm_api_v1->enable_prompt
 #define comm_enable_telnet              mudmux_comm_api_v1->enable_telnet
 #define comm_enable_websocket           mudmux_comm_api_v1->enable_websocket
-#define comm_enable_virtual_terminal    mudmux_comm_api_v1->enable_virtual_terminal
 #define comm_enable_tls                 mudmux_comm_api_v1->enable_tls
-#define comm_write_message              mudmux_comm_api_v1->write_message
 #endif
 
 #ifdef __cplusplus
 extern "C" {
-#endif
-
-#ifndef comm_current_slot
-/* Direct declaration for static-library consumers. Shared consumers use the API table macro above. */
-int comm_current_slot(void);
 #endif
 
 MUDMUX_EXPORT extern mudmux_comm_api_v1_t* mudmux_comm_api_v1;

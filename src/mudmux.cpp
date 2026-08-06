@@ -149,17 +149,17 @@ static void init_comm_api (void) {
     comm_api.enable_prompt = +[](int slot, bool enable) {
         guarded_call_void("enable_prompt", comm_enable_prompt, slot, enable);
     };
-    comm_api.enable_telnet = +[](int slot) {
-        guarded_call_void("enable_telnet", comm_enable_telnet, slot);
+    comm_api.enable_telnet = +[]() {
+        guarded_call_void("enable_telnet", comm_enable_telnet);
     };
-    comm_api.enable_websocket = +[](int slot, const char* preferred_protocols) -> bool {
-        return guarded_call<bool>("enable_websocket", false, comm_enable_websocket, slot, preferred_protocols);
+    comm_api.enable_websocket = +[](const char* preferred_protocols) -> bool {
+        return guarded_call<bool>("enable_websocket", false, comm_enable_websocket, preferred_protocols);
     };
     comm_api.enable_virtual_terminal = +[](int slot) -> bool {
         return guarded_call<bool>("enable_virtual_terminal", false, comm_enable_virtual_terminal, slot);
     };
-    comm_api.enable_tls = +[](int slot) {
-        guarded_call_void("enable_tls", comm_enable_tls, slot);
+    comm_api.enable_tls = +[]() {
+        guarded_call_void("enable_tls", comm_enable_tls);
     };
     comm_api.write_message = +[](int from_slot, int to_slot, const void* buf, size_t len) {
         guarded_call_void("write_message", comm_write_message, from_slot, to_slot, buf, len);

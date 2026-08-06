@@ -30,6 +30,7 @@ int mudmux_invoke_registered_hook(enum mudmux_hook_type_t hook_type, void* ctx, 
     if (!hook_func)
         return 0;
 
+    comm_hook_type_scope_t hook_type_scope(hook_type);
     return mudmux_invoke_hook_function(hook_func, ctx, msg, data, size, flush_after, current_slot_);
 }
 

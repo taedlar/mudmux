@@ -6,6 +6,7 @@
 
 #include "abstract.hpp"
 #include "execution.hpp"
+#include "current_slot.hpp"
 #include "inbound.hpp"
 #include "outbound.hpp"
 #include "mudmux/comm.h"
@@ -25,7 +26,7 @@ static void _start_telnet_negotiation(comm_abstract_ptr& comm) {
     comm_telnet_send_do(comm, TELOPT_LINEMODE);
 }
 
-void comm_enable_telnet (int slot) {
+void comm_enable_telnet_for_slot(int slot) {
     comm_abstract_ptr comm(slot, comm_slots_mtx);
     if (!comm)
         return;
@@ -40,6 +41,15 @@ void comm_enable_telnet (int slot) {
 
     if (C_WEBSOCKET_STATE(comm->flags) != WS_TELNET_PENDING)
         _start_telnet_negotiation(comm);
+}
+
+void comm_enable_telnet(void) {
+    const int slot = comm_current_slot();
+    if (comm_current_hook_type() != HOOK_CONNECT || slot < 0) {
+        SPDLOG_WARN("comm_enable_telnet() is only valid for the current slot during HOOK_CONNECT");
+        return;
+    }
+    comm_enable_telnet_for_slot(slot);
 }
 
 void comm_start_telnet_negotiation (int slot) {
