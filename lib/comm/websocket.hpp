@@ -19,12 +19,12 @@
  * mudmux sends a "101 Switching Protocols" response and marks the slot as
  * WebSocket-ready.
  *
- * @param slot Communication slot.
  * @param preferred_protocols Comma-separated server subprotocol preferences, in
  * descending priority order. Pass null or an empty string to negotiate none.
  * @return true if WebSocket handling is enabled (or already enabled), false otherwise.
  */
-extern "C" bool comm_enable_websocket(int slot, const char* preferred_protocols);
+extern "C" bool comm_enable_websocket(const char* preferred_protocols);
+bool comm_enable_websocket_for_slot(int slot, const char* preferred_protocols);
 
 void comm_try_upgrade_websocket(async_runtime_t* runtime, comm_abstract_ptr& comm);
 

@@ -60,9 +60,9 @@ static_assert(std::is_trivially_copyable_v<comm_telnet_negotiation_t>,
  * 
  * C_ENABLE_TELNET cannot be disabled once it has been enabled for a slot.
  * 
- * @param slot The communication slot to enable Telnet for.
  */
-void comm_enable_telnet (int slot);
+void comm_enable_telnet(void);
+void comm_enable_telnet_for_slot(int slot);
 void comm_start_telnet_negotiation (int slot);
 
 /**

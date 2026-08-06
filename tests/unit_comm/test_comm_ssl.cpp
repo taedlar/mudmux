@@ -178,7 +178,7 @@ TEST_F(CommSslTest, EnableTlsStartsAndCompletesNonBlockingHandshake) {
     SSL_set_connect_state(client_ssl);
     SSL_set_bio(client_ssl, client_io, client_io); // transfer ownership to client SSL
 
-    comm_enable_tls(slot);
+    comm_enable_tls_for_slot(slot);
 
     async_runtime_t* runtime = async_runtime_init(nullptr);
     ASSERT_NE(runtime, nullptr);
@@ -238,7 +238,7 @@ TEST_F(CommSslTest, WebSocketUpgradeBarrierFlushesOverTls) {
     SSL_set_connect_state(client_ssl);
     SSL_set_bio(client_ssl, client_io, client_io);
 
-    comm_enable_tls(slot);
+    comm_enable_tls_for_slot(slot);
     async_runtime_t* runtime = async_runtime_init(nullptr);
     ASSERT_NE(runtime, nullptr);
 
@@ -269,7 +269,7 @@ TEST_F(CommSslTest, WebSocketUpgradeBarrierFlushesOverTls) {
     {
         comm_abstract_ptr comm(slot, comm_slots_mtx);
         ASSERT_TRUE(comm);
-        ASSERT_TRUE(comm_enable_websocket(slot, nullptr));
+        ASSERT_TRUE(comm_enable_websocket_for_slot(slot, nullptr));
         comm_buffered_write_comm(comm, "banner", 6);
     }
 
@@ -335,7 +335,7 @@ TEST_F(CommSslTest, RejectedWebSocketUpgradeOverTlsQueuesBadRequestResponse) {
     SSL_set_connect_state(client_ssl);
     SSL_set_bio(client_ssl, client_io, client_io);
 
-    comm_enable_tls(slot);
+    comm_enable_tls_for_slot(slot);
     async_runtime_t* runtime = async_runtime_init(nullptr);
     ASSERT_NE(runtime, nullptr);
 
@@ -363,7 +363,7 @@ TEST_F(CommSslTest, RejectedWebSocketUpgradeOverTlsQueuesBadRequestResponse) {
     ASSERT_TRUE(server_done);
     ASSERT_TRUE(client_done);
 
-    ASSERT_TRUE(comm_enable_websocket(slot, nullptr));
+    ASSERT_TRUE(comm_enable_websocket_for_slot(slot, nullptr));
     const char request[] = "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
     size_t sent = 0;
     ASSERT_EQ(SSL_write_ex(client_ssl, request, sizeof(request) - 1, &sent), 1);
@@ -415,7 +415,7 @@ TEST_F(CommSslTest, CloseWithBufferedTlsDataSurvivesPeerCloseRace) {
     SSL_set_connect_state(client_ssl);
     SSL_set_bio(client_ssl, client_io, client_io);
 
-    comm_enable_tls(slot);
+    comm_enable_tls_for_slot(slot);
     async_runtime_t* runtime = async_runtime_init(nullptr);
     ASSERT_NE(runtime, nullptr);
 
@@ -492,7 +492,7 @@ TEST_F(CommSslTest, TlsInboundSupportsFragmentedSrcBufferPath) {
     inbound_collector_t collector;
     ASSERT_TRUE(mudmux_register_hook(HOOK_MESSAGE_INBOUND, inbound_collector_t::hook));
 
-    comm_enable_tls(slot);
+    comm_enable_tls_for_slot(slot);
 
     async_runtime_t* runtime = async_runtime_init(&collector);
     ASSERT_NE(runtime, nullptr);
@@ -566,7 +566,7 @@ TEST_F(CommSslTest, TlsInboundSupportsSingleByteSrcFragments) {
     inbound_collector_t collector;
     ASSERT_TRUE(mudmux_register_hook(HOOK_MESSAGE_INBOUND, inbound_collector_t::hook));
 
-    comm_enable_tls(slot);
+    comm_enable_tls_for_slot(slot);
 
     async_runtime_t* runtime = async_runtime_init(&collector);
     ASSERT_NE(runtime, nullptr);

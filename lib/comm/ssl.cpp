@@ -3,6 +3,7 @@
 #endif
 
 #include "ssl.hpp"
+#include "current_slot.hpp"
 
 #include <openssl/err.h>
 #include <mutex>
@@ -88,9 +89,9 @@ void comm_ssl_deinit (void) {
 	g_ssl_ctx = nullptr;
 }
 
-void comm_enable_tls (int slot) {
+void comm_enable_tls_for_slot(int slot) {
 	if (slot < 0) {
-		SPDLOG_WARN("comm_enable_tls() called with invalid slot {}", slot);
+		SPDLOG_WARN("comm_enable_tls_for_slot() called with invalid slot {}", slot);
 		return;
 	}
 
@@ -164,6 +165,15 @@ void comm_enable_tls (int slot) {
 	}
 	update_slot_event_interest(async_get_current_runtime(), comm, fd, false);
 	SPDLOG_DEBUG("TLS enabled on slot {} (handshake deferred to event loop)", slot);
+}
+
+void comm_enable_tls(void) {
+	const int slot = comm_current_slot();
+	if (comm_current_hook_type() != HOOK_CONNECT || slot < 0) {
+		SPDLOG_WARN("comm_enable_tls() is only valid for the current slot during HOOK_CONNECT");
+		return;
+	}
+	comm_enable_tls_for_slot(slot);
 }
 
 static void update_slot_event_interest(async_runtime_t* runtime, comm_abstract_ptr& comm, socket_fd_t fd, bool want_write) {

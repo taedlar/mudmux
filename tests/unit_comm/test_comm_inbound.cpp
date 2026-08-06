@@ -2,9 +2,12 @@
 #include "config.h"
 #endif
 
+#include "comm/current_slot.hpp"
 #include "comm/inbound.hpp"
 #include "comm/input_mode.hpp"
 #include "comm/outbound.hpp"
+#include "comm/telnet.hpp"
+#include "comm/websocket.hpp"
 #include "../../src/execution.hpp"
 #include "mudmux/mudmux.h"
 #include "mudmux/comm.h"
@@ -81,18 +84,18 @@ public:
         return 0;
     }
 
-    static int hook_connect_select_transport(void* ctx, int slot, void*, size_t) {
+    static int hook_connect_select_transport(void* ctx, int, void*, size_t) {
         CommInboundTest* test_instance = static_cast<CommInboundTest*>(ctx);
         if (!test_instance)
             return -1;
         switch (test_instance->connect_transport) {
         case ConnectTransport::Telnet:
-            mudmux_comm_api_v1->enable_telnet(slot);
+            mudmux_comm_api_v1->enable_telnet();
             return 0;
         case ConnectTransport::WebSocket:
-            return mudmux_comm_api_v1->enable_websocket(slot, nullptr) ? 0 : -1;
+            return mudmux_comm_api_v1->enable_websocket(nullptr) ? 0 : -1;
         case ConnectTransport::WebSocketTelnet:
-            return mudmux_comm_api_v1->enable_websocket(slot, "telnet.ietf.org") ? 0 : -1;
+            return mudmux_comm_api_v1->enable_websocket("telnet.ietf.org") ? 0 : -1;
         }
         return -1;
     }
@@ -581,6 +584,18 @@ TEST_F(CommInboundTest, ConnectHookCanSelectWebSocketOnly) {
     async_runtime_deinit(runtime);
 }
 
+TEST_F(CommInboundTest, TransportEnableApisRejectCallsOutsideConnectHook) {
+    const int slot = add_memory_comm(0);
+    ASSERT_NE(slot, -1);
+
+    EXPECT_FALSE(mudmux_comm_api_v1->enable_websocket(nullptr));
+    mudmux_comm_api_v1->enable_telnet();
+    mudmux_comm_api_v1->enable_tls();
+
+    const uint32_t flags = comm_get_flags(slot);
+    EXPECT_EQ(flags & (C_ENABLE_TELNET | C_ENABLE_WEBSOCKET | C_TLS_ESTABLISHED), 0u);
+}
+
 TEST_F(CommInboundTest, WebSocketUpgradeDispatchesBinaryUtf8StreamAndFramesOutboundBinary) {
     async_runtime_t* runtime = async_runtime_init(this);
     ASSERT_NE(runtime, nullptr);
@@ -593,7 +608,7 @@ TEST_F(CommInboundTest, WebSocketUpgradeDispatchesBinaryUtf8StreamAndFramesOutbo
     inbound_messages.clear();
     mudmux_register_hook(HOOK_MESSAGE_INBOUND, CommInboundTest::hook_message_inbound);
 
-    ASSERT_TRUE(mudmux_comm_api_v1->enable_websocket(slot, nullptr));
+    ASSERT_TRUE(comm_enable_websocket_for_slot(slot, nullptr));
 
     std::string request =
         "GET /ws HTTP/1.1\r\n"
@@ -697,7 +712,7 @@ TEST_F(CommInboundTest, WebSocketUpgradeRejectsInvalidHandshake) {
     inbound_messages.clear();
     mudmux_register_hook(HOOK_MESSAGE_INBOUND, CommInboundTest::hook_message_inbound);
 
-    ASSERT_TRUE(mudmux_comm_api_v1->enable_websocket(slot, nullptr));
+    ASSERT_TRUE(comm_enable_websocket_for_slot(slot, nullptr));
 
     const char* invalid_request =
         "GET /ws HTTP/1.1\r\n"
@@ -732,8 +747,8 @@ TEST_F(CommInboundTest, TelnetEnableRejectedWhenWebSocketUpgradePending) {
     const int slot = add_memory_comm(0);
     ASSERT_NE(slot, -1);
 
-    ASSERT_TRUE(mudmux_comm_api_v1->enable_websocket(slot, nullptr));
-    mudmux_comm_api_v1->enable_telnet(slot);
+    ASSERT_TRUE(comm_enable_websocket_for_slot(slot, nullptr));
+    comm_enable_telnet_for_slot(slot);
 
     const uint32_t flags = comm_get_flags(slot);
     EXPECT_TRUE((flags & C_ENABLE_WEBSOCKET) != 0);
@@ -749,7 +764,7 @@ TEST_F(CommInboundTest, WebSocketClientSubprotocolIsIgnoredWithoutServerPreferen
     comm_abstract_ptr comm(slot, comm_slots_mtx);
     ASSERT_TRUE(comm);
 
-    ASSERT_TRUE(mudmux_comm_api_v1->enable_websocket(slot, nullptr));
+    ASSERT_TRUE(comm_enable_websocket_for_slot(slot, nullptr));
 
     const std::string request =
         "GET /ws HTTP/1.1\r\n"

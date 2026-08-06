@@ -37,27 +37,27 @@ enum class Transport {
 
 static Transport selected_transport = Transport::TlsTelnet;
 
-static bool configure_transport (int slot) {
+static bool configure_transport () {
     switch (selected_transport) {
     case Transport::Plaintext:
         return true;
     case Transport::Telnet:
-        comm_enable_telnet (slot);
+        comm_enable_telnet ();
         return true;
     case Transport::TlsTelnet:
-        comm_enable_tls (slot);
-        comm_enable_telnet (slot);
+        comm_enable_tls ();
+        comm_enable_telnet ();
         return true;
     case Transport::WebSocket:
-        return comm_enable_websocket (slot, nullptr);
+        return comm_enable_websocket (nullptr);
     case Transport::SecureWebSocket:
-        comm_enable_tls (slot);
-        return comm_enable_websocket (slot, nullptr);
+        comm_enable_tls ();
+        return comm_enable_websocket (nullptr);
     case Transport::WebSocketTelnet:
-        return comm_enable_websocket (slot, "telnet.ietf.org, telnet.mudstandards.org");
+        return comm_enable_websocket ("telnet.ietf.org, telnet.mudstandards.org");
     case Transport::SecureWebSocketTelnet:
-        comm_enable_tls (slot);
-        return comm_enable_websocket (slot, "telnet.ietf.org, telnet.mudstandards.org");
+        comm_enable_tls ();
+        return comm_enable_websocket ("telnet.ietf.org, telnet.mudstandards.org");
     }
     return false;
 }
@@ -79,7 +79,7 @@ static int on_connect (void*, int slot, void* data, size_t len) {
     SPDLOG_INFO ("New connection on slot {} from entry '{}'", slot, entry_name);
     auto user = User::connect(slot);
     if (entry_name != "-") {
-        if (!configure_transport(slot)) {
+        if (!configure_transport()) {
             SPDLOG_ERROR ("failed to enable selected transport on slot {}", slot);
             return -1;
         }

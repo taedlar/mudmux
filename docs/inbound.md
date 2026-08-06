@@ -36,6 +36,9 @@ parsed.
 | TLS + WebSocket | TLS handshake first, HTTP Upgrade second, then decoded WebSocket messages. This is `wss://`. |
 | WebSocket + negotiated `telnet.ietf.org` or `telnet.mudstandards.org` | Decoded WebSocket payload is parsed as Telnet before it reaches the logic layer. |
 
+Transport protocols are selected only from `HOOK_CONNECT`, and each enabling
+API always targets that hook's current slot: `comm_enable_tls()`,
+`comm_enable_websocket(preferred_protocols)`, and `comm_enable_telnet()`.
 `comm_enable_websocket()` cannot be combined with an already enabled direct
 Telnet stream.  Telnet-over-WebSocket is enabled only after the HTTP upgrade
 selects one of the supported Telnet subprotocols.
