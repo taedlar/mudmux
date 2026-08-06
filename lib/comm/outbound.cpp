@@ -368,7 +368,7 @@ void comm_flush (async_runtime_t* runtime, int slot) {
             C_WEBSOCKET_IS_READY(comm->flags) &&
             C_WEBSOCKET_STATE(comm->flags) != WS_CLOSE_RECEIVED;
         if ((comm->flags & C_CLOSING) && !waiting_for_websocket_close) {
-            SPDLOG_DEBUG ("comm slot has C_CLOSING flag set, sending shutdown signal to peer");
+            SPDLOG_TRACE ("comm slot has C_CLOSING flag set, sending shutdown signal to peer");
             if (comm->ssl && (comm->flags & C_TLS_ESTABLISHED)) {
                 (void) SSL_shutdown(comm->ssl);
             } else {
@@ -467,7 +467,7 @@ bool comm_close (async_runtime_t* runtime, int slot) {
         // Standard/interactive console mode: signal worker EOF and let
         // comm_process_console_input perform final disconnect + shutdown decision.
         comm_signal_console_eof(runtime);
-        SPDLOG_DEBUG("comm slot {} is console, signaling EOF to console worker", slot);
+        SPDLOG_TRACE("signaling EOF to console worker");
         return false;
     }
 

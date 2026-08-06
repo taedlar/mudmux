@@ -46,6 +46,14 @@ set (MUDMUX_LIB_OBJECTS ${MUDMUX_LIB_OBJECTS} PARENT_SCOPE) # for unit tests
 add_library(mudmux SHARED dllmain.cpp)
 target_link_libraries(mudmux PRIVATE ${MUDMUX_LIB_OBJECTS})
 
+# An ELF version script is the final boundary of the shared-library ABI.  Some
+# C++ standard-library inline objects use GNU unique linkage and can otherwise
+# appear in .dynsym despite the hidden C++ visibility preset.
+if(UNIX AND NOT APPLE)
+    target_link_options(mudmux PRIVATE
+        "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/mudmux.map")
+endif()
+
 target_link_libraries(mudmux PUBLIC mudmux::headers)
 add_library(mudmux::mudmux ALIAS mudmux)
 generate_export_header(mudmux)

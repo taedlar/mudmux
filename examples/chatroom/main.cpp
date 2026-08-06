@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <csignal>
+#include <cstdint>
 #include <iostream>
 #include <fstream>
 #include <memory>
@@ -99,8 +100,17 @@ static int on_message_inbound (void*, int slot, void* data, size_t size) {
     return 0;
 }
 
+static int on_message_outbound (void*, int packed_slots, void* data, size_t size) {
+    // comm_write_message() packs the sender in the high 16 bits and the
+    // destination in the low 16 bits of the outbound hook message.
+    const int to_slot = static_cast<int>(static_cast<uint32_t>(packed_slots) & 0xffffu);
+    comm_buffered_write (to_slot, "\r\x1b[J", 4); // clear line and move cursor to beginning
+    comm_buffered_write (to_slot, data, size);
+    return 0;
+}
+
 static int on_garbage_collection (void*, int, void*, size_t) {
-    constexpr auto idle_timeout = std::chrono::minutes(1);
+    constexpr auto idle_timeout = std::chrono::minutes(3);
     for (const auto& user : User::snapshot()) {
         if (user && user->isIdleFor(idle_timeout)) {
             SPDLOG_INFO("Disconnecting inactive user on slot {}", user->getCommSlot());
@@ -141,6 +151,7 @@ int main (int argc, char* argv[]) {
     // register hooks
     mudmux_register_hook (HOOK_CONNECT, on_connect);
     mudmux_register_hook (HOOK_MESSAGE_INBOUND, on_message_inbound);
+    mudmux_register_hook (HOOK_MESSAGE_OUTBOUND, on_message_outbound);
     mudmux_register_hook (HOOK_DISCONNECT, on_disconnect);
     mudmux_register_hook (HOOK_PROMPT, on_prompt);
     mudmux_register_hook (HOOK_GARBAGE_COLLECTION, on_garbage_collection);

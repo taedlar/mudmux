@@ -53,7 +53,10 @@ MUDMUX_EXPORT bool mudmux_register_event(async_event_t* event, mudmux_hook_func_
 /** Return mudmux's initialized timer event; setting it invokes HOOK_TIMER. */
 MUDMUX_EXPORT async_event_t* mudmux_get_timer_event(void);
 
-/** Signal mudmux's timer event, causing HOOK_TIMER to be dispatched with msg. */
+/**
+ * Signal mudmux's timer event, causing HOOK_TIMER to be dispatched with msg.
+ * Values 0 and -1 are reserved for mudmux_run() lifecycle notifications.
+ */
 MUDMUX_EXPORT bool mudmux_trigger_timer(int msg);
 
 /**

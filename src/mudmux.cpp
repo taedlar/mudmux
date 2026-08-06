@@ -295,6 +295,10 @@ MUDMUX_EXPORT async_event_t* mudmux_get_timer_event(void) {
 MUDMUX_EXPORT bool mudmux_trigger_timer(int msg) {
     if (!timer_event_initialized)
         return false;
+    if (msg == 0 || msg == -1) {
+        SPDLOG_ERROR("mudmux_trigger_timer() message {} is reserved for timer lifecycle notifications", msg);
+        return false;
+    }
     timer_event_msg.store(msg, std::memory_order_release);
     async_event_set(&timer_event);
     return true;
@@ -384,9 +388,13 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
         mudmux_execution_thread_pool_size(),
         mudmux_execution_mode_name());
     if (mudmux_execution_mode() == MUDMUX_DETERMINISM_RELAXED) {
-        SPDLOG_WARN (
-            "relaxed mode enabled: cross-slot ordering is not guaranteed; one hook per slot and API thread safety remain required");
+        SPDLOG_WARN ("relaxed mode enabled: inbound data will be processed concurrently");
     }
+
+    // Timer lifecycle notifications are synchronous: logic sees the running
+    // state before I/O dispatch begins, regardless of execution-pool mode.
+    mudmux_invoke_registered_hook(
+        HOOK_TIMER, async_runtime_get_context(runtime), 0, nullptr, 0, false);
 
     // main event loop
     SPDLOG_INFO ("===== entering event loop =====");
@@ -529,6 +537,11 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
         comm_flush_all(runtime); // advance buffered writes and TLS state in non-blocking mode
     }
     SPDLOG_INFO ("===== exited event loop =====");
+
+    // Notify the logic layer while the runtime and execution subsystem are
+    // still available, but after the event loop has stopped dispatching I/O.
+    mudmux_invoke_registered_hook(
+        HOOK_TIMER, async_runtime_get_context(runtime), -1, nullptr, 0, false);
 
     // cleanup communications and teardown subsystems
     comm_shutdown_async_file_input();
