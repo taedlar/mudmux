@@ -12,8 +12,10 @@
 #include <vector>
 
 #include "mudmux/mudmux.h"
+#include "mudmux/workers.h"
 #include "mudmux/async.h"
 #include "mudmux/comm.h"
+#include "mudmux/execution.h"
 #include "mudmux/hooks.h"
 
 static int close_console_on_quit(void*, int slot, void* data, size_t len) {
@@ -75,6 +77,12 @@ TEST(MudmuxTest, BasicInitialization) {
     ASSERT_NO_FATAL_FAILURE(mudmux_deinit());
 }
 
+TEST(MudmuxTest, InitializationStartsWorkers) {
+    ASSERT_TRUE(mudmux_init(nullptr));
+    EXPECT_FALSE(mudmux_workers_start());
+    ASSERT_NO_FATAL_FAILURE(mudmux_deinit());
+}
+
 TEST(MudmuxTest, InitializationWithEmptyConfig) {
     // Test that the mudmux library initializes correctly with a configuration
     // Configuration can be provided as YAML or JSON (JSON is a subset of YAML)
@@ -114,7 +122,9 @@ TEST(MudmuxTest, InitializationWithThreadPoolSize) {
         }
     })";
     ASSERT_TRUE(mudmux_init(config));
+    EXPECT_EQ(mudmux_workers_pool_size(), 2);
     ASSERT_NO_FATAL_FAILURE(mudmux_deinit());
+    EXPECT_EQ(mudmux_workers_pool_size(), 0);
 }
 
 TEST(MudmuxTest, AsyncApiExposesQueueOperations) {
@@ -159,6 +169,27 @@ TEST(MudmuxTest, EventLoopRun) {
     server_thread.join();
 
     ASSERT_NO_FATAL_FAILURE(mudmux_deinit());
+}
+
+TEST(MudmuxTest, ExecutionStateTracksActiveRun) {
+    ASSERT_TRUE(mudmux_init(nullptr));
+    ASSERT_NE(mudmux_execution_api_v1, nullptr);
+    ASSERT_NE(mudmux_execution_api_v1->is_running, nullptr);
+    EXPECT_FALSE(mudmux_is_running());
+
+    std::thread server_thread([] {
+        EXPECT_EQ(mudmux_run(nullptr), EXIT_SUCCESS);
+    });
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (!mudmux_is_running() && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    EXPECT_TRUE(mudmux_is_running());
+
+    mudmux_shutdown();
+    server_thread.join();
+    EXPECT_FALSE(mudmux_is_running());
+    mudmux_deinit();
 }
 
 TEST(MudmuxTest, TimerEventDispatchesTimerHook) {

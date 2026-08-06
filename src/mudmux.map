@@ -5,6 +5,7 @@ MUDMUX_0.1 {
         mudmux_deinit;
         mudmux_enable_console;
         mudmux_enable_standard_input;
+        mudmux_execution_api_v1;
         mudmux_get_timer_event;
         mudmux_init;
         mudmux_invoke_hook;
@@ -14,6 +15,9 @@ MUDMUX_0.1 {
         mudmux_set_log_level;
         mudmux_shutdown;
         mudmux_trigger_timer;
+        mudmux_workers_start;
+        mudmux_workers_pool_size;
+        mudmux_workers_stop;
 
     local:
         *;

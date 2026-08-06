@@ -907,7 +907,6 @@ TEST_F(CommInboundTest, ThreadPoolKeepsPerSlotOrderWhileOtherSlotsAdvance) {
     thread_pool_other_slots_expected = 5;
     thread_pool_first_slot_count = 0;
 
-    ASSERT_TRUE(mudmux_execution_start());
     ASSERT_TRUE(mudmux_register_hook(HOOK_MESSAGE_INBOUND, thread_pool_stress_hook));
 
     const char slot0_first[] = "slot0-first";
@@ -930,7 +929,6 @@ TEST_F(CommInboundTest, ThreadPoolKeepsPerSlotOrderWhileOtherSlotsAdvance) {
     thread_pool_other_slots_done_ptr = nullptr;
     thread_pool_first_slot_release_future_ptr = nullptr;
     thread_pool_first_slot_finished_ptr = nullptr;
-    mudmux_execution_stop();
     mudmux_deinit();
 }
 
@@ -949,7 +947,6 @@ TEST_F(CommInboundTest, RelaxedModeDefersSameSlotParsingUntilInboundHookReturns)
     inbound_hook_finished_ptr = &finished_promise;
     inbound_hook_call_count.store(0);
 
-    ASSERT_TRUE(mudmux_execution_start());
     ASSERT_TRUE(mudmux_register_hook(HOOK_MESSAGE_INBOUND, blocking_inbound_hook));
     async_runtime_t* runtime = async_runtime_init(this);
     ASSERT_NE(runtime, nullptr);
@@ -981,7 +978,6 @@ TEST_F(CommInboundTest, RelaxedModeDefersSameSlotParsingUntilInboundHookReturns)
     inbound_hook_release_ptr = nullptr;
     inbound_hook_finished_ptr = nullptr;
     async_runtime_deinit(runtime);
-    mudmux_execution_stop();
     mudmux_deinit();
 }
 
@@ -1014,7 +1010,6 @@ TEST_F(CommInboundTest, RelaxedModeCommApiCallsFromConcurrentHooksDoNotDeadlock)
     comm_api_other_slots_completed.store(0);
     comm_api_other_slots_expected = static_cast<int>(slots.size()) - 1;
 
-    ASSERT_TRUE(mudmux_execution_start());
     ASSERT_TRUE(mudmux_register_hook(HOOK_MESSAGE_INBOUND, concurrent_comm_api_hook));
 
     const char payload[] = "phase6";
@@ -1036,7 +1031,6 @@ TEST_F(CommInboundTest, RelaxedModeCommApiCallsFromConcurrentHooksDoNotDeadlock)
     comm_api_other_slots_expected = 0;
     comm_api_blocked_slot = -1;
 
-    mudmux_execution_stop();
     mudmux_deinit();
 }
 
@@ -1068,7 +1062,6 @@ TEST_F(CommInboundTest, RelaxedModeQueuePressureOnOneSlotDoesNotBlockOtherSlots)
     queue_pressure_hot_slot_release_ptr = &hot_slot_release_future;
     queue_pressure_other_slots_done_ptr = &other_slots_done_promise;
 
-    ASSERT_TRUE(mudmux_execution_start());
     ASSERT_TRUE(mudmux_register_hook(HOOK_MESSAGE_INBOUND, queue_pressure_hook));
 
     const char payload[] = "phase6-queue-pressure";
@@ -1111,7 +1104,6 @@ TEST_F(CommInboundTest, RelaxedModeQueuePressureOnOneSlotDoesNotBlockOtherSlots)
     queue_pressure_other_slots_expected = 0;
     queue_pressure_hot_slot = -1;
 
-    mudmux_execution_stop();
     mudmux_deinit();
 }
 
@@ -1128,7 +1120,6 @@ TEST_F(CommInboundTest, RelaxedModeConcurrentEnqueueAndCommApiMutationsRemainSta
     }
 
     enqueue_race_processed_count.store(0);
-    ASSERT_TRUE(mudmux_execution_start());
     ASSERT_TRUE(mudmux_register_hook(HOOK_MESSAGE_INBOUND, enqueue_race_comm_api_hook));
 
     constexpr int producer_count = 4;
@@ -1178,6 +1169,5 @@ TEST_F(CommInboundTest, RelaxedModeConcurrentEnqueueAndCommApiMutationsRemainSta
 
     EXPECT_EQ(enqueue_race_processed_count.load(), expected_tasks);
 
-    mudmux_execution_stop();
     mudmux_deinit();
 }

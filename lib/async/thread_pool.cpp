@@ -1,6 +1,9 @@
 #include "thread_pool.hpp"
 
+#include <exception>
 #include <utility>
+
+#include <spdlog/spdlog.h>
 
 async_thread_pool_t::~async_thread_pool_t() {
     stop();
@@ -82,6 +85,28 @@ void async_thread_pool_t::worker_loop() {
             tasks_.pop();
         }
 
-        task();
+        try {
+            task();
+        }
+        catch (const std::exception& exception) {
+            // A task must not be allowed to unwind out of its worker thread:
+            // doing so would call std::terminate and bring down the server.
+            // Keep this worker alive as its replacement so the pool remains
+            // at its configured capacity.
+            try {
+                SPDLOG_ERROR("worker task threw an exception; worker restarted: {}", exception.what());
+            }
+            catch (...) {
+                // Logging must not defeat task-fault containment.
+            }
+        }
+        catch (...) {
+            try {
+                SPDLOG_ERROR("worker task threw a non-standard exception; worker restarted");
+            }
+            catch (...) {
+                // Logging must not defeat task-fault containment.
+            }
+        }
     }
 }

@@ -7,6 +7,7 @@
 #include <chrono>
 #include <atomic>
 #include <future>
+#include <stdexcept>
 #include <thread>
 
 #ifndef _WIN32
@@ -120,6 +121,24 @@ TEST(AsyncThreadPoolTest, SubmittedTasksExecute) {
     pool.stop();
     EXPECT_EQ(pool.size(), 0u);
     EXPECT_FALSE(pool.submit([] {}));
+}
+
+TEST(AsyncThreadPoolTest, WorkerSurvivesThrowingTask) {
+    async_thread_pool_t pool;
+    std::promise<void> finished;
+    std::future<void> finished_future = finished.get_future();
+
+    ASSERT_TRUE(pool.start(1));
+    ASSERT_TRUE(pool.submit([] {
+        throw std::runtime_error("expected test exception");
+    }));
+    ASSERT_TRUE(pool.submit([&finished] {
+        finished.set_value();
+    }));
+
+    EXPECT_EQ(finished_future.wait_for(std::chrono::milliseconds(500)), std::future_status::ready);
+    EXPECT_EQ(pool.size(), 1u);
+    pool.stop();
 }
 
 } // namespace
