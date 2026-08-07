@@ -117,6 +117,13 @@ intentionally stop and restart workers while mudmux remains initialized:
   clears scheduler state. Do not call it from a worker callback.
 - `mudmux_workers_pool_size()` reports the number of live workers; it is zero
   after stop.
+- `mudmux_workers_submit(work, completion)` runs detached application work on
+  a worker, then runs its completion in a serialized non-slot lane. mudmux
+  takes ownership of both `async_closure_t` values only when submission
+  succeeds; neither closure has slot-ordering guarantees. Exceptions from
+  either closure or its destructor are logged and contained. Work receives
+  `ASYNC_CLOSURE_SCHEDULER_OK`; completion receives that message on success or
+  `ASYNC_CLOSURE_SCHEDULER_FAILED` when work or its cleanup fails.
 
 `<mudmux/execution.h>` exposes `mudmux_is_running()`. It reports whether a
 `mudmux_run()` call is active, not whether the worker pool exists. Use these

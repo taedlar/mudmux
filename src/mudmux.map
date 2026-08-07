@@ -18,6 +18,7 @@ MUDMUX_0.1 {
         mudmux_workers_start;
         mudmux_workers_pool_size;
         mudmux_workers_stop;
+        mudmux_workers_submit;
 
     local:
         *;
