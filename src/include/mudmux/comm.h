@@ -29,6 +29,7 @@
 #define C_DEFERRED_INBOUND          (1u<<10)
 #define C_AWAITING_HOOK             (1u<<9)
 #define C_DISCONNECT_PENDING        (1u<<8)
+#define C_TRANSPORT_READY           (1u<<14)
 #define M_WEBSOCKET_STATE           0x000000f0u     /* used by WEBSOCKET */
 #define M_TELNET_STATE              0x0000000fu     /* used by TELNET */
 

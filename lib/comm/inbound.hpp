@@ -21,6 +21,8 @@ bool comm_has_deferred_input (void);
 void comm_resume_deferred_input (async_runtime_t* runtime);
 
 int comm_invoke_connect (async_runtime_t* runtime, int slot, int entry_slot);
+/** Dispatch the one-shot transport-ready lifecycle hook when framing is usable. */
+void comm_invoke_transport_ready(async_runtime_t* runtime, int slot);
 int comm_invoke_inbound_message (async_runtime_t* runtime, comm_abstract_ptr& comm, const void* data, size_t size);
 
 /** Preserve buffered input until the execution layer releases @p slot. */

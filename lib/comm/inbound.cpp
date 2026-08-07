@@ -207,15 +207,63 @@ void comm_resume_deferred_input (async_runtime_t* runtime) {
     has_deferred_input.store(any_deferred, std::memory_order_release);
 }
 
-static void _resume_input_after_connect_hook(void*, int slot) {
+static void _resume_input_after_transport_ready_hook(void*, int slot) {
     comm_abstract_ptr comm(slot, comm_slots_mtx);
     if (!comm)
         return;
 
-    // If close was requested while HOOK_CONNECT ran, its queued
+    // If close was requested while the lifecycle hook ran, its queued
     // HOOK_DISCONNECT now owns this shared await flag until it completes.
     if (!(comm->flags & C_CLOSING))
         comm->flags &= ~C_AWAITING_HOOK;
+    comm->flags |= C_DEFERRED_INBOUND;
+    has_deferred_input.store(true, std::memory_order_release);
+}
+
+void comm_invoke_transport_ready(async_runtime_t* runtime, int slot) {
+    if (!runtime || slot < 0)
+        return;
+
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
+    if (!comm || (comm->flags & (C_CLOSING | C_TRANSPORT_READY)))
+        return;
+    if (comm->ssl && !(comm->flags & C_TLS_ESTABLISHED))
+        return;
+    // A WebSocket becomes application-ready only after the HTTP 101 response
+    // (and, for Telnet-over-WebSocket, the initial Telnet bytes) have drained.
+    if ((comm->flags & C_ENABLE_WEBSOCKET) && !C_WEBSOCKET_IS_READY(comm->flags))
+        return;
+
+    comm->flags |= C_TRANSPORT_READY;
+    const bool await_ready_hook = mudmux_execution_should_dispatch_async(HOOK_TRANSPORT_READY);
+    if (await_ready_hook)
+        comm->flags |= C_AWAITING_HOOK;
+
+    const mudmux_dispatch_result_t result = mudmux_dispatch_hook_after(
+        HOOK_TRANSPORT_READY,
+        async_runtime_get_context(runtime),
+        slot,
+        nullptr,
+        0,
+        await_ready_hook ? _resume_input_after_transport_ready_hook : nullptr,
+        nullptr,
+        slot);
+    if (result != MUDMUX_DISPATCH_OK) {
+        comm->flags &= ~(C_TRANSPORT_READY | C_AWAITING_HOOK);
+    }
+}
+
+static void _resume_input_after_connect_hook(void* context, int slot) {
+    async_runtime_t* runtime = static_cast<async_runtime_t*>(context);
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
+    if (!comm)
+        return;
+
+    // The connect task is complete before transport-ready is queued.  This
+    // lets the latter occupy the same slot's normal serialized lifecycle lane.
+    if (!(comm->flags & C_CLOSING))
+        comm->flags &= ~C_AWAITING_HOOK;
+    comm_invoke_transport_ready(runtime, slot);
     comm->flags |= C_DEFERRED_INBOUND;
     has_deferred_input.store(true, std::memory_order_release);
 }
@@ -251,13 +299,15 @@ int comm_invoke_connect (async_runtime_t* runtime, int slot, int entry_slot) {
         entry_name.data(),
         entry_name.size(),
         await_connect_hook ? _resume_input_after_connect_hook : nullptr,
-        nullptr,
+        await_connect_hook ? runtime : nullptr,
         slot);
     if (await_connect_hook && result != MUDMUX_DISPATCH_OK) {
         comm_abstract_ptr comm(slot, comm_slots_mtx);
         if (comm)
             comm->flags &= ~C_AWAITING_HOOK;
     }
+    if (!await_connect_hook)
+        comm_invoke_transport_ready(runtime, slot);
     return static_cast<int>(result);
 }
 

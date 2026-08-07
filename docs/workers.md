@@ -42,6 +42,7 @@ relaxed mode, these hooks are eligible for worker execution:
 - `HOOK_DISCONNECT`
 - `HOOK_MESSAGE_INBOUND`
 - `HOOK_MESSAGE_OUTBOUND`
+- `HOOK_TRANSPORT_READY`
 - `HOOK_PROMPT`
 - `HOOK_TELNET_SUBNEG`
 
@@ -68,6 +69,7 @@ is idle. This bounds queued application work while preserving inbound order.
 | `HOOK_CONNECT` | The scheduler can queue explicit requests, although a normal accepted connection starts with connect. |
 | `HOOK_DISCONNECT` | The terminal disconnect transition is retained and retried after the active callback. |
 | `HOOK_MESSAGE_OUTBOUND` | May enter the target slot's bounded continuation queue. |
+| `HOOK_TRANSPORT_READY` | May enter the slot's bounded continuation queue. |
 | `HOOK_PROMPT` | May enter the slot's bounded continuation queue. |
 | `HOOK_MESSAGE_INBOUND` | Does not queue; inbound parsing pauses. |
 | `HOOK_TELNET_SUBNEG` | Does not queue; Telnet parsing pauses. |
@@ -125,8 +127,8 @@ intentionally stop and restart workers while mudmux remains initialized:
   `ASYNC_CLOSURE_SCHEDULER_OK`; completion receives that message on success or
   `ASYNC_CLOSURE_SCHEDULER_FAILED` when work or its cleanup fails.
 - `mudmux_workers_await(work, resume)` is a non-blocking, slot-held operation.
-  It is valid only from the current `HOOK_MESSAGE_INBOUND` or
-  `HOOK_TELNET_SUBNEG` callback. On success it records the request, lets that
+  It is valid only from the current `HOOK_TRANSPORT_READY`,
+  `HOOK_MESSAGE_INBOUND`, or `HOOK_TELNET_SUBNEG` callback. On success it records the request, lets that
   callback return, then runs `work` on a worker. Same-slot inbound parsing
   remains deferred until `resume` runs through the slot gate. A disconnected
   slot cancels and destroys the resume closure; a reused slot is additionally

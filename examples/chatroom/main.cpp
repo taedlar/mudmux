@@ -77,13 +77,17 @@ static bool parse_transport (const std::string& name, Transport& transport) {
 static int on_connect (void*, int slot, void* data, size_t len) {
     std::string entry_name{static_cast<const char*>(data), len};
     SPDLOG_INFO ("New connection on slot {} from entry '{}'", slot, entry_name);
-    auto user = User::connect(slot);
     if (entry_name != "-") {
         if (!configure_transport()) {
             SPDLOG_ERROR ("failed to enable selected transport on slot {}", slot);
             return -1;
         }
     }
+    return 0;
+}
+
+static int on_transport_ready (void*, int slot, void*, size_t) {
+    auto user = User::connect(slot);
     comm_enable_virtual_terminal (slot); // enable ANSI/VT100 processing for console and TELNET connections
     comm_enable_prompt (slot, true); // enable prompt for console user
     comm_set_line_input (slot, true); // enable line input mode for console user
@@ -150,6 +154,7 @@ int main (int argc, char* argv[]) {
 
     // register hooks
     mudmux_register_hook (HOOK_CONNECT, on_connect);
+    mudmux_register_hook (HOOK_TRANSPORT_READY, on_transport_ready);
     mudmux_register_hook (HOOK_MESSAGE_INBOUND, on_message_inbound);
     mudmux_register_hook (HOOK_MESSAGE_OUTBOUND, on_message_outbound);
     mudmux_register_hook (HOOK_DISCONNECT, on_disconnect);

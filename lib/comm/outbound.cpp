@@ -14,6 +14,7 @@
 #include "console.hpp"
 #include "execution.hpp"
 #include "file_input.hpp"
+#include "inbound.hpp"
 #include "hooks.hpp"
 #include "ssl.hpp"
 #include "telnet.hpp"
@@ -334,9 +335,21 @@ void comm_flush (async_runtime_t* runtime, int slot) {
         comm->outbound = comm->websocket_upgrade_barrier;
         comm->websocket_upgrade_barrier = nullptr;
         comm->flags |= C_BUFFERED_WRITE;
+        // The barrier now occupies the normal queue, so output written by a
+        // strict transport-ready hook appends after it.  This also makes a
+        // nested flush from hook dispatch preserve the same ordering.
+        comm_invoke_transport_ready(runtime, slot);
+        if (!comm)
+            return;
         comm_flush(runtime, slot);
         return;
     }
+
+    // No application output was held behind the HTTP 101 response.  This is
+    // the remaining WebSocket-ready path, including Telnet-over-WebSocket
+    // after its initial negotiation bytes drain.
+    if (!comm->outbound && C_WEBSOCKET_IS_READY(comm->flags))
+        comm_invoke_transport_ready(runtime, slot);
 
     socket_fd_t fd {INVALID_SOCKET_FD};
     if (!comm_bio_get_socket_fd(comm->wbio, &fd)) {

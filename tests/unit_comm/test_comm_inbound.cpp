@@ -125,6 +125,18 @@ int rewrite_outbound_message(void*, int slots, void* data, size_t len) {
     return 0;
 }
 
+int connect_websocket_with_output(void*, int slot, void*, size_t) {
+    if (!comm_enable_websocket_for_slot(slot, nullptr))
+        return -1;
+    comm_buffered_write(slot, "connect", 7);
+    return 0;
+}
+
+int transport_ready_with_output(void*, int slot, void*, size_t) {
+    comm_buffered_write(slot, "ready", 5);
+    return 0;
+}
+
 std::promise<void>* thread_pool_first_slot_entered_ptr{nullptr};
 std::promise<void>* thread_pool_other_slots_done_ptr{nullptr};
 std::shared_future<void>* thread_pool_first_slot_release_future_ptr{nullptr};
@@ -378,6 +390,32 @@ TEST_F(CommInboundTest, CurrentSlotIsAvailableOnlyToSlotScopedHooks) {
     async_runtime_deinit(runtime);
 }
 
+TEST_F(CommInboundTest, TransportReadyFiresOnceAfterConnectBeforeInbound) {
+    async_runtime_t* runtime = async_runtime_init(this);
+    ASSERT_NE(runtime, nullptr);
+    const int slot = add_memory_comm(C_LINE_INPUT);
+    ASSERT_NE(slot, -1);
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
+    ASSERT_TRUE(comm);
+
+    observed_current_slot = -2;
+    ASSERT_TRUE(mudmux_register_hook(HOOK_TRANSPORT_READY, CommInboundTest::hook_record_current_slot));
+    ASSERT_TRUE(mudmux_register_hook(HOOK_MESSAGE_INBOUND, CommInboundTest::hook_message_inbound));
+    EXPECT_EQ(comm_invoke_connect(runtime, slot, slot), MUDMUX_DISPATCH_OK);
+    EXPECT_EQ(observed_current_slot, slot);
+    EXPECT_NE(comm_get_flags(slot) & C_TRANSPORT_READY, 0u);
+
+    observed_current_slot = -2;
+    inbound_messages.clear();
+    ASSERT_TRUE(comm_refill_inbound_buffers(comm, "message\n", 8));
+    EXPECT_EQ(comm_process_input(runtime, comm, 1), COMM_PROCESS_OK);
+    ASSERT_EQ(inbound_messages.size(), 1u);
+    EXPECT_EQ(inbound_messages[0], "message");
+    EXPECT_EQ(observed_current_slot, -2);
+
+    async_runtime_deinit(runtime);
+}
+
 TEST_F(CommInboundTest, ProcessLineInputModeDispatchesCompleteLines) {
     async_runtime_t* runtime = async_runtime_init(this);
     ASSERT_NE(runtime, nullptr);
@@ -619,6 +657,42 @@ TEST_F(CommInboundTest, ConnectHookCanSelectWebSocketOnly) {
     EXPECT_EQ(comm_get_flags(slot) & C_ENABLE_TELNET, 0u);
     ASSERT_EQ(inbound_messages.size(), 1u);
     EXPECT_EQ(inbound_messages[0], "hi");
+
+    async_runtime_deinit(runtime);
+}
+
+TEST_F(CommInboundTest, WebSocketReadyOutputAppendsAfterConnectBarrier) {
+    async_runtime_t* runtime = async_runtime_init(this);
+    ASSERT_NE(runtime, nullptr);
+    const int slot = add_memory_comm(C_LINE_INPUT);
+    ASSERT_NE(slot, -1);
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
+    ASSERT_TRUE(comm);
+
+    ASSERT_TRUE(mudmux_register_hook(HOOK_CONNECT, connect_websocket_with_output));
+    ASSERT_TRUE(mudmux_register_hook(HOOK_TRANSPORT_READY, transport_ready_with_output));
+    ASSERT_EQ(comm_invoke_connect(runtime, slot, slot), MUDMUX_DISPATCH_OK);
+
+    const std::string request =
+        "GET /ws HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n";
+    ASSERT_TRUE(comm_refill_inbound_buffers(comm, request.data(), request.size()));
+    EXPECT_EQ(comm_process_input(runtime, comm, -1), COMM_PROCESS_OK);
+    comm_flush(runtime, slot);
+
+    std::array<char, 512> response_buf{};
+    const int response_len = BIO_read(comm->wbio, response_buf.data(), static_cast<int>(response_buf.size()));
+    ASSERT_GT(response_len, 0);
+    const std::string response(response_buf.data(), static_cast<size_t>(response_len));
+    std::string connect_frame("\x82\x07", 2);
+    connect_frame += "connect";
+    std::string ready_frame("\x82\x05", 2);
+    ready_frame += "ready";
+    const size_t connect_pos = response.find(connect_frame);
+    const size_t ready_pos = response.find(ready_frame);
+    EXPECT_NE(connect_pos, std::string::npos);
+    EXPECT_NE(ready_pos, std::string::npos);
+    EXPECT_LT(connect_pos, ready_pos);
 
     async_runtime_deinit(runtime);
 }
