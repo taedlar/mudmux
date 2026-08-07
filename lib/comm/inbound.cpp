@@ -231,8 +231,7 @@ void comm_invoke_transport_ready(async_runtime_t* runtime, int slot) {
         return;
     // A WebSocket becomes application-ready only after the HTTP 101 response
     // (and, for Telnet-over-WebSocket, the initial Telnet bytes) have drained.
-    if ((comm->flags & C_ENABLE_WEBSOCKET) &&
-        (!C_WEBSOCKET_IS_READY(comm->flags) || comm->outbound))
+    if ((comm->flags & C_ENABLE_WEBSOCKET) && !C_WEBSOCKET_IS_READY(comm->flags))
         return;
 
     comm->flags |= C_TRANSPORT_READY;

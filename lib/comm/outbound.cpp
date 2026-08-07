@@ -331,11 +331,16 @@ void comm_flush (async_runtime_t* runtime, int slot) {
     // outbound queue is empty would put a WebSocket frame on the wire before
     // the upgrade has completed.
     if (!comm->outbound && C_WEBSOCKET_IS_READY(comm->flags) && comm->websocket_upgrade_barrier) {
-        comm_invoke_transport_ready(runtime, slot);
         SPDLOG_DEBUG("releasing WebSocket upgrade barrier on slot {} after HTTP 101", slot);
         comm->outbound = comm->websocket_upgrade_barrier;
         comm->websocket_upgrade_barrier = nullptr;
         comm->flags |= C_BUFFERED_WRITE;
+        // The barrier now occupies the normal queue, so output written by a
+        // strict transport-ready hook appends after it.  This also makes a
+        // nested flush from hook dispatch preserve the same ordering.
+        comm_invoke_transport_ready(runtime, slot);
+        if (!comm)
+            return;
         comm_flush(runtime, slot);
         return;
     }
