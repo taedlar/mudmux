@@ -333,6 +333,78 @@ TEST_F(CommInboundTest, WriteMessageBuffersDirectlyOrRoutesThroughOutboundHook) 
     async_runtime_deinit(runtime);
 }
 
+TEST_F(CommInboundTest, BufferedWriteNormalizesNewlinesWhenTelnetEnabled) {
+    async_runtime_t* runtime = async_runtime_init(this);
+    ASSERT_NE(runtime, nullptr);
+
+    const int slot = add_memory_comm(C_ENABLE_TELNET);
+    ASSERT_NE(slot, -1);
+
+    const char payload[] = "line1\nline2\r\nline3\rline4";
+    comm_buffered_write(slot, payload, sizeof(payload) - 1);
+    comm_flush(runtime, slot);
+
+    std::array<char, 64> output{};
+    const int output_len = BIO_read(comm_abstract_get(slot)->wbio, output.data(), static_cast<int>(output.size()));
+    ASSERT_GT(output_len, 0);
+    EXPECT_EQ(
+        std::string(output.data(), static_cast<size_t>(output_len)),
+        "line1\r\nline2\r\nline3\r\nline4");
+
+    async_runtime_deinit(runtime);
+}
+
+TEST_F(CommInboundTest, BufferedWritePreservesNewlinesWhenTelnetDisabled) {
+    async_runtime_t* runtime = async_runtime_init(this);
+    ASSERT_NE(runtime, nullptr);
+
+    const int slot = add_memory_comm(0);
+    ASSERT_NE(slot, -1);
+
+    const char payload[] = "line1\nline2\r\nline3\rline4";
+    comm_buffered_write(slot, payload, sizeof(payload) - 1);
+    comm_flush(runtime, slot);
+
+    std::array<char, 64> output{};
+    const int output_len = BIO_read(comm_abstract_get(slot)->wbio, output.data(), static_cast<int>(output.size()));
+    ASSERT_GT(output_len, 0);
+    EXPECT_EQ(
+        std::string(output.data(), static_cast<size_t>(output_len)),
+        "line1\nline2\r\nline3\rline4");
+
+    async_runtime_deinit(runtime);
+}
+
+TEST_F(CommInboundTest, TelnetSubnegotiationOutboundPayloadRemainsByteExact) {
+    async_runtime_t* runtime = async_runtime_init(this);
+    ASSERT_NE(runtime, nullptr);
+
+    const int slot = add_memory_comm(C_ENABLE_TELNET);
+    ASSERT_NE(slot, -1);
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
+    ASSERT_TRUE(comm);
+
+    const char payload[] = "A\nB\rC\r\nD";
+    comm_telnet_send_subnegotiation(comm, TELOPT_TTYPE, payload, sizeof(payload) - 1);
+    comm_flush(runtime, slot);
+
+    std::array<char, 64> output{};
+    const int output_len = BIO_read(comm->wbio, output.data(), static_cast<int>(output.size()));
+    ASSERT_GT(output_len, 0);
+
+    std::string expected;
+    expected.push_back(static_cast<char>(255));
+    expected.push_back(static_cast<char>(250));
+    expected.push_back(static_cast<char>(TELOPT_TTYPE));
+    expected.append(payload, sizeof(payload) - 1);
+    expected.push_back(static_cast<char>(255));
+    expected.push_back(static_cast<char>(240));
+
+    EXPECT_EQ(std::string(output.data(), static_cast<size_t>(output_len)), expected);
+
+    async_runtime_deinit(runtime);
+}
+
 TEST_F(CommInboundTest, RefillInboundBuffers) {
     async_runtime_t* runtime = async_runtime_init(this);
     ASSERT_NE(runtime, nullptr);

@@ -172,7 +172,7 @@ void comm_telnet_send_will(comm_abstract_ptr& comm, int option) {
     if (!comm || !comm->wbio)
         return;
     unsigned char buf[3] = { 255, 251, static_cast<unsigned char>(option) }; // IAC WILL option
-    comm_buffered_write_comm(comm, reinterpret_cast<char*>(buf), sizeof(buf));
+    comm_buffered_write_comm_no_telnet_normalize(comm, reinterpret_cast<char*>(buf), sizeof(buf));
     SPDLOG_DEBUG("sent: we WILL option {}", option);
 }
 
@@ -180,7 +180,7 @@ void comm_telnet_send_wont(comm_abstract_ptr& comm, int option) {
     if (!comm || !comm->wbio)
         return;
     unsigned char buf[3] = { 255, 252, static_cast<unsigned char>(option) }; // IAC WONT option
-    comm_buffered_write_comm(comm, reinterpret_cast<char*>(buf), sizeof(buf));
+    comm_buffered_write_comm_no_telnet_normalize(comm, reinterpret_cast<char*>(buf), sizeof(buf));
     SPDLOG_DEBUG("sent: we WONT option {}", option);
 }
 
@@ -188,7 +188,7 @@ void comm_telnet_send_do(comm_abstract_ptr& comm, int option) {
     if (!comm || !comm->wbio)
         return;
     unsigned char buf[3] = { 255, 253, static_cast<unsigned char>(option) }; // IAC DO option
-    comm_buffered_write_comm(comm, reinterpret_cast<char*>(buf), sizeof(buf));
+    comm_buffered_write_comm_no_telnet_normalize(comm, reinterpret_cast<char*>(buf), sizeof(buf));
     SPDLOG_DEBUG("sent: please DO option {}", option);
 }
 
@@ -196,7 +196,7 @@ void comm_telnet_send_dont(comm_abstract_ptr& comm, int option) {
     if (!comm || !comm->wbio)
         return;
     unsigned char buf[3] = { 255, 254, static_cast<unsigned char>(option) }; // IAC DONT option
-    comm_buffered_write_comm(comm, reinterpret_cast<char*>(buf), sizeof(buf));
+    comm_buffered_write_comm_no_telnet_normalize(comm, reinterpret_cast<char*>(buf), sizeof(buf));
     SPDLOG_DEBUG("sent: please DONT option {}", option);
 }
 
@@ -206,9 +206,9 @@ void comm_telnet_send_subnegotiation(comm_abstract_ptr& comm, int option, const 
     // Send IAC SB option ... IAC SE
     unsigned char iac_sb[3] = { 255, 250, static_cast<unsigned char>(option) }; // IAC SB option
     unsigned char iac_se[2] = { 255, 240 }; // IAC SE
-    comm_buffered_write_comm(comm, reinterpret_cast<char*>(iac_sb), sizeof(iac_sb));
-    comm_buffered_write_comm(comm, data, len);
-    comm_buffered_write_comm(comm, reinterpret_cast<char*>(iac_se), sizeof(iac_se));
+    comm_buffered_write_comm_no_telnet_normalize(comm, reinterpret_cast<char*>(iac_sb), sizeof(iac_sb));
+    comm_buffered_write_comm_no_telnet_normalize(comm, data, len);
+    comm_buffered_write_comm_no_telnet_normalize(comm, reinterpret_cast<char*>(iac_se), sizeof(iac_se));
     SPDLOG_DEBUG("sent: subnegotiation for option {} with {} bytes of data", option, len);
 }
 
