@@ -16,6 +16,7 @@
 
 #include "async/async_event.h"
 #include "async/async_queue.h"
+#include "async/async_runtime.h"
 #include "async/thread_pool.hpp"
 
 namespace {
@@ -66,6 +67,57 @@ TEST(AsyncEventTest, AutoResetConsumesReadableState) {
     async_event_destroy(&event);
 }
 #endif
+
+TEST(AsyncRuntimeTest, ManualResetEventRemainsSignaledUntilReset) {
+    async_runtime_t* runtime = async_runtime_init(nullptr);
+    ASSERT_NE(runtime, nullptr);
+
+    async_event_t event{};
+    ASSERT_TRUE(async_event_init(&event, true, false));
+    ASSERT_EQ(async_runtime_add_event(runtime, &event, &event), 0);
+
+    async_event_set(&event);
+
+    io_event_t events[1]{};
+    timeval timeout{0, 500000};
+    ASSERT_EQ(async_runtime_wait(runtime, events, 1, &timeout), 1);
+    EXPECT_EQ(events[0].context, &event);
+    EXPECT_EQ(events[0].event_type, EVENT_READ);
+
+    ASSERT_EQ(async_runtime_wait(runtime, events, 1, &timeout), 1);
+    EXPECT_EQ(events[0].context, &event);
+    EXPECT_EQ(events[0].event_type, EVENT_READ);
+
+    async_event_reset(&event);
+    timeval no_wait{0, 0};
+    EXPECT_EQ(async_runtime_wait(runtime, events, 1, &no_wait), 0);
+
+    async_runtime_deinit(runtime);
+    async_event_destroy(&event);
+}
+
+TEST(AsyncRuntimeTest, AutoResetEventIsConsumedByOneDelivery) {
+    async_runtime_t* runtime = async_runtime_init(nullptr);
+    ASSERT_NE(runtime, nullptr);
+
+    async_event_t event{};
+    ASSERT_TRUE(async_event_init(&event, false, false));
+    ASSERT_EQ(async_runtime_add_event(runtime, &event, &event), 0);
+
+    async_event_set(&event);
+
+    io_event_t events[1]{};
+    timeval timeout{0, 500000};
+    ASSERT_EQ(async_runtime_wait(runtime, events, 1, &timeout), 1);
+    EXPECT_EQ(events[0].context, &event);
+    EXPECT_EQ(events[0].event_type, EVENT_READ);
+
+    timeval no_wait{0, 0};
+    EXPECT_EQ(async_runtime_wait(runtime, events, 1, &no_wait), 0);
+
+    async_runtime_deinit(runtime);
+    async_event_destroy(&event);
+}
 
 TEST(AsyncQueueTest, BlockingWriterResumesAfterDequeue) {
     async_queue_t* queue = async_queue_create(1, 32, ASYNC_QUEUE_BLOCK_WRITER);

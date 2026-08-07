@@ -31,6 +31,7 @@
 /* Windows: Use native event for WaitForMultipleObjects compatibility */
 struct EventImpl {
     HANDLE event;
+    bool manual_reset;
 };
 #else
 /* POSIX: Use a pollable kernel object with userspace reset semantics. */
@@ -54,6 +55,10 @@ static_assert(sizeof(EventImpl) <= sizeof(async_event_t),
 /* Helper to get EventImpl pointer from opaque storage */
 static inline EventImpl* get_event(async_event_t* event) {
     return reinterpret_cast<EventImpl*>(event);
+}
+
+static inline const EventImpl* get_event(const async_event_t* event) {
+    return reinterpret_cast<const EventImpl*>(event);
 }
 
 #ifndef _WIN32
@@ -172,7 +177,7 @@ bool async_event_init (async_event_t* event, bool manual_reset, bool initial_sta
         );
         if (!h) return false;
         
-        new (event) EventImpl{ h };
+        new (event) EventImpl{ h, manual_reset };
         return true;
 #elif defined(__linux__)
         int event_fd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
@@ -360,6 +365,10 @@ bool async_event_wait (async_event_t* event, int timeout_ms) {
         }
     }
 #endif
+}
+
+bool async_event_is_manual_reset(const async_event_t* event) {
+    return event && get_event(event)->manual_reset;
 }
 
 async_wait_handle_t async_event_get_wait_handle(async_event_t* event) {

@@ -441,9 +441,10 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
             auto& event = events[i];
 
             if (event_registration_t* registration = find_event_registration(event.context)) {
-                // Reset before dispatch so a signal delivered while the hook is
-                // running schedules another invocation instead of being lost.
-                async_event_reset(registration->event);
+                // Manual-reset events are acknowledged before dispatch so a
+                // signal delivered while the hook runs remains pending.
+                if (async_event_is_manual_reset(registration->event))
+                    async_event_reset(registration->event);
                 mudmux_hook_func_t hook_func = registration->hook_func
                     ? registration->hook_func
                     : mudmux_get_registered_hook(HOOK_TIMER);

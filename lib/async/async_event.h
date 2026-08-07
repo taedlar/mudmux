@@ -51,6 +51,13 @@ void async_event_reset(async_event_t* event);
 bool async_event_wait(async_event_t* event, int timeout_ms);
 
 /**
+ * Return whether an event uses manual-reset semantics.
+ * Internal runtime code uses this to preserve reset behavior while delivering
+ * registered events through platform-specific wait backends.
+ */
+bool async_event_is_manual_reset(const async_event_t* event);
+
+/**
  * Get native pollable/waitable OS handle for event loop integration.
  *
  * - Windows: HANDLE for WaitForMultipleObjects-style waits.

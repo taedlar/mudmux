@@ -166,8 +166,14 @@ int async_runtime_modify(async_runtime_t* runtime, socket_fd_t fd, uint32_t even
 int async_runtime_remove(async_runtime_t* runtime, socket_fd_t fd);
 
 /**
- * Register a pollable async event with the runtime.  When the event is set,
+ * Register a pollable async event with the runtime. When the event is set,
  * its context is returned as an EVENT_READ io_event.
+ *
+ * A manual-reset event remains signaled until the caller resets it with
+ * async_event_reset(). Callers should reset a delivered manual-reset event
+ * before the next async_runtime_wait() call; otherwise it may be delivered
+ * again.
+ * An auto-reset event is consumed by one delivery.
  */
 int async_runtime_add_event(async_runtime_t* runtime, async_event_t* event, void* context);
 

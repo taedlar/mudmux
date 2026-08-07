@@ -57,10 +57,21 @@ static int record_timer_lifecycle(void*, int msg, void*, size_t) {
 }
 
 static std::atomic<int> custom_event_hook_calls{0};
+static std::atomic<int> auto_reset_event_hook_calls{0};
+static async_event_t* auto_reset_event{nullptr};
 
 static int shutdown_on_custom_event(void*, int, void*, size_t) {
     ++custom_event_hook_calls;
     mudmux_shutdown();
+    return 0;
+}
+
+static int resignal_auto_reset_event(void*, int, void*, size_t) {
+    if (++auto_reset_event_hook_calls == 1) {
+        async_event_set(auto_reset_event);
+    } else {
+        mudmux_shutdown();
+    }
     return 0;
 }
 
@@ -289,6 +300,36 @@ TEST(MudmuxTest, CustomAsyncEventDispatchesRegisteredHook) {
     server_thread.join();
     EXPECT_EQ(custom_event_hook_calls.load(), 1);
     async_event_destroy(&event);
+    mudmux_deinit();
+}
+
+TEST(MudmuxTest, AutoResetAsyncEventResignalsDuringHook) {
+    auto_reset_event_hook_calls.store(0);
+    ASSERT_TRUE(mudmux_init(nullptr));
+    async_event_t event{};
+    auto_reset_event = &event;
+    ASSERT_TRUE(async_event_init(&event, false, false));
+    ASSERT_TRUE(mudmux_register_event(&event, resignal_auto_reset_event));
+
+    std::promise<int> run_result_promise;
+    auto run_result = run_result_promise.get_future();
+    std::thread server_thread([&run_result_promise]() {
+        run_result_promise.set_value(mudmux_run(nullptr));
+    });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    async_event_set(&event);
+    const auto status = run_result.wait_for(std::chrono::seconds(2));
+    if (status != std::future_status::ready) {
+        mudmux_shutdown();
+        server_thread.join();
+        FAIL() << "auto-reset event did not re-signal mudmux_run";
+    }
+    EXPECT_EQ(run_result.get(), EXIT_SUCCESS);
+    server_thread.join();
+    EXPECT_EQ(auto_reset_event_hook_calls.load(), 2);
+    async_event_destroy(&event);
+    auto_reset_event = nullptr;
     mudmux_deinit();
 }
 
