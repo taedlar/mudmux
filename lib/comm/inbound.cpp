@@ -115,6 +115,14 @@ bool comm_has_deferred_input (void) {
     return has_deferred_input.load(std::memory_order_acquire);
 }
 
+void comm_defer_input(int slot) {
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
+    if (!comm)
+        return;
+    comm->flags |= C_DEFERRED_INBOUND;
+    has_deferred_input.store(true, std::memory_order_release);
+}
+
 size_t comm_copy_inbound_data_prefix(comm_abstract_ptr& comm, size_t limit, std::string& out) {
     out.clear();
     if (!comm || limit == 0) {

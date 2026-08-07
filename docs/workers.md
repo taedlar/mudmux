@@ -124,6 +124,13 @@ intentionally stop and restart workers while mudmux remains initialized:
   either closure or its destructor are logged and contained. Work receives
   `ASYNC_CLOSURE_SCHEDULER_OK`; completion receives that message on success or
   `ASYNC_CLOSURE_SCHEDULER_FAILED` when work or its cleanup fails.
+- `mudmux_workers_await(work, resume)` is a non-blocking, slot-held operation.
+  It is valid only from the current `HOOK_MESSAGE_INBOUND` or
+  `HOOK_TELNET_SUBNEG` callback. On success it records the request, lets that
+  callback return, then runs `work` on a worker. Same-slot inbound parsing
+  remains deferred until `resume` runs through the slot gate. A disconnected
+  slot cancels and destroys the resume closure; a reused slot is additionally
+  protected by generation validation.
 
 `<mudmux/execution.h>` exposes `mudmux_is_running()`. It reports whether a
 `mudmux_run()` call is active, not whether the worker pool exists. Use these

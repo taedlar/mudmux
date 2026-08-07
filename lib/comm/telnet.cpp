@@ -6,6 +6,7 @@
 
 #include "abstract.hpp"
 #include "execution.hpp"
+#include "hooks.hpp"
 #include "current_slot.hpp"
 #include "inbound.hpp"
 #include "outbound.hpp"
@@ -259,12 +260,13 @@ mudmux_dispatch_result_t comm_dispatch_telnet_subnegotiation(async_runtime_t* ru
         return dispatch_result;
     }
 
-    return static_cast<mudmux_dispatch_result_t>(mudmux_invoke_registered_hook(
+    return mudmux_dispatch_hook_after(
         HOOK_TELNET_SUBNEG,
         async_runtime_get_context(runtime),
         option,
-        const_cast<char*>(payload),
+        payload,
         payload_len,
-        true,
-        comm.slot()) < 0 ? MUDMUX_DISPATCH_ERROR : MUDMUX_DISPATCH_OK);
+        nullptr,
+        nullptr,
+        comm.slot());
 }

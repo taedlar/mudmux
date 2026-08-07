@@ -23,6 +23,9 @@ void comm_resume_deferred_input (async_runtime_t* runtime);
 int comm_invoke_connect (async_runtime_t* runtime, int slot, int entry_slot);
 int comm_invoke_inbound_message (async_runtime_t* runtime, comm_abstract_ptr& comm, const void* data, size_t size);
 
+/** Preserve buffered input until the execution layer releases @p slot. */
+void comm_defer_input(int slot);
+
 /**
  * @brief Refill the inbound buffer chain for the specified comm slot by reading from the
  * underlying BIO. Process transport layer details such as TLS decryption and Telnet negotiation

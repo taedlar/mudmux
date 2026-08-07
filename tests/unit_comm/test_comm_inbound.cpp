@@ -12,6 +12,7 @@
 #include "mudmux/mudmux.h"
 #include "mudmux/comm.h"
 #include "mudmux/hooks.h"
+#include "mudmux/workers.h"
 
 #include <string>
 #include <vector>
@@ -154,6 +155,44 @@ std::promise<void>* inbound_hook_entered_ptr{nullptr};
 std::shared_future<void>* inbound_hook_release_ptr{nullptr};
 std::promise<void>* inbound_hook_finished_ptr{nullptr};
 std::atomic<int> inbound_hook_call_count{0};
+
+std::promise<void>* await_work_started_ptr{nullptr};
+std::shared_future<void>* await_work_release_ptr{nullptr};
+std::promise<void>* await_resume_finished_ptr{nullptr};
+std::promise<void>* await_second_inbound_ptr{nullptr};
+std::atomic<int> await_inbound_call_count{0};
+std::atomic<int> await_work_message{ASYNC_CLOSURE_SCHEDULER_FAILED};
+std::atomic<int> await_resume_message{ASYNC_CLOSURE_SCHEDULER_FAILED};
+
+void await_work(void*, int message) {
+    await_work_message.store(message);
+    if (await_work_started_ptr)
+        await_work_started_ptr->set_value();
+    if (await_work_release_ptr)
+        await_work_release_ptr->wait();
+}
+
+void await_resume(void*, int message) {
+    await_resume_message.store(message);
+    if (await_resume_finished_ptr)
+        await_resume_finished_ptr->set_value();
+}
+
+int awaiting_inbound_hook(void* context, int, void* data, size_t len) {
+    auto* test = static_cast<CommInboundTest*>(context);
+    if (test)
+        test->inbound_messages.emplace_back(static_cast<char*>(data), len);
+
+    if (await_inbound_call_count.fetch_add(1) == 0) {
+        async_closure_t work{await_work, nullptr, nullptr};
+        async_closure_t resume{await_resume, nullptr, nullptr};
+        return mudmux_workers_await(&work, &resume) ? 0 : -1;
+    }
+
+    if (await_second_inbound_ptr)
+        await_second_inbound_ptr->set_value();
+    return 0;
+}
 
 int thread_pool_stress_hook(void*, int slot, void* data, size_t len) {
     (void)data;
@@ -929,6 +968,66 @@ TEST_F(CommInboundTest, ThreadPoolKeepsPerSlotOrderWhileOtherSlotsAdvance) {
     thread_pool_other_slots_done_ptr = nullptr;
     thread_pool_first_slot_release_future_ptr = nullptr;
     thread_pool_first_slot_finished_ptr = nullptr;
+    mudmux_deinit();
+}
+
+TEST_F(CommInboundTest, WorkersAwaitDefersInboundUntilResume) {
+    mudmux_deinit();
+    ASSERT_TRUE(mudmux_init("{\"transport\": {\"thread_pool\": {\"size\": 2}}}"));
+
+    std::promise<void> work_started_promise;
+    std::future<void> work_started_future = work_started_promise.get_future();
+    std::promise<void> work_release_promise;
+    std::shared_future<void> work_release_future = work_release_promise.get_future().share();
+    std::promise<void> resume_finished_promise;
+    std::future<void> resume_finished_future = resume_finished_promise.get_future();
+    std::promise<void> second_inbound_promise;
+    std::future<void> second_inbound_future = second_inbound_promise.get_future();
+
+    await_work_started_ptr = &work_started_promise;
+    await_work_release_ptr = &work_release_future;
+    await_resume_finished_ptr = &resume_finished_promise;
+    await_second_inbound_ptr = &second_inbound_promise;
+    await_inbound_call_count.store(0);
+    await_work_message.store(ASYNC_CLOSURE_SCHEDULER_FAILED);
+    await_resume_message.store(ASYNC_CLOSURE_SCHEDULER_FAILED);
+    ASSERT_TRUE(mudmux_register_hook(HOOK_MESSAGE_INBOUND, awaiting_inbound_hook));
+
+    async_runtime_t* runtime = async_runtime_init(this);
+    ASSERT_NE(runtime, nullptr);
+    const int slot = add_memory_comm(C_LINE_INPUT);
+    ASSERT_NE(slot, -1);
+    {
+        comm_abstract_ptr comm(slot, comm_slots_mtx);
+        ASSERT_TRUE(comm);
+        ASSERT_TRUE(comm_refill_inbound_buffers(comm, "first\nsecond\n", 13));
+        EXPECT_EQ(comm_process_input(runtime, comm, -1), COMM_PROCESS_DEFERRED);
+    }
+
+    ASSERT_EQ(work_started_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_EQ(await_work_message.load(), ASYNC_CLOSURE_SCHEDULER_OK);
+    {
+        comm_abstract_ptr comm(slot, comm_slots_mtx);
+        ASSERT_TRUE(comm);
+        EXPECT_EQ(comm_process_input(runtime, comm, -1), COMM_PROCESS_DEFERRED);
+    }
+    EXPECT_EQ(await_inbound_call_count.load(), 1);
+
+    work_release_promise.set_value();
+    ASSERT_EQ(resume_finished_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_EQ(await_resume_message.load(), ASYNC_CLOSURE_SCHEDULER_OK);
+
+    comm_resume_deferred_input(runtime);
+    ASSERT_EQ(second_inbound_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    ASSERT_EQ(inbound_messages.size(), 2u);
+    EXPECT_EQ(inbound_messages[0], "first");
+    EXPECT_EQ(inbound_messages[1], "second");
+
+    await_work_started_ptr = nullptr;
+    await_work_release_ptr = nullptr;
+    await_resume_finished_ptr = nullptr;
+    await_second_inbound_ptr = nullptr;
+    async_runtime_deinit(runtime);
     mudmux_deinit();
 }
 

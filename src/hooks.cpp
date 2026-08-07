@@ -84,6 +84,7 @@ mudmux_dispatch_result_t mudmux_dispatch_hook_after(
                 : MUDMUX_DISPATCH_OK);
         if (completion)
             completion(completion_context, msg);
+        (void)mudmux_execution_finalize_await(current_slot_);
         return result;
     }
 
