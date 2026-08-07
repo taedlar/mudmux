@@ -9,6 +9,8 @@ extern "C" void comm_write_message (int from_slot, int to_slot, const void *buf,
 
 extern "C" void comm_buffered_write (int slot, const void *buf, size_t len);
 void comm_buffered_write_comm (comm_abstract_ptr& comm, const void *buf, size_t len);
+/** Queue outbound data while bypassing Telnet CRLF text normalization. */
+void comm_buffered_write_comm_no_telnet_normalize (comm_abstract_ptr& comm, const void *buf, size_t len);
 /** Queue already-framed transport bytes (used for WebSocket control frames). */
 void comm_buffered_write_raw_comm (comm_abstract_ptr& comm, const void *buf, size_t len);
 

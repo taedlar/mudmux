@@ -7,6 +7,8 @@
 
 #include <algorithm>
 #include <mutex>
+#include <string>
+#include <string_view>
 #include <vector>
 #include <openssl/bio.h>
 #include <openssl/err.h>
@@ -99,6 +101,33 @@ static bool append_websocket_upgrade_barrier(comm_abstract_ptr& comm, const void
     return true;
 }
 
+static std::string normalize_telnet_newlines(std::string_view input) {
+    std::string normalized;
+    normalized.reserve(input.size());
+
+    for (size_t i = 0; i < input.size(); ++i) {
+        const char ch = input[i];
+        if (ch == '\r') {
+            normalized.push_back('\r');
+            if (i + 1 < input.size() && input[i + 1] == '\n') {
+                normalized.push_back('\n');
+                ++i;
+            } else {
+                normalized.push_back('\n');
+            }
+            continue;
+        }
+        if (ch == '\n') {
+            normalized.push_back('\r');
+            normalized.push_back('\n');
+            continue;
+        }
+        normalized.push_back(ch);
+    }
+
+    return normalized;
+}
+
 void comm_buffered_write_raw_comm(comm_abstract_ptr& comm, const void *buf, size_t len) {
     if (!comm || !comm->wbio || !buf || len == 0)
         return; // invalid parameters
@@ -165,9 +194,22 @@ void comm_buffered_write_raw_comm(comm_abstract_ptr& comm, const void *buf, size
     }
 }
 
-void comm_buffered_write_comm (comm_abstract_ptr& comm, const void *buf, size_t len) {
+static void comm_buffered_write_comm_impl(
+    comm_abstract_ptr& comm,
+    const void *buf,
+    size_t len,
+    bool normalize_telnet_text_newlines) {
     if (!comm || !buf || len == 0)
         return;
+
+    std::string normalized;
+    if (normalize_telnet_text_newlines && (comm->flags & C_ENABLE_TELNET)) {
+        // Telnet clients expect CRLF line endings on outbound text.
+        normalized = normalize_telnet_newlines(std::string_view(static_cast<const char*>(buf), len));
+        buf = normalized.data();
+        len = normalized.size();
+    }
+
     // RFC 6455 forbids data frames after Close. A relaxed hook that was
     // already queued can otherwise append output after the handshake starts.
     if (C_WEBSOCKET_IS_READY(comm->flags) &&
@@ -194,6 +236,14 @@ void comm_buffered_write_comm (comm_abstract_ptr& comm, const void *buf, size_t 
         return;
     }
     comm_buffered_write_raw_comm(comm, buf, len);
+}
+
+void comm_buffered_write_comm (comm_abstract_ptr& comm, const void *buf, size_t len) {
+    comm_buffered_write_comm_impl(comm, buf, len, true);
+}
+
+void comm_buffered_write_comm_no_telnet_normalize (comm_abstract_ptr& comm, const void *buf, size_t len) {
+    comm_buffered_write_comm_impl(comm, buf, len, false);
 }
 
 void comm_buffered_write (int slot, const void *buf, size_t len) {
