@@ -407,7 +407,9 @@ extern "C" MUDMUX_EXPORT bool mudmux_workers_await(async_closure_t* work, async_
     const int slot = comm_current_slot();
     const mudmux_hook_type_t hook_type = comm_current_hook_type();
     if (!async_closure_is_valid(work) || !async_closure_is_valid(resume) || !execution_state.running.load() ||
-        slot < 0 || (hook_type != HOOK_MESSAGE_INBOUND && hook_type != HOOK_TELNET_SUBNEG)) {
+        slot < 0 || (hook_type != HOOK_TRANSPORT_READY &&
+                     hook_type != HOOK_MESSAGE_INBOUND &&
+                     hook_type != HOOK_TELNET_SUBNEG)) {
         return false;
     }
 
@@ -641,6 +643,7 @@ bool mudmux_execution_should_dispatch_async(enum mudmux_hook_type_t hook_type) {
     case HOOK_DISCONNECT:
     case HOOK_MESSAGE_INBOUND:
     case HOOK_MESSAGE_OUTBOUND:
+    case HOOK_TRANSPORT_READY:
     case HOOK_PROMPT:
     case HOOK_TELNET_SUBNEG:
         return true;

@@ -97,6 +97,7 @@ public:
         if (menu) {
             prompt_handler = &User::promptCurrentMenu;
             inbound_handler = handler;
+            setCharInput(); // set the user to character input mode for menu selection
         }
     }
 

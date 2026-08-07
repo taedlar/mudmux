@@ -10,6 +10,7 @@
 #include <spdlog/spdlog.h>
 
 #include "abstract.hpp"
+#include "inbound.hpp"
 #include "mudmux/comm.h"
 
 extern std::recursive_mutex comm_slots_mtx;
@@ -206,6 +207,7 @@ int comm_tls_handshake_step (async_runtime_t* runtime, int slot) {
 
 	if (SSL_is_init_finished(comm->ssl)) {
 		comm->flags |= C_TLS_ESTABLISHED;
+		comm_invoke_transport_ready(runtime, slot);
 		return 1;
 	}
 
@@ -220,6 +222,7 @@ int comm_tls_handshake_step (async_runtime_t* runtime, int slot) {
 		}
 		update_slot_event_interest(runtime, comm, fd, false);
 		SPDLOG_INFO("TLS handshake completed for slot {}", slot);
+		comm_invoke_transport_ready(runtime, slot);
 		return 1;
 	}
 

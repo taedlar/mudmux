@@ -14,10 +14,12 @@ enum mudmux_hook_type_t {
     HOOK_DISCONNECT = 2,
     HOOK_MESSAGE_INBOUND = 3,
     HOOK_MESSAGE_OUTBOUND = 4,
-    HOOK_PROMPT = 5,
-    HOOK_TELNET_SUBNEG = 6,
-    HOOK_TIMER = 7,
-    HOOK_GARBAGE_COLLECTION = 8,
+    /** Transport framing is ready for application input; msg is the slot. */
+    HOOK_TRANSPORT_READY = 5,
+    HOOK_PROMPT = 6,
+    HOOK_TELNET_SUBNEG = 7,
+    HOOK_TIMER = 8,
+    HOOK_GARBAGE_COLLECTION = 9,
     MAX_HOOK_TYPE
 };
 

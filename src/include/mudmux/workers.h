@@ -56,8 +56,8 @@ MUDMUX_EXPORT bool mudmux_workers_submit(async_closure_t* work, async_closure_t*
  * Hold the current inbound operation while work runs on a worker, then resume
  * it through the same slot's execution gate.
  *
- * This function is valid only from HOOK_MESSAGE_INBOUND or
- * HOOK_TELNET_SUBNEG for the current slot. It records the await request but
+ * This function is valid only from HOOK_TRANSPORT_READY,
+ * HOOK_MESSAGE_INBOUND, or HOOK_TELNET_SUBNEG for the current slot. It records the await request but
  * does not submit work until the initiating hook returns. On success mudmux
  * takes ownership of both closures and clears the caller's handles. The resume
  * closure receives ASYNC_CLOSURE_SCHEDULER_OK or

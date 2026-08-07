@@ -14,6 +14,7 @@
 #include "console.hpp"
 #include "execution.hpp"
 #include "file_input.hpp"
+#include "inbound.hpp"
 #include "hooks.hpp"
 #include "ssl.hpp"
 #include "telnet.hpp"
@@ -330,6 +331,7 @@ void comm_flush (async_runtime_t* runtime, int slot) {
     // outbound queue is empty would put a WebSocket frame on the wire before
     // the upgrade has completed.
     if (!comm->outbound && C_WEBSOCKET_IS_READY(comm->flags) && comm->websocket_upgrade_barrier) {
+        comm_invoke_transport_ready(runtime, slot);
         SPDLOG_DEBUG("releasing WebSocket upgrade barrier on slot {} after HTTP 101", slot);
         comm->outbound = comm->websocket_upgrade_barrier;
         comm->websocket_upgrade_barrier = nullptr;
@@ -337,6 +339,12 @@ void comm_flush (async_runtime_t* runtime, int slot) {
         comm_flush(runtime, slot);
         return;
     }
+
+    // No application output was held behind the HTTP 101 response.  This is
+    // the remaining WebSocket-ready path, including Telnet-over-WebSocket
+    // after its initial negotiation bytes drain.
+    if (!comm->outbound && C_WEBSOCKET_IS_READY(comm->flags))
+        comm_invoke_transport_ready(runtime, slot);
 
     socket_fd_t fd {INVALID_SOCKET_FD};
     if (!comm_bio_get_socket_fd(comm->wbio, &fd)) {
