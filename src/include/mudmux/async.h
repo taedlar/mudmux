@@ -27,6 +27,110 @@ typedef struct async_event_s {
 typedef struct async_queue_s async_queue_t;
 typedef struct async_runtime_s async_runtime_t;
 
+/** Scheduler messages reserved for async closure invocation. */
+typedef enum async_closure_scheduler_message_e {
+    /** Work starts, or previously scheduled work completed successfully. */
+    ASYNC_CLOSURE_SCHEDULER_OK = 0,
+    /** Work invocation or its cleanup threw an exception. */
+    ASYNC_CLOSURE_SCHEDULER_FAILED = -1,
+} async_closure_scheduler_message_t;
+
+/** Function invoked by an async closure with a scheduler-supplied message. */
+typedef void (*async_closure_func_t)(void *context, int message);
+
+/** Releases the context captured by an async closure. */
+typedef void (*async_closure_destroy_t)(void *context);
+
+/**
+ * A C-compatible owning callback.
+ *
+ * The owner invokes or destroys a closure exactly once. Both operations clear
+ * the closure before calling application code, making either operation safe to
+ * repeat. The optional destroy callback releases the captured context after
+ * invocation, or when the closure is discarded without invocation.
+ */
+typedef struct async_closure_s {
+    async_closure_func_t invoke;
+    async_closure_destroy_t destroy;
+    void *context;
+} async_closure_t;
+
+/** Return true when @p closure can be invoked. */
+static inline bool async_closure_is_valid(const async_closure_t *closure) {
+    return closure && closure->invoke;
+}
+
+/**
+ * Invoke @p closure with @p message, then release its captured context and
+ * clear it.
+ *
+ * A null closure or a closure with no invoke callback is simply cleared. In
+ * C++ builds, exceptions from invocation or cleanup are contained. Returns
+ * false if either callback throws; cleanup still runs after an invoke failure.
+ */
+static inline bool async_closure_invoke(async_closure_t *closure, int message) {
+    if (!closure)
+        return true;
+
+    const async_closure_t owned = *closure;
+    closure->invoke = 0;
+    closure->destroy = 0;
+    closure->context = 0;
+    bool invoked = true;
+    bool destroyed = true;
+#ifdef __cplusplus
+    try {
+        if (owned.invoke)
+            owned.invoke(owned.context, message);
+    }
+    catch (...) {
+        invoked = false;
+    }
+    try {
+        if (owned.destroy)
+            owned.destroy(owned.context);
+    }
+    catch (...) {
+        destroyed = false;
+    }
+#else
+    if (owned.invoke)
+        owned.invoke(owned.context, message);
+    if (owned.destroy)
+        owned.destroy(owned.context);
+#endif
+    return invoked && destroyed;
+}
+
+/**
+ * Release @p closure without invoking it, then clear it.
+ *
+ * In C++ builds, a destroy callback exception is contained and reported as
+ * false. A null closure succeeds.
+ */
+static inline bool async_closure_destroy(async_closure_t *closure) {
+    if (!closure)
+        return true;
+
+    const async_closure_t owned = *closure;
+    closure->invoke = 0;
+    closure->destroy = 0;
+    closure->context = 0;
+#ifdef __cplusplus
+    try {
+        if (owned.destroy)
+            owned.destroy(owned.context);
+    }
+    catch (...) {
+        return false;
+    }
+#else
+    if (owned.destroy)
+        owned.destroy(owned.context);
+ #endif
+    return true;
+}
+
 typedef enum async_queue_flags_e {
     ASYNC_QUEUE_DROP_OLDEST = 0x01,
     ASYNC_QUEUE_BLOCK_WRITER = 0x02,

@@ -419,6 +419,7 @@ bool comm_close (async_runtime_t* runtime, int slot) {
         // let logic layer handle disconnect (e.g., cleanup, logging, etc.)
         comm->flags |= C_CLOSING;
         comm->flags &= ~C_DISCONNECT_PENDING;
+        mudmux_execution_cancel_await(slot);
         comm->flags |= C_AWAITING_HOOK;
         const mudmux_dispatch_result_t dispatch_result = mudmux_dispatch_hook_after(
             HOOK_DISCONNECT,

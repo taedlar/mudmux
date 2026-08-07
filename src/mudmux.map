@@ -16,8 +16,10 @@ MUDMUX_0.1 {
         mudmux_shutdown;
         mudmux_trigger_timer;
         mudmux_workers_start;
+        mudmux_workers_await;
         mudmux_workers_pool_size;
         mudmux_workers_stop;
+        mudmux_workers_submit;
 
     local:
         *;

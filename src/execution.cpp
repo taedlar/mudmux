@@ -9,6 +9,7 @@
 #include <atomic>
 #include <cstring>
 #include <deque>
+#include <exception>
 #include <limits>
 #include <mutex>
 #include <utility>
@@ -17,7 +18,12 @@
 #include "async/async_runtime.h"
 #include "async/thread_pool.hpp"
 #include "comm/abstract.hpp"
+#include "comm/current_slot.hpp"
+#include "comm/inbound.hpp"
 #include "hooks.hpp"
+#include "mudmux/async.h"
+
+#include <spdlog/spdlog.h>
 
 namespace {
 
@@ -40,6 +46,21 @@ struct slot_execution_state_t {
     // Only explicit non-inbound/API dispatches use this queue.  Transport
     // parsers never place decoded input here.
     std::deque<in_flight_hook_t> pending;
+    bool await_requested{false};
+    bool await_pending{false};
+    uint64_t await_generation{0};
+    async_closure_t await_work{};
+    async_closure_t await_resume{};
+};
+
+struct detached_completion_t {
+    async_closure_t closure{};
+    int message{ASYNC_CLOSURE_SCHEDULER_OK};
+};
+
+struct detached_work_t {
+    async_closure_t work{};
+    async_closure_t completion{};
 };
 
 constexpr std::size_t auxiliary_queue_capacity = 8;
@@ -72,11 +93,195 @@ struct execution_state_t {
     };
     std::deque<event_task_t> pending_events;
     bool event_active{false};
+    std::mutex detached_completion_mutex;
+    std::deque<detached_completion_t> pending_detached_completions;
+    bool detached_completion_active{false};
 };
 
 execution_state_t execution_state;
 
 static void run_slot_task(int slot, in_flight_hook_t task);
+static void finish_slot_task(int slot);
+static void run_slot_await_work(int slot, uint64_t generation, async_closure_t work);
+static void run_slot_await_resume(int slot, uint64_t generation, async_closure_t resume, int message);
+
+static void log_closure_exception(const char* phase, const std::exception& exception) noexcept {
+    try {
+        SPDLOG_ERROR("detached worker {} closure threw an exception: {}", phase, exception.what());
+    }
+    catch (...) {
+    }
+}
+
+static void log_closure_exception(const char* phase) noexcept {
+    try {
+        SPDLOG_ERROR("detached worker {} closure threw a non-standard exception", phase);
+    }
+    catch (...) {
+    }
+}
+
+static bool invoke_closure_safely(async_closure_t* closure, int message, const char* phase) noexcept {
+    try {
+        if (async_closure_invoke(closure, message))
+            return true;
+        log_closure_exception(phase);
+    }
+    catch (const std::exception& exception) {
+        log_closure_exception(phase, exception);
+    }
+    catch (...) {
+        log_closure_exception(phase);
+    }
+    return false;
+}
+
+static void destroy_closure_safely(async_closure_t* closure, const char* phase) noexcept {
+    try {
+        if (!async_closure_destroy(closure))
+            log_closure_exception(phase);
+    }
+    catch (const std::exception& exception) {
+        log_closure_exception(phase, exception);
+    }
+    catch (...) {
+        log_closure_exception(phase);
+    }
+}
+
+static void clear_slot_await(slot_execution_state_t& state, async_closure_t* work, async_closure_t* resume) {
+    if (work)
+        *work = state.await_work;
+    if (resume)
+        *resume = state.await_resume;
+    state.await_work = {};
+    state.await_resume = {};
+    state.await_requested = false;
+    state.await_pending = false;
+    state.await_generation = 0;
+}
+
+static void discard_slot_await(int slot, uint64_t generation) {
+    async_closure_t work{};
+    async_closure_t resume{};
+    bool discarded = false;
+    {
+        std::lock_guard<std::mutex> states_lock(execution_state.slot_states_mutex);
+        if (slot >= 0 && slot < static_cast<int>(execution_state.slot_states.size())) {
+            slot_execution_state_t& state = execution_state.slot_states[static_cast<std::size_t>(slot)];
+            std::lock_guard<std::mutex> slot_lock(state.mutex);
+            if ((state.await_requested || state.await_pending) && state.await_generation == generation) {
+                clear_slot_await(state, &work, &resume);
+                discarded = true;
+            }
+        }
+    }
+    if (discarded) {
+        destroy_closure_safely(&work, "await work destruction");
+        destroy_closure_safely(&resume, "await resume destruction");
+        finish_slot_task(slot);
+    }
+}
+
+static void run_slot_await_resume(int slot, uint64_t generation, async_closure_t resume, int message) {
+    worker_thread_scope_t worker_scope;
+    if (comm_abstract_generation(slot) == generation) {
+        comm_current_slot_scope_t current_slot_scope(slot);
+        (void)invoke_closure_safely(&resume, message, "await resume");
+    } else {
+        destroy_closure_safely(&resume, "await resume destruction");
+    }
+    finish_slot_task(slot);
+}
+
+static void run_slot_await_work(int slot, uint64_t generation, async_closure_t work) {
+    worker_thread_scope_t worker_scope;
+    const int message = invoke_closure_safely(
+        &work, ASYNC_CLOSURE_SCHEDULER_OK, "await work")
+        ? ASYNC_CLOSURE_SCHEDULER_OK
+        : ASYNC_CLOSURE_SCHEDULER_FAILED;
+
+    async_closure_t resume{};
+    bool resume_ready = false;
+    const bool generation_matches = comm_abstract_generation(slot) == generation;
+    {
+        std::lock_guard<std::mutex> states_lock(execution_state.slot_states_mutex);
+        if (slot >= 0 && slot < static_cast<int>(execution_state.slot_states.size())) {
+            slot_execution_state_t& state = execution_state.slot_states[static_cast<std::size_t>(slot)];
+            std::lock_guard<std::mutex> slot_lock(state.mutex);
+            if (state.await_pending && state.await_generation == generation && generation_matches) {
+                resume = state.await_resume;
+                state.await_resume = {};
+                state.await_pending = false;
+                state.await_generation = 0;
+                resume_ready = true;
+            }
+        }
+    }
+
+    if (!resume_ready) {
+        discard_slot_await(slot, generation);
+        return;
+    }
+
+    if (!execution_state.worker_pool.submit([slot, generation, resume, message]() mutable {
+            run_slot_await_resume(slot, generation, std::move(resume), message);
+        })) {
+        run_slot_await_resume(slot, generation, std::move(resume), message);
+    }
+}
+
+static void run_detached_completion(detached_completion_t completion) {
+    worker_thread_scope_t worker_scope;
+    for (;;) {
+        (void)invoke_closure_safely(&completion.closure, completion.message, "completion");
+
+        detached_completion_t next{};
+        {
+            std::lock_guard<std::mutex> lock(execution_state.detached_completion_mutex);
+            if (execution_state.pending_detached_completions.empty()) {
+                execution_state.detached_completion_active = false;
+                return;
+            }
+            next = std::move(execution_state.pending_detached_completions.front());
+            execution_state.pending_detached_completions.pop_front();
+        }
+
+        if (execution_state.worker_pool.submit([next = std::move(next)]() mutable {
+                run_detached_completion(std::move(next));
+            })) {
+            return;
+        }
+        completion = std::move(next);
+    }
+}
+
+static void schedule_detached_completion(async_closure_t completion, int message) {
+    detached_completion_t next{completion, message};
+    {
+        std::lock_guard<std::mutex> lock(execution_state.detached_completion_mutex);
+        if (execution_state.detached_completion_active) {
+            execution_state.pending_detached_completions.push_back(std::move(next));
+            return;
+        }
+        execution_state.detached_completion_active = true;
+    }
+
+    if (!execution_state.worker_pool.submit([next = std::move(next)]() mutable {
+            run_detached_completion(std::move(next));
+        })) {
+        run_detached_completion(std::move(next));
+    }
+}
+
+static void run_detached_work(detached_work_t task) {
+    worker_thread_scope_t worker_scope;
+    const int completion_message = invoke_closure_safely(
+        &task.work, ASYNC_CLOSURE_SCHEDULER_OK, "work")
+        ? ASYNC_CLOSURE_SCHEDULER_OK
+        : ASYNC_CLOSURE_SCHEDULER_FAILED;
+    schedule_detached_completion(task.completion, completion_message);
+}
 
 static void finish_slot_task(int slot) {
     in_flight_hook_t next_task;
@@ -122,6 +327,8 @@ static void run_slot_task(int slot, in_flight_hook_t task) {
         if (comm_abstract_generation(slot) == task.generation && task.completion)
             task.completion(task.completion_context, task.msg);
     }
+    if (mudmux_execution_finalize_await(slot))
+        return;
     finish_slot_task(slot);
 }
 
@@ -147,17 +354,149 @@ extern "C" MUDMUX_EXPORT bool mudmux_workers_start() {
 extern "C" MUDMUX_EXPORT void mudmux_workers_stop() {
     execution_state.running.store(false);
     execution_state.worker_pool.stop();
-    std::lock_guard<std::mutex> lock(execution_state.slot_states_mutex);
-    execution_state.slot_states.clear();
-    std::lock_guard<std::mutex> event_lock(execution_state.event_mutex);
-    execution_state.pending_events.clear();
-    execution_state.event_active = false;
+    {
+        std::lock_guard<std::mutex> lock(execution_state.slot_states_mutex);
+        execution_state.slot_states.clear();
+    }
+    {
+        std::lock_guard<std::mutex> event_lock(execution_state.event_mutex);
+        execution_state.pending_events.clear();
+        execution_state.event_active = false;
+    }
+
+    std::deque<detached_completion_t> pending_completions;
+    {
+        std::lock_guard<std::mutex> completion_lock(execution_state.detached_completion_mutex);
+        pending_completions.swap(execution_state.pending_detached_completions);
+        execution_state.detached_completion_active = false;
+    }
+    while (!pending_completions.empty()) {
+        detached_completion_t completion = std::move(pending_completions.front());
+        pending_completions.pop_front();
+        destroy_closure_safely(&completion.closure, "completion destruction");
+    }
 }
 
 int mudmux_workers_configured_pool_size() { return execution_state.thread_pool_size; }
 
 extern "C" MUDMUX_EXPORT size_t mudmux_workers_pool_size() {
     return execution_state.worker_pool.size();
+}
+
+extern "C" MUDMUX_EXPORT bool mudmux_workers_submit(async_closure_t* work, async_closure_t* completion) {
+    if (!async_closure_is_valid(work) || !async_closure_is_valid(completion) || !execution_state.running.load())
+        return false;
+
+    detached_work_t task{*work, *completion};
+    if (!execution_state.worker_pool.submit([task = std::move(task)]() mutable {
+            run_detached_work(std::move(task));
+        })) {
+        return false;
+    }
+
+    work->invoke = 0;
+    work->destroy = 0;
+    work->context = 0;
+    completion->invoke = 0;
+    completion->destroy = 0;
+    completion->context = 0;
+    return true;
+}
+
+extern "C" MUDMUX_EXPORT bool mudmux_workers_await(async_closure_t* work, async_closure_t* resume) {
+    const int slot = comm_current_slot();
+    const mudmux_hook_type_t hook_type = comm_current_hook_type();
+    if (!async_closure_is_valid(work) || !async_closure_is_valid(resume) || !execution_state.running.load() ||
+        slot < 0 || (hook_type != HOOK_MESSAGE_INBOUND && hook_type != HOOK_TELNET_SUBNEG)) {
+        return false;
+    }
+
+    const uint64_t generation = comm_abstract_generation(slot);
+    if (generation == 0)
+        return false;
+
+    {
+        std::lock_guard<std::mutex> states_lock(execution_state.slot_states_mutex);
+        slot_execution_state_t& state = ensure_slot_state_locked(execution_state.slot_states, slot);
+        std::lock_guard<std::mutex> slot_lock(state.mutex);
+        if (state.await_requested || state.await_pending)
+            return false;
+        state.await_requested = true;
+        state.await_generation = generation;
+        state.await_work = *work;
+        state.await_resume = *resume;
+    }
+
+    work->invoke = 0;
+    work->destroy = 0;
+    work->context = 0;
+    resume->invoke = 0;
+    resume->destroy = 0;
+    resume->context = 0;
+    comm_defer_input(slot);
+    return true;
+}
+
+bool mudmux_execution_finalize_await(int slot) {
+    if (slot < 0)
+        return false;
+
+    async_closure_t work{};
+    uint64_t generation = 0;
+    {
+        std::lock_guard<std::mutex> states_lock(execution_state.slot_states_mutex);
+        if (slot >= static_cast<int>(execution_state.slot_states.size()))
+            return false;
+        slot_execution_state_t& state = execution_state.slot_states[static_cast<std::size_t>(slot)];
+        std::lock_guard<std::mutex> slot_lock(state.mutex);
+        if (!state.await_requested)
+            return false;
+        state.await_requested = false;
+        state.await_pending = true;
+        state.active = true;
+        generation = state.await_generation;
+        work = state.await_work;
+        state.await_work = {};
+    }
+
+    if (!execution_state.worker_pool.submit([slot, generation, work]() mutable {
+            run_slot_await_work(slot, generation, std::move(work));
+        })) {
+        run_slot_await_work(slot, generation, std::move(work));
+    }
+    return true;
+}
+
+void mudmux_execution_cancel_await(int slot) {
+    if (slot < 0)
+        return;
+
+    async_closure_t work{};
+    async_closure_t resume{};
+    bool finish_pending_slot = false;
+    {
+        std::lock_guard<std::mutex> states_lock(execution_state.slot_states_mutex);
+        if (slot >= static_cast<int>(execution_state.slot_states.size()))
+            return;
+        slot_execution_state_t& state = execution_state.slot_states[static_cast<std::size_t>(slot)];
+        std::lock_guard<std::mutex> slot_lock(state.mutex);
+        if (state.await_requested) {
+            clear_slot_await(state, &work, &resume);
+        } else if (state.await_pending) {
+            resume = state.await_resume;
+            state.await_resume = {};
+            state.await_pending = false;
+            state.await_generation = 0;
+            finish_pending_slot = true;
+        } else {
+            return;
+        }
+    }
+
+    destroy_closure_safely(&work, "await work destruction");
+    destroy_closure_safely(&resume, "await resume destruction");
+    if (finish_pending_slot)
+        finish_slot_task(slot);
 }
 
 mudmux_determinism_mode_t mudmux_execution_mode() { return execution_state.determinism_mode; }
@@ -210,14 +549,14 @@ bool mudmux_execution_dispatch_event(mudmux_hook_func_t hook_func, void* ctx, in
 }
 
 bool mudmux_execution_slot_busy(int slot) {
-    if (execution_state.determinism_mode != MUDMUX_DETERMINISM_RELAXED || slot < 0)
+    if (slot < 0)
         return false;
     std::lock_guard<std::mutex> states_lock(execution_state.slot_states_mutex);
     if (slot >= static_cast<int>(execution_state.slot_states.size()))
         return false;
     slot_execution_state_t& state = execution_state.slot_states[static_cast<std::size_t>(slot)];
     std::lock_guard<std::mutex> slot_lock(state.mutex);
-    return state.active;
+    return state.active || state.await_requested || state.await_pending;
 }
 
 mudmux_dispatch_result_t mudmux_execution_enqueue_hook(

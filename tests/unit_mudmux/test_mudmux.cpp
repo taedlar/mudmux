@@ -8,6 +8,7 @@
 #include <fstream>
 #include <future>
 #include <mutex>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -76,6 +77,60 @@ static int resignal_auto_reset_event(void*, int, void*, size_t) {
 }
 
 static std::atomic<int> garbage_collection_hook_calls{0};
+
+struct detached_closure_context_t {
+    std::atomic<int> work_calls{0};
+    std::atomic<int> completion_calls{0};
+    std::atomic<int> destruction_calls{0};
+    std::atomic<int> completion_message{ASYNC_CLOSURE_SCHEDULER_FAILED - 1};
+    std::promise<void> completed;
+};
+
+struct serialized_completion_context_t {
+    std::atomic<int> active{0};
+    std::atomic<int> max_active{0};
+    std::atomic<int> completed{0};
+    std::promise<void> all_completed;
+};
+
+static void run_detached_work(void* context, int) {
+    ++static_cast<detached_closure_context_t*>(context)->work_calls;
+}
+
+static void throw_from_detached_work(void*, int) {
+    throw std::runtime_error("expected detached work failure");
+}
+
+static void run_detached_completion(void* context, int message) {
+    auto* task = static_cast<detached_closure_context_t*>(context);
+    ++task->completion_calls;
+    task->completion_message.store(message);
+    task->completed.set_value();
+}
+
+static void destroy_detached_closure(void* context) {
+    ++static_cast<detached_closure_context_t*>(context)->destruction_calls;
+}
+
+static void run_noop_detached_work(void*, int) {
+}
+
+static void run_serialized_completion(void* context, int) {
+    auto* completion = static_cast<serialized_completion_context_t*>(context);
+    const int active = completion->active.fetch_add(1) + 1;
+    int observed_max = completion->max_active.load();
+    while (active > observed_max &&
+           !completion->max_active.compare_exchange_weak(observed_max, active)) {
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    completion->active.fetch_sub(1);
+    if (completion->completed.fetch_add(1) + 1 == 2)
+        completion->all_completed.set_value();
+}
+
+static void throw_from_detached_destroy(void*) {
+    throw std::runtime_error("expected detached destroy failure");
+}
 
 static int count_garbage_collection(void*, int, void*, size_t) {
     ++garbage_collection_hook_calls;
@@ -159,6 +214,88 @@ TEST(MudmuxTest, AsyncApiExposesQueueOperations) {
     EXPECT_EQ(stats.dequeue_count, 1u);
     async_queue_destroy(queue);
     mudmux_deinit();
+}
+
+TEST(MudmuxTest, WorkersSubmitRunsWorkThenCompletion) {
+    ASSERT_TRUE(mudmux_init("{\"transport\": {\"thread_pool\": {\"size\": 2}}}"));
+    detached_closure_context_t context;
+    std::future<void> completed = context.completed.get_future();
+    async_closure_t work{run_detached_work, destroy_detached_closure, &context};
+    async_closure_t completion{run_detached_completion, destroy_detached_closure, &context};
+
+    ASSERT_TRUE(mudmux_workers_submit(&work, &completion));
+    EXPECT_FALSE(async_closure_is_valid(&work));
+    EXPECT_FALSE(async_closure_is_valid(&completion));
+    EXPECT_EQ(completed.wait_for(std::chrono::seconds(1)), std::future_status::ready);
+    EXPECT_EQ(context.work_calls.load(), 1);
+    EXPECT_EQ(context.completion_calls.load(), 1);
+    EXPECT_EQ(context.completion_message.load(), ASYNC_CLOSURE_SCHEDULER_OK);
+
+    mudmux_deinit();
+    EXPECT_EQ(context.destruction_calls.load(), 2);
+}
+
+TEST(MudmuxTest, WorkersSubmitFailureRetainsClosureOwnership) {
+    detached_closure_context_t context;
+    async_closure_t work{run_detached_work, destroy_detached_closure, &context};
+    async_closure_t completion{run_detached_completion, destroy_detached_closure, &context};
+
+    EXPECT_FALSE(mudmux_workers_submit(&work, &completion));
+    EXPECT_TRUE(async_closure_is_valid(&work));
+    EXPECT_TRUE(async_closure_is_valid(&completion));
+
+    async_closure_destroy(&work);
+    async_closure_destroy(&completion);
+    EXPECT_EQ(context.destruction_calls.load(), 2);
+}
+
+TEST(MudmuxTest, WorkersSubmitContainsClosureExceptions) {
+    ASSERT_TRUE(mudmux_init(nullptr));
+    detached_closure_context_t context;
+    std::future<void> completed = context.completed.get_future();
+    async_closure_t work{throw_from_detached_work, destroy_detached_closure, &context};
+    async_closure_t completion{run_detached_completion, destroy_detached_closure, &context};
+
+    ASSERT_TRUE(mudmux_workers_submit(&work, &completion));
+    EXPECT_EQ(completed.wait_for(std::chrono::seconds(1)), std::future_status::ready);
+    EXPECT_EQ(context.work_calls.load(), 0);
+    EXPECT_EQ(context.completion_calls.load(), 1);
+    EXPECT_EQ(context.completion_message.load(), ASYNC_CLOSURE_SCHEDULER_FAILED);
+
+    mudmux_deinit();
+    EXPECT_EQ(context.destruction_calls.load(), 2);
+}
+
+TEST(MudmuxTest, WorkersSubmitSerializesCompletions) {
+    ASSERT_TRUE(mudmux_init("{\"transport\": {\"thread_pool\": {\"size\": 2}}}"));
+    serialized_completion_context_t context;
+    std::future<void> completed = context.all_completed.get_future();
+    async_closure_t work_one{run_noop_detached_work, nullptr, nullptr};
+    async_closure_t completion_one{run_serialized_completion, nullptr, &context};
+    async_closure_t work_two{run_noop_detached_work, nullptr, nullptr};
+    async_closure_t completion_two{run_serialized_completion, nullptr, &context};
+
+    ASSERT_TRUE(mudmux_workers_submit(&work_one, &completion_one));
+    ASSERT_TRUE(mudmux_workers_submit(&work_two, &completion_two));
+    EXPECT_EQ(completed.wait_for(std::chrono::seconds(1)), std::future_status::ready);
+    EXPECT_EQ(context.max_active.load(), 1);
+
+    mudmux_deinit();
+}
+
+TEST(MudmuxTest, WorkersSubmitContainsClosureDestroyExceptions) {
+    ASSERT_TRUE(mudmux_init(nullptr));
+    detached_closure_context_t context;
+    std::future<void> completed = context.completed.get_future();
+    async_closure_t work{run_detached_work, throw_from_detached_destroy, &context};
+    async_closure_t completion{run_detached_completion, throw_from_detached_destroy, &context};
+
+    ASSERT_TRUE(mudmux_workers_submit(&work, &completion));
+    EXPECT_EQ(completed.wait_for(std::chrono::seconds(1)), std::future_status::ready);
+    EXPECT_EQ(context.work_calls.load(), 1);
+    EXPECT_EQ(context.completion_calls.load(), 1);
+
+    ASSERT_NO_FATAL_FAILURE(mudmux_deinit());
 }
 
 TEST(MudmuxTest, EventLoopRun) {

@@ -16,6 +16,12 @@ void mudmux_workers_configure(int thread_pool_size);
 int mudmux_workers_configured_pool_size();
 bool mudmux_workers_is_worker_thread();
 
+/** Start a slot await after the hook that requested it has returned. */
+bool mudmux_execution_finalize_await(int slot);
+
+/** Cancel a pending slot await when its communication slot begins closing. */
+void mudmux_execution_cancel_await(int slot);
+
 mudmux_determinism_mode_t mudmux_execution_mode();
 const char* mudmux_execution_mode_name();
 

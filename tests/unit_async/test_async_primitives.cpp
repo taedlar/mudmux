@@ -18,8 +18,64 @@
 #include "async/async_queue.h"
 #include "async/async_runtime.h"
 #include "async/thread_pool.hpp"
+#include "mudmux/async.h"
 
 namespace {
+
+struct closure_context_t {
+    int invocations{0};
+    int destructions{0};
+    int message{-1};
+};
+
+void invoke_closure(void* context, int message) {
+    auto* closure = static_cast<closure_context_t*>(context);
+    ++closure->invocations;
+    closure->message = message;
+}
+
+void destroy_closure(void* context) {
+    ++static_cast<closure_context_t*>(context)->destructions;
+}
+
+void throw_from_destroy(void*) {
+    throw std::runtime_error("expected closure destruction failure");
+}
+
+TEST(AsyncClosureTest, InvokeConsumesAndDestroysClosure) {
+    closure_context_t context;
+    async_closure_t closure{invoke_closure, destroy_closure, &context};
+
+    EXPECT_TRUE(async_closure_is_valid(&closure));
+    EXPECT_TRUE(async_closure_invoke(&closure, ASYNC_CLOSURE_SCHEDULER_OK));
+    EXPECT_EQ(context.invocations, 1);
+    EXPECT_EQ(context.destructions, 1);
+    EXPECT_EQ(context.message, ASYNC_CLOSURE_SCHEDULER_OK);
+    EXPECT_FALSE(async_closure_is_valid(&closure));
+
+    EXPECT_TRUE(async_closure_invoke(&closure, ASYNC_CLOSURE_SCHEDULER_OK));
+    EXPECT_TRUE(async_closure_destroy(&closure));
+    EXPECT_EQ(context.invocations, 1);
+    EXPECT_EQ(context.destructions, 1);
+}
+
+TEST(AsyncClosureTest, DestroyConsumesWithoutInvoking) {
+    closure_context_t context;
+    async_closure_t closure{invoke_closure, destroy_closure, &context};
+
+    EXPECT_TRUE(async_closure_destroy(&closure));
+    EXPECT_EQ(context.invocations, 0);
+    EXPECT_EQ(context.destructions, 1);
+    EXPECT_FALSE(async_closure_is_valid(&closure));
+}
+
+TEST(AsyncClosureTest, DestroyContainsExceptions) {
+    async_closure_t closure{nullptr, throw_from_destroy, nullptr};
+
+    EXPECT_FALSE(async_closure_destroy(&closure));
+    EXPECT_FALSE(async_closure_is_valid(&closure));
+    EXPECT_TRUE(async_closure_destroy(&closure));
+}
 
 #ifndef _WIN32
 bool is_fd_readable(int fd) {
