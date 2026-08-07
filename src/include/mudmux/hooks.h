@@ -2,6 +2,7 @@
 #define MUDMUX_HOOKS_H
 
 #include "mudmux_export.h"
+#include <stdbool.h>
 #include <stddef.h>
 
 #ifdef __cplusplus

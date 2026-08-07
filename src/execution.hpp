@@ -5,19 +5,19 @@
 
 #include "hooks.hpp"
 #include "mudmux/hooks.h"
+#include "mudmux/workers.h"
 
 enum mudmux_determinism_mode_t {
     MUDMUX_DETERMINISM_STRICT = 0,
     MUDMUX_DETERMINISM_RELAXED = 1,
 };
 
-void mudmux_execution_configure(int thread_pool_size);
-bool mudmux_execution_start();
-void mudmux_execution_stop();
-int mudmux_execution_thread_pool_size();
+void mudmux_workers_configure(int thread_pool_size);
+int mudmux_workers_configured_pool_size();
+bool mudmux_workers_is_worker_thread();
+
 mudmux_determinism_mode_t mudmux_execution_mode();
 const char* mudmux_execution_mode_name();
-bool mudmux_execution_is_worker_thread();
 
 /** Dispatch a non-slot event hook.  Relaxed mode serializes all event hooks. */
 bool mudmux_execution_dispatch_event(mudmux_hook_func_t hook_func, void* ctx, int msg = -1);

@@ -32,11 +32,13 @@
 #include "execution.hpp"
 #include "mudmux/async.h"
 #include "mudmux/comm.h"
+#include "mudmux/execution.h"
 #include "mudmux/hooks.h"
 
 extern "C" {
     mudmux_async_api_v1_t* mudmux_async_api_v1 {nullptr}; // global pointer to async API struct, initialized by mudmux_init()
     mudmux_comm_api_v1_t* mudmux_comm_api_v1 {nullptr}; // global pointer to comm API struct, initialized by mudmux_init()
+    mudmux_execution_api_v1_t* mudmux_execution_api_v1 {nullptr}; // global pointer to execution API struct, initialized by mudmux_init()
 }
 
 static std::thread::id mud_logic_thread_id; // thread ID of the logic layer thread (main thread)
@@ -68,7 +70,7 @@ static bool comm_api_thread_guard(const char* api_name) {
         return true; // logic thread not bound yet (before mudmux_run)
     if (std::this_thread::get_id() == mud_logic_thread_id)
         return true;
-    if (mudmux_execution_is_worker_thread())
+    if (mudmux_workers_is_worker_thread())
         return true;
 
     SPDLOG_CRITICAL("comm API {} called from non-logic thread", api_name);
@@ -107,6 +109,16 @@ static void init_async_api (void) {
     async_api.queue_get_stats = async_queue_get_stats;
 
     mudmux_async_api_v1 = &async_api; // set global pointer to initialized struct
+}
+
+static bool mudmux_is_running(void) {
+    return is_running.load(std::memory_order_acquire);
+}
+
+static void init_execution_api(void) {
+    static mudmux_execution_api_v1_t execution_api;
+    execution_api.is_running = mudmux_is_running;
+    mudmux_execution_api_v1 = &execution_api;
 }
 
 /**
@@ -189,11 +201,12 @@ MUDMUX_EXPORT bool mudmux_init (const char* config_yaml) {
         SPDLOG_ERROR ("mudmux_init() called while already running");
         return false;
     }
-    mudmux_execution_configure(1);
+    mudmux_workers_configure(1);
     keep_alive_interval_seconds = 20;
     timer_event_msg.store(-1, std::memory_order_relaxed);
     init_async_api();
     init_comm_api();
+    init_execution_api();
     if (!timer_event_initialized) {
         if (!async_event_init(&timer_event, true, false)) {
             SPDLOG_ERROR("failed to initialize timer event");
@@ -224,7 +237,7 @@ MUDMUX_EXPORT bool mudmux_init (const char* config_yaml) {
                 SPDLOG_ERROR ("transport.thread_pool.size must be at least 1");
                 return false;
             }
-            mudmux_execution_configure(thread_pool_size);
+            mudmux_workers_configure(thread_pool_size);
         }
         if (transport["keep_alive_interval"].IsDefined()) {
             const int interval = transport["keep_alive_interval"].as<int>();
@@ -242,6 +255,10 @@ MUDMUX_EXPORT bool mudmux_init (const char* config_yaml) {
                 return false;
             }
         }
+        if (!mudmux_workers_start()) {
+            SPDLOG_ERROR("failed to start thread pool with {} workers", mudmux_workers_configured_pool_size());
+            return false;
+        }
         is_shutting_down.store(false);
     }
     catch (const YAML::Exception& e) {
@@ -258,7 +275,8 @@ MUDMUX_EXPORT void mudmux_deinit (void) {
     }
     enable_console = false;
     mud_logic_thread_id = std::thread::id();
-    mudmux_execution_configure(1);
+    mudmux_workers_stop();
+    mudmux_workers_configure(1);
     accept_names.clear();
     {
         std::lock_guard<std::mutex> lock(event_registrations_mutex);
@@ -271,6 +289,7 @@ MUDMUX_EXPORT void mudmux_deinit (void) {
     }
     memset(mudmux_comm_api_v1, 0, sizeof(mudmux_comm_api_v1_t));
     memset(mudmux_async_api_v1, 0, sizeof(mudmux_async_api_v1_t));
+    memset(mudmux_execution_api_v1, 0, sizeof(mudmux_execution_api_v1_t));
     comm_ssl_deinit();
 }
 
@@ -337,15 +356,6 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
     auto runtime = async_runtime_init(context);
     bool success = (runtime != nullptr);
 
-    if (success) {
-        if (!mudmux_execution_start()) {
-            SPDLOG_ERROR ("failed to start thread pool with {} workers", mudmux_execution_thread_pool_size());
-            async_runtime_deinit(runtime);
-            is_running.store(false);
-            return EXIT_FAILURE;
-        }
-    }
-
     if (success)
         success = register_runtime_events(runtime);
 
@@ -379,7 +389,6 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
         SPDLOG_ERROR ("failed to initialize");
         comm_shutdown_async_file_input();
         comm_shutdown_console(runtime);
-        mudmux_execution_stop();
         async_runtime_deinit(runtime);
         is_running.store(false);
         return EXIT_FAILURE;
@@ -387,7 +396,7 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
 
     SPDLOG_INFO (
         "thread pool execution configured: size={} mode={}",
-        mudmux_execution_thread_pool_size(),
+        mudmux_workers_pool_size(),
         mudmux_execution_mode_name());
     if (mudmux_execution_mode() == MUDMUX_DETERMINISM_RELAXED) {
         SPDLOG_WARN ("relaxed mode enabled: inbound data will be processed concurrently");
@@ -432,9 +441,10 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
             auto& event = events[i];
 
             if (event_registration_t* registration = find_event_registration(event.context)) {
-                // Reset before dispatch so a signal delivered while the hook is
-                // running schedules another invocation instead of being lost.
-                async_event_reset(registration->event);
+                // Manual-reset events are acknowledged before dispatch so a
+                // signal delivered while the hook runs remains pending.
+                if (async_event_is_manual_reset(registration->event))
+                    async_event_reset(registration->event);
                 mudmux_hook_func_t hook_func = registration->hook_func
                     ? registration->hook_func
                     : mudmux_get_registered_hook(HOOK_TIMER);
@@ -540,15 +550,14 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
     }
     SPDLOG_INFO ("===== exited event loop =====");
 
-    // Notify the logic layer while the runtime and execution subsystem are
-    // still available, but after the event loop has stopped dispatching I/O.
+    // Notify the logic layer while the runtime and workers are still
+    // available, but after the event loop has stopped dispatching I/O.
     mudmux_invoke_registered_hook(
         HOOK_TIMER, async_runtime_get_context(runtime), -1, nullptr, 0, false);
 
     // cleanup communications and teardown subsystems
     comm_shutdown_async_file_input();
     comm_shutdown_console (runtime);
-    mudmux_execution_stop();
     async_runtime_deinit (runtime);
     is_running.store(false);
     mud_logic_thread_id = std::thread::id();

@@ -58,9 +58,10 @@ typedef struct listening_socket_s {
 
 typedef struct event_wait_registration_s {
     HANDLE wait_handle;
-    HANDLE event_handle;
+    async_event_t* event;
     async_runtime_t* runtime;
     void* context;
+    bool rearm_pending;
 } event_wait_registration_t;
 
 /**
@@ -99,6 +100,28 @@ static VOID CALLBACK event_wait_callback(PVOID parameter, BOOLEAN) {
     event_wait_registration_t* registration = static_cast<event_wait_registration_t*>(parameter);
     (void) PostQueuedCompletionStatus(registration->runtime->iocp_handle, 0,
         EVENT_COMPLETION_KEY, reinterpret_cast<LPOVERLAPPED>(registration));
+}
+
+static BOOL register_event_wait(event_wait_registration_t* registration) {
+    HANDLE event_handle = async_event_get_wait_handle(registration->event);
+    if (!event_handle)
+        return FALSE;
+    return RegisterWaitForSingleObject(&registration->wait_handle, event_handle,
+        event_wait_callback, registration, INFINITE, WT_EXECUTEDEFAULT | WT_EXECUTEONLYONCE);
+}
+
+static bool rearm_pending_event_waits(async_runtime_t* runtime) {
+    for (int i = 0; i < runtime->event_wait_count; ++i) {
+        event_wait_registration_t* registration = runtime->event_waits[i];
+        if (!registration->rearm_pending)
+            continue;
+
+        if (!register_event_wait(registration))
+            return false;
+
+        registration->rearm_pending = false;
+    }
+    return true;
 }
 
 /* Context pool management */
@@ -402,17 +425,15 @@ extern "C" int async_runtime_remove(async_runtime_t* runtime, socket_fd_t fd) {
 extern "C" int async_runtime_add_event(async_runtime_t* runtime, async_event_t* event, void* context) {
     if (!runtime || !event)
         return -1;
-    HANDLE event_handle = async_event_get_wait_handle(event);
-    if (!event_handle)
+    if (!async_event_get_wait_handle(event))
         return -1;
     event_wait_registration_t* registration = (event_wait_registration_t*)calloc(1, sizeof(*registration));
     if (!registration)
         return -1;
-    registration->event_handle = event_handle;
+    registration->event = event;
     registration->runtime = runtime;
     registration->context = context;
-    if (!RegisterWaitForSingleObject(&registration->wait_handle, event_handle, event_wait_callback,
-            registration, INFINITE, WT_EXECUTEDEFAULT)) {
+    if (!register_event_wait(registration)) {
         free(registration);
         return -1;
     }
@@ -451,6 +472,11 @@ extern "C" int async_runtime_wakeup(async_runtime_t* runtime) {
 extern "C" int async_runtime_wait (async_runtime_t* runtime, io_event_t* events,
                                    int max_events, struct timeval* timeout) {
     if (!runtime || !events || max_events <= 0) return -1;
+
+    // Re-arm one-shot waits after the caller has had a chance to reset a
+    // manual-reset event returned by the preceding wait.
+    if (!rearm_pending_event_waits(runtime))
+        return -1;
     
     DWORD timeout_ms = INFINITE;
     if (timeout) {
@@ -469,8 +495,23 @@ extern "C" int async_runtime_wait (async_runtime_t* runtime, io_event_t* events,
                                      &num_entries, timeout_ms, FALSE)) {
         /* Process IOCP completions */
         for (ULONG i = 0; i < num_entries && event_count < max_events; i++) {
+            if (entries[i].lpCompletionKey == EVENT_COMPLETION_KEY) {
+                event_wait_registration_t* registration =
+                    reinterpret_cast<event_wait_registration_t*>(entries[i].lpOverlapped);
+                registration->rearm_pending = true;
+                events[event_count].fd = INVALID_SOCKET_FD;
+                events[event_count].handle = async_event_get_wait_handle(registration->event);
+                events[event_count].completion_key = entries[i].lpCompletionKey;
+                events[event_count].context = registration->context;
+                events[event_count].event_type = EVENT_READ;
+                events[event_count].bytes_transferred = 0;
+                events[event_count].buffer = NULL;
+                event_count++;
+                continue;
+            }
+
             iocp_context_t* io_ctx = (iocp_context_t*) entries[i].lpOverlapped;
-            
+
             if (io_ctx) {
                 events[event_count].fd = io_ctx->fd;
                 events[event_count].handle = NULL;
@@ -502,18 +543,6 @@ extern "C" int async_runtime_wait (async_runtime_t* runtime, io_event_t* events,
                     continue;
                 }
                 if (entries[i].lpCompletionKey == CONSOLE_COMPLETION_KEY) {
-                    continue;
-                }
-                if (entries[i].lpCompletionKey == EVENT_COMPLETION_KEY) {
-                    event_wait_registration_t* registration = reinterpret_cast<event_wait_registration_t*>(entries[i].lpOverlapped);
-                    events[event_count].fd = INVALID_SOCKET_FD;
-                    events[event_count].handle = registration->event_handle;
-                    events[event_count].completion_key = entries[i].lpCompletionKey;
-                    events[event_count].context = registration->context;
-                    events[event_count].event_type = EVENT_READ;
-                    events[event_count].bytes_transferred = 0;
-                    events[event_count].buffer = NULL;
-                    event_count++;
                     continue;
                 }
                 if (entries[i].lpCompletionKey == ASYNC_IO_ERROR_KEY) {

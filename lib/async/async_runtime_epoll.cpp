@@ -31,6 +31,7 @@ struct async_runtime_s {
     int epoll_fd;
     int event_fd;  /* For worker completions */
     std::vector<void*> fd_contexts; /* fd -> user context mapping */
+    std::vector<async_event_t*> fd_events; /* fd -> registered async event */
     console_type_t console_type;  /* Detected console type */
 };
 
@@ -121,7 +122,10 @@ extern "C" int async_runtime_add(async_runtime_t* runtime, socket_fd_t fd, uint3
 
     if (runtime->fd_contexts.size() <= static_cast<size_t>(fd))
         runtime->fd_contexts.resize(static_cast<size_t>(fd) + 1, nullptr);
+    if (runtime->fd_events.size() <= static_cast<size_t>(fd))
+        runtime->fd_events.resize(static_cast<size_t>(fd) + 1, nullptr);
     runtime->fd_contexts[static_cast<size_t>(fd)] = context;
+    runtime->fd_events[static_cast<size_t>(fd)] = nullptr;
     
     struct epoll_event ev;
     memset(&ev, 0, sizeof(ev));
@@ -136,6 +140,8 @@ extern "C" int async_runtime_modify(async_runtime_t* runtime, socket_fd_t fd, ui
 
     if (runtime->fd_contexts.size() <= static_cast<size_t>(fd))
         runtime->fd_contexts.resize(static_cast<size_t>(fd) + 1, nullptr);
+    if (runtime->fd_events.size() <= static_cast<size_t>(fd))
+        runtime->fd_events.resize(static_cast<size_t>(fd) + 1, nullptr);
     if (context != nullptr)
         runtime->fd_contexts[static_cast<size_t>(fd)] = context;
     
@@ -152,6 +158,8 @@ extern "C" int async_runtime_remove(async_runtime_t* runtime, socket_fd_t fd) {
 
     if (runtime->fd_contexts.size() > static_cast<size_t>(fd))
         runtime->fd_contexts[static_cast<size_t>(fd)] = nullptr;
+    if (runtime->fd_events.size() > static_cast<size_t>(fd))
+        runtime->fd_events[static_cast<size_t>(fd)] = nullptr;
     
     return epoll_ctl(runtime->epoll_fd, EPOLL_CTL_DEL, fd, NULL);
 }
@@ -160,7 +168,12 @@ extern "C" int async_runtime_add_event(async_runtime_t* runtime, async_event_t* 
     if (!event)
         return -1;
     const async_wait_handle_t handle = async_event_get_wait_handle(event);
-    return handle == ASYNC_INVALID_WAIT_HANDLE ? -1 : async_runtime_add(runtime, handle, EVENT_READ, context);
+    if (handle == ASYNC_INVALID_WAIT_HANDLE)
+        return -1;
+    if (async_runtime_add(runtime, handle, EVENT_READ, context) < 0)
+        return -1;
+    runtime->fd_events[static_cast<size_t>(handle)] = event;
+    return 0;
 }
 
 extern "C" int async_runtime_wakeup(async_runtime_t* runtime) {
@@ -218,6 +231,14 @@ extern "C" int async_runtime_wait(async_runtime_t* runtime, io_event_t* events,
         } else {
             /* Regular I/O event */
             events[event_count].fd = epoll_events[i].data.fd;
+            async_event_t* event = events[event_count].fd >= 0
+                && runtime->fd_events.size() > static_cast<size_t>(events[event_count].fd)
+                ? runtime->fd_events[static_cast<size_t>(events[event_count].fd)]
+                : nullptr;
+            if (event && !async_event_is_manual_reset(event)
+                && !async_event_wait(event, 0)) {
+                continue;
+            }
             events[event_count].completion_key = 0;
             if (events[event_count].fd >= 0 && runtime->fd_contexts.size() > static_cast<size_t>(events[event_count].fd))
                 events[event_count].context = runtime->fd_contexts[static_cast<size_t>(events[event_count].fd)];

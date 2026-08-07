@@ -162,11 +162,17 @@ async_event_destroy(&work_ready);
 async_queue_destroy(work_queue);
 ```
 
-When the event becomes ready, mudmux resets it *before* dispatching its
-callback. A signal that arrives while the callback runs therefore leaves the
-event signalled for a later loop iteration. Signals are notifications, not a
+When the event becomes ready, mudmux acknowledges it before dispatching its
+callback. A manual-reset event is reset; an auto-reset event is consumed by
+that delivery. In both cases, a signal that arrives while the callback runs
+remains pending for a later loop iteration. Signals are notifications, not a
 counted work queue: repeated sets can coalesce, so callbacks should drain an
 application-owned queue rather than expect one callback per produced item.
+
+For this single-consumer callback model, either reset mode is suitable. Use a
+manual-reset event when the signalled condition must also remain observable to
+other waiters until it is explicitly reset. Use an auto-reset event for a
+one-consumer wake-up; mudmux consumes one signal per callback dispatch.
 The queue stores copies of messages up to its configured maximum size; do not
 enqueue a pointer to an inbound-hook payload, because that payload is only
 valid for the duration of the callback.

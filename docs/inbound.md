@@ -79,12 +79,18 @@ which resumes parsing only after the hook is idle. Consequences:
   ClientHello cannot be consumed as plaintext before the hook calls
   `comm_enable_tls()`.
 
+Concise `HOOK_CONNECT` contract: it is the slot-initialization boundary; input
+parsing for that slot remains deferred until connect returns, and if connect
+requests close, disconnect progression runs after connect completes.
+
 An explicit hook/API request for a slot (for example a prompt or lifecycle
 action requested by a hook running for another slot) is different from inbound
 parsing: it may use that target slot's bounded FIFO continuation queue.  Those
 entries are copied and generation-checked, execute after the active target-slot
 hook, and are discarded if the slot is removed/reused.  `HOOK_MESSAGE_INBOUND`
 and Telnet parser dispatches never use this queue.
+See [docs/workers.md](workers.md) for the per-hook queueability table in the
+ordering section.
 
 Do not retain `comm_abstract_ptr` in a hook or across an asynchronous boundary.
 Logic-layer state touched by hooks for different slots must still be synchronized

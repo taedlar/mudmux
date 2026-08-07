@@ -34,6 +34,7 @@ typedef struct fd_mapping_s {
     socket_fd_t fd;
     void* context;
     int events;
+    async_event_t* event;
 } fd_mapping_t;
 
 struct async_runtime_s {
@@ -99,6 +100,7 @@ static int expand_capacity(async_runtime_t* runtime) {
         runtime->mappings[i].fd = -1;
         runtime->mappings[i].context = NULL;
         runtime->mappings[i].events = 0;
+        runtime->mappings[i].event = NULL;
     }
     
     runtime->capacity = new_capacity;
@@ -136,6 +138,7 @@ extern "C" async_runtime_t* async_runtime_init(void* context) {
         runtime->mappings[i].fd = -1;
         runtime->mappings[i].context = NULL;
         runtime->mappings[i].events = 0;
+        runtime->mappings[i].event = NULL;
     }
     
     /* Create notification pipe */
@@ -196,6 +199,7 @@ extern "C" int async_runtime_add(async_runtime_t* runtime, socket_fd_t fd, uint3
     runtime->mappings[idx].fd = fd;
     runtime->mappings[idx].context = context;
     runtime->mappings[idx].events = events;
+    runtime->mappings[idx].event = NULL;
     
     return 0;
 }
@@ -229,6 +233,7 @@ extern "C" int async_runtime_remove(async_runtime_t* runtime, socket_fd_t fd) {
     runtime->count--;
     runtime->pollfds[runtime->count].fd = -1;
     runtime->mappings[runtime->count].fd = -1;
+    runtime->mappings[runtime->count].event = NULL;
     
     return 0;
 }
@@ -237,7 +242,13 @@ extern "C" int async_runtime_add_event(async_runtime_t* runtime, async_event_t* 
     if (!event)
         return -1;
     const async_wait_handle_t handle = async_event_get_wait_handle(event);
-    return handle == ASYNC_INVALID_WAIT_HANDLE ? -1 : async_runtime_add(runtime, handle, EVENT_READ, context);
+    if (handle == ASYNC_INVALID_WAIT_HANDLE)
+        return -1;
+    if (async_runtime_add(runtime, handle, EVENT_READ, context) < 0)
+        return -1;
+    const int index = find_fd_index(runtime, handle);
+    runtime->mappings[index].event = event;
+    return 0;
 }
 
 extern "C" int async_runtime_wakeup(async_runtime_t* runtime) {
@@ -292,6 +303,11 @@ extern "C" int async_runtime_wait(async_runtime_t* runtime, io_event_t* events,
                 }
             } else {
                 /* Regular I/O event */
+                async_event_t* event = runtime->mappings[i].event;
+                if (event && !async_event_is_manual_reset(event)
+                    && !async_event_wait(event, 0)) {
+                    continue;
+                }
                 events[event_count].fd = runtime->pollfds[i].fd;
                 events[event_count].completion_key = 0;
                 events[event_count].context = runtime->mappings[i].context;

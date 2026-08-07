@@ -1,6 +1,7 @@
 #ifndef MUDMUX_MUDMUX_H
 #define MUDMUX_MUDMUX_H
 
+#include <stdbool.h>
 #include "mudmux_export.h"
 #include "mudmux/async.h"
 #include "mudmux/hooks.h"
@@ -44,9 +45,10 @@ MUDMUX_EXPORT void mudmux_enable_console (bool enable);
 MUDMUX_EXPORT bool mudmux_init (const char* config_yaml);
 
 /**
- * Register a manual or auto-reset async event.  The event is watched by
- * mudmux_run(); an observed signal is reset before hook_func is invoked. The event
- * must remain initialized until mudmux_deinit() returns.
+ * Register a manual or auto-reset async event. The event is watched by
+ * mudmux_run(); a manual-reset signal is reset before hook_func is invoked,
+ * while an auto-reset signal is consumed by one dispatch. The event must remain
+ * initialized until mudmux_deinit() returns.
  */
 MUDMUX_EXPORT bool mudmux_register_event(async_event_t* event, mudmux_hook_func_t hook_func);
 

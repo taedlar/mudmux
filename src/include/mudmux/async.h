@@ -2,6 +2,7 @@
 #define MUDMUX_ASYNC_H
 
 #include "mudmux_export.h"
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 

@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="680" viewBox="0 0 1100 680" role="img" aria-labelledby="title desc">
+  <title id="title">mudmux strict and relaxed execution coordination</title>
+  <desc id="desc">The event loop produces inbound, outbound, connect, Telnet subnegotiation, and timer hooks. Strict mode executes them directly on the event-loop thread. Relaxed mode coordinates slot and timer queues: each slot has one active hook, parser-originated inbound/subneg parsing is deferred until that hook returns, timer work remains serial, and workers drain eligible jobs from the shared work queue in arbitrary order. Slot completion releases the next hook for that slot.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,3.5 L0,7 Z" fill="#52606d"/>
+    </marker>
+    <style>
+      .title { font: 700 26px system-ui, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif; fill: #172b4d; }
+      .label { font: 650 14px system-ui, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif; fill: #172b4d; }
+      .small { font: 14px system-ui, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif; fill: #42526e; }
+      .tiny { font: 12px system-ui, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif; fill: #52606d; }
+      .section { font: 700 13px system-ui, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif; fill: #0052cc; letter-spacing: .08em; }
+      .wire { fill: none; stroke: #52606d; stroke-width: 2.5; marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <rect width="1100" height="680" rx="20" fill="#f7f9fc"/>
+  <text x="44" y="50" class="section">WORKERS EXECUTION MODEL</text>
+  <text x="44" y="84" class="title">Strict determinism or coordinated concurrency</text>
+
+  <!-- Description -->
+  <rect x="44" y="108" width="1012" height="62" rx="11" fill="#fff" stroke="#b3bac5" stroke-width="2"/>
+  <text x="68" y="133" class="tiny">Workers execution model is selected by configuring size of the thread pool.</text>
+  <text x="68" y="153" class="tiny">If pool size = 1 (default), STRICT mode is used; otherwise, RELAXED mode is used.</text>
+
+  <!-- Event loop -->
+  <rect x="44" y="190" width="190" height="438" rx="16" fill="#deebff" stroke="#0052cc" stroke-width="3"/>
+  <text x="68" y="230" class="label" style="font-size:20px;fill:#0052cc">Event loop</text>
+  <text x="68" y="253" class="tiny">Transports / Internal-events</text>
+  <text x="68" y="288" class="section">Random arrival</text>
+  <rect x="68" y="302" width="142" height="28" rx="7" fill="#fff"/>
+  <text x="82" y="322" class="small">Timer 2</text>
+  <rect x="68" y="336" width="142" height="28" rx="7" fill="#fff"/>
+  <text x="82" y="356" class="small">Connect (7)</text>
+  <rect x="68" y="370" width="142" height="28" rx="7" fill="#fff"/>
+  <text x="82" y="390" class="small">MsgIn (4)</text>
+  <rect x="68" y="404" width="142" height="28" rx="7" fill="#fff"/>
+  <text x="82" y="424" class="small">Subneg (7)</text>
+  <rect x="68" y="438" width="142" height="28" rx="7" fill="#fff"/>
+  <text x="82" y="458" class="small">Timer 1</text>
+  <rect x="68" y="472" width="142" height="28" rx="7" fill="#fff"/>
+  <text x="82" y="492" class="small">MsgOut (4)</text>
+  <rect x="68" y="522" width="142" height="58" rx="9" fill="#fff" stroke="#0052cc" stroke-width="2"/>
+  <text x="139" y="547" text-anchor="middle" class="label" style="fill:#0052cc">mudmux_run()</text>
+  <text x="139" y="566" text-anchor="middle" class="small">multiplexes works</text>
+  <text x="139" y="610" text-anchor="middle" class="tiny">read · parse · flush</text>
+
+  <!-- Strict mode: flat band aligned with relaxed coordinator -->
+  <rect x="272" y="190" width="520" height="90" rx="16" fill="#f3f0ff" stroke="#6554c0" stroke-width="3"/>
+  <text x="298" y="226" class="label" style="font-size:19px;fill:#5243aa">STRICT mode</text>
+  <text x="298" y="250" class="small">Pool size = 1 · event loop runs hooks directly (single-threaded)</text>
+
+  <!-- Relaxed mode: expanded coordinator -->
+  <rect x="272" y="308" width="520" height="320" rx="16" fill="#f3f0ff" stroke="#6554c0" stroke-width="3"/>
+  <text x="298" y="347" class="label" style="font-size:20px;fill:#5243aa">RELAXED mode</text>
+  <text x="298" y="370" class="small">Pool size &gt; 1 · per-slot queued and defers parsing until drained</text>
+
+  <!-- Slot 4 queue -->
+  <rect x="298" y="398" width="468" height="62" rx="10" fill="#fff" stroke="#d7d1f2" stroke-width="2"/>
+  <text x="316" y="435" class="label">Slot 4</text>
+  <rect x="366" y="409" width="82" height="38" rx="7" fill="#e3fcef"/>
+  <text x="407" y="433" text-anchor="middle" class="small">MsgIn(4)</text>
+  <rect x="454" y="409" width="92" height="38" rx="7" fill="#e3fcef"/>
+  <text x="500" y="433" text-anchor="middle" class="small">MsgOut(4)</text>
+
+  <!-- Slot 7 queue -->
+  <rect x="298" y="476" width="468" height="62" rx="10" fill="#fff" stroke="#d7d1f2" stroke-width="2"/>
+  <text x="316" y="513" class="label">Slot 7</text>
+  <rect x="366" y="487" width="82" height="38" rx="7" fill="#e3fcef"/>
+  <text x="407" y="511" text-anchor="middle" class="small">Connect(7)</text>
+  <rect x="454" y="487" width="280" height="38" rx="7" fill="#fffae6"/>
+  <text x="594" y="511" text-anchor="middle" class="small">Subneg(7): deferred until slot 7 drained</text>
+
+  <!-- Event queue -->
+  <rect x="298" y="554" width="468" height="52" rx="10" fill="#fff" stroke="#d7d1f2" stroke-width="2"/>
+  <text x="310" y="586" class="label">Events</text>
+  <rect x="366" y="562" width="74" height="34" rx="7" fill="#e9f2ff"/>
+  <text x="403" y="584" text-anchor="middle" class="small">Timer 2</text>
+  <rect x="446" y="562" width="74" height="34" rx="7" fill="#e9f2ff"/>
+  <text x="483" y="584" text-anchor="middle" class="small">Timer 1</text>
+
+  <!-- Workers -->
+  <rect x="850" y="190" width="206" height="438" rx="16" fill="#e3fcef" stroke="#36b37e" stroke-width="3"/>
+  <text x="874" y="230" class="label" style="font-size:20px;fill:#006644">Workers</text>
+  <text x="874" y="253" class="tiny">shared pool · claimed jobs</text>
+  <rect x="874" y="274" width="158" height="72" rx="8" fill="#fff" stroke="#36b37e" stroke-width="2"/>
+  <text x="890" y="296" class="label">Pending queue</text>
+  <rect x="890" y="306" width="66" height="20" rx="4" fill="#e3fcef"/>
+  <text x="923" y="320" text-anchor="middle" class="tiny">MsgOut(4)</text>
+  <rect x="960" y="306" width="54" height="20" rx="4" fill="#e9f2ff"/>
+  <text x="987" y="320" text-anchor="middle" class="tiny">Timer 1</text>
+  <text x="953" y="363" text-anchor="middle" class="tiny">workers drains in SPMC</text>
+  <rect x="874" y="376" width="158" height="46" rx="8" fill="#fff"/>
+  <text x="888" y="404" class="label">Worker 1</text>
+  <text x="1018" y="404" text-anchor="end" class="tiny">MsgIn(4)</text>
+  <rect x="874" y="438" width="158" height="46" rx="8" fill="#fff"/>
+  <text x="888" y="466" class="label">Worker 2</text>
+  <text x="1018" y="466" text-anchor="end" class="tiny">Connect(7)</text>
+  <rect x="874" y="500" width="158" height="46" rx="8" fill="#fff"/>
+  <text x="888" y="528" class="label">Worker 3</text>
+  <text x="1018" y="528" text-anchor="end" class="tiny">Timer 2</text>
+
+  <!-- Relaxed-mode handoff only: eligible work enters the shared queue. -->
+  <path d="M792 430 L874 303" class="wire"/>
+</svg>

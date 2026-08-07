@@ -4,6 +4,8 @@
 
 #include "execution.hpp"
 
+#include "mudmux/mudmux.h"
+
 #include <atomic>
 #include <cstring>
 #include <deque>
@@ -125,14 +127,14 @@ static void run_slot_task(int slot, in_flight_hook_t task) {
 
 } // namespace
 
-void mudmux_execution_configure(int thread_pool_size) {
+void mudmux_workers_configure(int thread_pool_size) {
     execution_state.thread_pool_size = thread_pool_size;
     execution_state.determinism_mode = (thread_pool_size == 1)
         ? MUDMUX_DETERMINISM_STRICT
         : MUDMUX_DETERMINISM_RELAXED;
 }
 
-bool mudmux_execution_start() {
+extern "C" MUDMUX_EXPORT bool mudmux_workers_start() {
     if (execution_state.running.exchange(true))
         return false;
     if (!execution_state.worker_pool.start(static_cast<std::size_t>(execution_state.thread_pool_size))) {
@@ -142,7 +144,7 @@ bool mudmux_execution_start() {
     return true;
 }
 
-void mudmux_execution_stop() {
+extern "C" MUDMUX_EXPORT void mudmux_workers_stop() {
     execution_state.running.store(false);
     execution_state.worker_pool.stop();
     std::lock_guard<std::mutex> lock(execution_state.slot_states_mutex);
@@ -152,10 +154,15 @@ void mudmux_execution_stop() {
     execution_state.event_active = false;
 }
 
-int mudmux_execution_thread_pool_size() { return execution_state.thread_pool_size; }
+int mudmux_workers_configured_pool_size() { return execution_state.thread_pool_size; }
+
+extern "C" MUDMUX_EXPORT size_t mudmux_workers_pool_size() {
+    return execution_state.worker_pool.size();
+}
+
 mudmux_determinism_mode_t mudmux_execution_mode() { return execution_state.determinism_mode; }
 const char* mudmux_execution_mode_name() { return execution_state.determinism_mode == MUDMUX_DETERMINISM_STRICT ? "strict" : "relaxed"; }
-bool mudmux_execution_is_worker_thread() { return is_execution_worker_thread; }
+bool mudmux_workers_is_worker_thread() { return is_execution_worker_thread; }
 
 static void run_event_task(execution_state_t::event_task_t task) {
     worker_thread_scope_t worker_scope;
