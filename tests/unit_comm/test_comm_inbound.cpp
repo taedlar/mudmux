@@ -394,8 +394,11 @@ TEST_F(CommInboundTest, TransportReadyFiresOnceAfterConnectBeforeInbound) {
     EXPECT_NE(comm_get_flags(slot) & C_TRANSPORT_READY, 0u);
 
     observed_current_slot = -2;
+    inbound_messages.clear();
     ASSERT_TRUE(comm_refill_inbound_buffers(comm, "message\n", 8));
     EXPECT_EQ(comm_process_input(runtime, comm, 1), COMM_PROCESS_OK);
+    ASSERT_EQ(inbound_messages.size(), 1u);
+    EXPECT_EQ(inbound_messages[0], "message");
     EXPECT_EQ(observed_current_slot, -2);
 
     async_runtime_deinit(runtime);

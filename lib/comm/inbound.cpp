@@ -249,8 +249,9 @@ void comm_invoke_transport_ready(async_runtime_t* runtime, int slot) {
         await_ready_hook ? _resume_input_after_transport_ready_hook : nullptr,
         nullptr,
         slot);
-    if (await_ready_hook && result != MUDMUX_DISPATCH_OK)
-        comm->flags &= ~C_AWAITING_HOOK;
+    if (result != MUDMUX_DISPATCH_OK) {
+        comm->flags &= ~(C_TRANSPORT_READY | C_AWAITING_HOOK);
+    }
 }
 
 static void _resume_input_after_connect_hook(void* context, int slot) {
