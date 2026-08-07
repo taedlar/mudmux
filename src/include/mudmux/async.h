@@ -27,6 +27,76 @@ typedef struct async_event_s {
 typedef struct async_queue_s async_queue_t;
 typedef struct async_runtime_s async_runtime_t;
 
+/** Function invoked by an async closure. */
+typedef void (*async_closure_func_t)(void *context);
+
+/** Releases the context captured by an async closure. */
+typedef void (*async_closure_destroy_t)(void *context);
+
+/**
+ * A C-compatible owning callback.
+ *
+ * The owner invokes or destroys a closure exactly once. Both operations clear
+ * the closure before calling application code, making either operation safe to
+ * repeat. The optional destroy callback releases the captured context after
+ * invocation, or when the closure is discarded without invocation.
+ */
+typedef struct async_closure_s {
+    async_closure_func_t invoke;
+    async_closure_destroy_t destroy;
+    void *context;
+} async_closure_t;
+
+/** Return true when @p closure can be invoked. */
+static inline bool async_closure_is_valid(const async_closure_t *closure) {
+    return closure && closure->invoke;
+}
+
+/**
+ * Invoke @p closure, then release its captured context and clear it.
+ *
+ * A null closure or a closure with no invoke callback is simply cleared. In
+ * C++ builds, cleanup still runs if the invoke callback throws.
+ */
+static inline void async_closure_invoke(async_closure_t *closure) {
+    if (!closure)
+        return;
+
+    const async_closure_t owned = *closure;
+    closure->invoke = 0;
+    closure->destroy = 0;
+    closure->context = 0;
+#ifdef __cplusplus
+    try {
+        if (owned.invoke)
+            owned.invoke(owned.context);
+    }
+    catch (...) {
+        if (owned.destroy)
+            owned.destroy(owned.context);
+        throw;
+    }
+#else
+    if (owned.invoke)
+        owned.invoke(owned.context);
+#endif
+    if (owned.destroy)
+        owned.destroy(owned.context);
+}
+
+/** Release @p closure without invoking it, then clear it. */
+static inline void async_closure_destroy(async_closure_t *closure) {
+    if (!closure)
+        return;
+
+    const async_closure_t owned = *closure;
+    closure->invoke = 0;
+    closure->destroy = 0;
+    closure->context = 0;
+    if (owned.destroy)
+        owned.destroy(owned.context);
+}
+
 typedef enum async_queue_flags_e {
     ASYNC_QUEUE_DROP_OLDEST = 0x01,
     ASYNC_QUEUE_BLOCK_WRITER = 0x02,

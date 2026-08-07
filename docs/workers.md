@@ -1,97 +1,136 @@
-# Worker and Execution Model
+# Workers and Multi-threaded Applications
 
-mudmux uses one configured thread pool for all asynchronous hook work. The
-pool supplies worker threads; the execution layer decides which hook work runs
-there and coordinates its ordering.
+mudmux has one configured worker pool for asynchronous hook callbacks. The
+event loop remains responsible for I/O; workers run application hook code when
+relaxed concurrency is enabled. This division lets independent connections
+make progress concurrently without letting two callbacks mutate the same slot
+at once.
 
 ![Worker and execution model](images/workers-execution-model.svg)
 
-## Lifecycle
+## Configure concurrency
 
-Configure the pool through `transport.thread_pool.size` in the YAML passed to
-`mudmux_init()`. The default size is one and values below one are rejected.
+Set `transport.thread_pool.size` in the YAML passed to `mudmux_init()`:
 
-`mudmux_init()` creates and starts the pool after configuration has been
-validated. `mudmux_run()` is a work producer: it accepts transport and async
-events, turns them into hook work, and submits eligible work to the already
-running pool. It does not start or stop workers. `mudmux_deinit()` always stops
-and joins the pool before it tears down the rest of mudmux.
+```yaml
+transport:
+  thread_pool:
+    size: 1
+```
 
-`mudmux/execution.h` exposes the runtime-bound
-`mudmux_execution_api_v1->is_running()` API (also available as the
-`mudmux_is_running()` convenience macro) for code that needs to
-determine whether a `mudmux_run()` call is currently active. It reports
-event-loop execution state, not whether the worker pool is running. As with
-the comm API package, use it after `mudmux_init()` and before `mudmux_deinit()`.
+The value defaults to `1`; values below `1` are rejected during initialization.
 
-The public `mudmux/workers.h` header exposes `mudmux_workers_start()` and
-`mudmux_workers_stop()` for explicitly stopping and restarting the configured
-pool while mudmux remains initialized. Normally applications should rely on
-the init/deinit lifecycle. `mudmux_workers_stop()` must not be called by a
-worker callback. `mudmux_workers_pool_size()` returns the number of currently
-live pool workers (zero after the pool is stopped).
-
-## Responsibilities
-
-The APIs reflect the split between pool management and execution coordination:
-
-- `mudmux_workers_*` manages the pool configuration, lifecycle, worker count,
-  and worker-thread identity.
-- `mudmux_execution_*` selects asynchronous hooks, schedules slot and event
-  work, and enforces execution ordering.
-
-This distinction is intentional: workers are resources shared by all queued
-work, while execution is the policy that coordinates that work.
-
-## Modes and Ordering
-
-`thread_pool.size: 1` selects strict mode. Hook execution stays on the event
-loop thread, preserving the original serialized behavior.
-
-A size greater than one selects relaxed mode. The execution layer may schedule
-eligible hooks on pool workers. Hooks from different slots can run
-concurrently, but a slot has at most one hook in flight. While an inbound hook
-is running, further bytes for that slot remain in the transport buffers rather
-than being decoded into another inbound message.
-
-Explicit non-inbound dispatches may use a bounded continuation queue for the
-same slot. Non-slot async events also use the pool in relaxed mode, but are
-**serialized** with one another. This preserves their order without consuming a
-slot's execution state.
-
-Per-slot continuation queue behavior in relaxed mode:
-
-| Hook type | Queued when same-slot hook is in flight? | Notes |
+| Size | Mode | Application behavior |
 | --- | --- | --- |
-| `HOOK_CONNECT` | Conditionally | Scheduler allows queueing, but normal accept flow starts with connect as the first slot hook. |
-| `HOOK_DISCONNECT` | Yes | Queued in the slot bounded FIFO when dispatch is accepted. |
-| `HOOK_MESSAGE_OUTBOUND` | Yes | Queued by `to_slot` target. |
-| `HOOK_PROMPT` | Yes | Queued in the slot bounded FIFO. |
-| `HOOK_MESSAGE_INBOUND` | No | Parser-originated inbound does not queue; it returns queue-full and parsing is deferred. |
-| `HOOK_TELNET_SUBNEG` | No | Uses dedicated dispatch path; if slot is busy it returns queue-full and parsing is deferred. |
+| `1` | Strict | Hooks execute on the event-loop thread with serialized behavior. |
+| Greater than `1` | Relaxed | Eligible hooks may run on pool workers; hooks for different slots can overlap. |
 
-Concise `HOOK_CONNECT` ordering contract:
+Start with the default unless the application is prepared for concurrent hook
+callbacks and nondeterministic ordering between different slots.
 
-- Connect is the slot-initialization boundary for parser and transport mode setup.
-- While connect is in flight, same-slot parser work is deferred (not queued).
-- If connect requests close, disconnect progression is serialized after connect.
-- Rare queued-connect cases are generation-checked before execution.
+## What mudmux runs where
 
-`HOOK_TIMER` and other non-slot async events do not use a slot continuation
-queue. They run through the separate serialized event lane.
+The event-loop thread always owns transport work: accepting connections,
+reading and buffering bytes, parsing input, flushing output, and updating async
+runtime registrations. It produces hook work but does not wait for workers to
+finish before servicing other slots.
 
-The event loop remains responsible for transport reads, writes, parser
-progress, and runtime registration. Worker callbacks use the normal comm API
-threading contract; logic-layer state that is shared across callbacks still
-requires application-level synchronization in relaxed mode.
+In strict mode, application hooks execute inline on that event-loop thread. In
+relaxed mode, these hooks are eligible for worker execution:
 
-## Worker Fault Containment
+- `HOOK_CONNECT`
+- `HOOK_DISCONNECT`
+- `HOOK_MESSAGE_INBOUND`
+- `HOOK_MESSAGE_OUTBOUND`
+- `HOOK_PROMPT`
+- `HOOK_TELNET_SUBNEG`
 
-Each worker catches exceptions thrown by a submitted task. mudmux logs the
-exception and returns that worker to the task loop, preserving the configured
-pool capacity. This is equivalent to immediately respawning the failed worker,
-without allowing an exception to escape the thread and terminate the server.
-The task that threw is abandoned; later queued work continues to run. This
-protection covers standard and non-standard C++ exceptions. It cannot recover
-from process-fatal faults such as a segmentation fault or explicit process
-termination.
+`HOOK_TIMER` and registered non-slot async events use a separate serialized
+event lane. They do not consume a communication slot's execution state.
+`HOOK_GARBAGE_COLLECTION` always remains inline on the event-loop thread.
+
+## Per-slot ordering and backpressure
+
+Relaxed mode permits at most one callback in flight for each slot. Later
+transport bytes for that slot remain buffered until the callback returns, so
+mudmux never decodes a second inbound message or Telnet subnegotiation ahead of
+the first. Hooks for separate slots may execute in parallel; no global
+cross-slot ordering is guaranteed.
+
+The scheduler has a bounded FIFO continuation queue of eight tasks per slot for
+explicit, non-parser dispatches. Parser-originated inbound messages and Telnet
+subnegotiations never enter that queue: if the slot is busy, dispatch reports
+`MUDMUX_DISPATCH_QUEUE_FULL` internally and parsing is deferred until the slot
+is idle. This bounds queued application work while preserving inbound order.
+
+| Hook | When its slot already has a callback in flight |
+| --- | --- |
+| `HOOK_CONNECT` | The scheduler can queue explicit requests, although a normal accepted connection starts with connect. |
+| `HOOK_DISCONNECT` | The terminal disconnect transition is retained and retried after the active callback. |
+| `HOOK_MESSAGE_OUTBOUND` | May enter the target slot's bounded continuation queue. |
+| `HOOK_PROMPT` | May enter the slot's bounded continuation queue. |
+| `HOOK_MESSAGE_INBOUND` | Does not queue; inbound parsing pauses. |
+| `HOOK_TELNET_SUBNEG` | Does not queue; Telnet parsing pauses. |
+
+`HOOK_CONNECT` is the protocol-setup boundary. While it is running, same-slot
+parser work is deferred; a close requested by connect is sequenced before
+disconnect progresses. See [HOOK_CONNECT](hooks/HOOK_CONNECT.md).
+
+## Writing thread-safe application hooks
+
+Comm API calls from a mudmux hook may be made from either the event-loop thread
+or a mudmux worker. The comm layer synchronizes its own slot and buffer state,
+so a worker hook can, for example, write output or close its slot:
+
+```c
+static int on_input(void *context, int slot, void *data, size_t size) {
+    (void)context;
+    if (is_quit_command(data, size))
+        (void)comm_close(NULL, slot);
+    else
+        comm_buffered_write(slot, "OK\n", 3);
+    return 0;
+}
+```
+
+That protection does not cover application-owned data. In relaxed mode, guard
+shared worlds, session maps, caches, and other logic-layer state with the
+application's own mutexes, atomics, or queues. Slot-local state accessed only
+through one slot's callbacks is ordered; state shared across slots is not.
+
+Do not retain internal `comm_abstract_ptr` objects or pass them to another
+thread. Acquire and use them only within the current stack frame.
+
+## Pool lifecycle and public APIs
+
+`mudmux_init()` validates the configuration and starts the worker pool.
+`mudmux_run()` produces work for the existing pool; it does not create or stop
+workers. `mudmux_deinit()` stops and joins workers before tearing down the rest
+of mudmux.
+
+`<mudmux/workers.h>` also provides lifecycle controls for applications that
+intentionally stop and restart workers while mudmux remains initialized:
+
+- `mudmux_workers_start()` starts a stopped configured pool and returns `false`
+  if it is already running or cannot start.
+- `mudmux_workers_stop()` waits for queued work, stops and joins workers, and
+  clears scheduler state. Do not call it from a worker callback.
+- `mudmux_workers_pool_size()` reports the number of live workers; it is zero
+  after stop.
+
+`<mudmux/execution.h>` exposes `mudmux_is_running()`. It reports whether a
+`mudmux_run()` call is active, not whether the worker pool exists. Use these
+runtime-bound APIs after `mudmux_init()` and before `mudmux_deinit()`.
+
+## Failure behavior and verification
+
+Workers catch standard and non-standard C++ exceptions from submitted tasks,
+log them, and continue processing later tasks. This prevents an uncaught hook
+exception from terminating its worker, but it cannot recover from a process
+fatal fault such as a segmentation fault or explicit process termination.
+
+The regression suite covers same-slot ordering, progress on independent slots
+while another slot is busy, queue-pressure deferral and resume, concurrent comm
+API use from hooks, worker-thread prompt and connect hooks, and scheduler
+stress. Sanitizer-backed stress testing remains useful for application-specific
+shared-state designs.

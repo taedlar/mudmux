@@ -18,8 +18,48 @@
 #include "async/async_queue.h"
 #include "async/async_runtime.h"
 #include "async/thread_pool.hpp"
+#include "mudmux/async.h"
 
 namespace {
+
+struct closure_context_t {
+    int invocations{0};
+    int destructions{0};
+};
+
+void invoke_closure(void* context) {
+    ++static_cast<closure_context_t*>(context)->invocations;
+}
+
+void destroy_closure(void* context) {
+    ++static_cast<closure_context_t*>(context)->destructions;
+}
+
+TEST(AsyncClosureTest, InvokeConsumesAndDestroysClosure) {
+    closure_context_t context;
+    async_closure_t closure{invoke_closure, destroy_closure, &context};
+
+    EXPECT_TRUE(async_closure_is_valid(&closure));
+    async_closure_invoke(&closure);
+    EXPECT_EQ(context.invocations, 1);
+    EXPECT_EQ(context.destructions, 1);
+    EXPECT_FALSE(async_closure_is_valid(&closure));
+
+    async_closure_invoke(&closure);
+    async_closure_destroy(&closure);
+    EXPECT_EQ(context.invocations, 1);
+    EXPECT_EQ(context.destructions, 1);
+}
+
+TEST(AsyncClosureTest, DestroyConsumesWithoutInvoking) {
+    closure_context_t context;
+    async_closure_t closure{invoke_closure, destroy_closure, &context};
+
+    async_closure_destroy(&closure);
+    EXPECT_EQ(context.invocations, 0);
+    EXPECT_EQ(context.destructions, 1);
+    EXPECT_FALSE(async_closure_is_valid(&closure));
+}
 
 #ifndef _WIN32
 bool is_fd_readable(int fd) {
