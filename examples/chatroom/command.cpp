@@ -18,7 +18,7 @@ void Command::initialize() {
             "Welcome to the chatroom! Here are some commands you can use:\n"
             "/help - Show this help message\n"
             "/quit - Disconnect from the chatroom\n";
-        comm_buffered_write(slot, help_message.c_str(), help_message.size());
+        comm_write_message(slot, slot, help_message.c_str(), help_message.size());
     });
 
     register_command("quit", &command_quit);

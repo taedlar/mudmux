@@ -110,14 +110,18 @@ static std::string normalize_telnet_newlines(std::string_view input) {
         if (ch == '\r') {
             normalized.push_back('\r');
             if (i + 1 < input.size() && input[i + 1] == '\n') {
-                normalized.push_back('\n');
+                normalized.push_back('\n'); // preserve CR LF sequence
                 ++i;
-            } else {
-                normalized.push_back('\n');
             }
+            if (i + 1 < input.size() && input[i + 1] == '\0') {
+                normalized.push_back('\n'); // convert CR NUL sequence to CR LF
+                ++i;
+            }
+            // If CR is followed by any other character, it will be preserved as-is.
             continue;
         }
         if (ch == '\n') {
+            // Convert standalone LF to CR LF for Telnet clients.
             normalized.push_back('\r');
             normalized.push_back('\n');
             continue;
