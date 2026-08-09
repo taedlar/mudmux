@@ -39,7 +39,12 @@ Notes:
 
 ## Return Value
 The return value is propagated back from `mudmux_invoke_hook`, but inbound processing currently does not branch on it.
-Use hook side effects (for example `comm_close`, `comm_buffered_write`) to control behavior.
+Use hook side effects (for example `comm_close`, `comm_add_message`) to control behavior.
+
+When `HOOK_MESSAGE_OUTBOUND` is registered, `comm_buffered_write()` is blocked
+outside `HOOK_MESSAGE_OUTBOUND` and `HOOK_PROMPT`. Use `comm_add_message()` or
+`comm_add_formatted_message()` from inbound hooks so outbound filtering still
+applies.
 
 ## Typical usage
 Typical logic-layer usage includes:
@@ -52,7 +57,7 @@ Example:
 static int on_message_inbound (void*, int slot, void* data, size_t len) {
     std::string msg(static_cast<const char*>(data), len);
   const std::string reply = "Received: [" + msg + "]\n\r";
-  comm_buffered_write(slot, reply.data(), reply.size());
+  comm_add_message(slot, reply.data(), reply.size());
     if (msg == "quit" || msg == "exit")
         comm_close(nullptr, slot);
     return 0;

@@ -5,6 +5,8 @@
 #define NOMINMAX
 #include "outbound.hpp"
 
+#include <cstdarg>
+#include <cstdio>
 #include <algorithm>
 #include <mutex>
 #include <string>
@@ -14,6 +16,7 @@
 #include <openssl/err.h>
 
 #include "console.hpp"
+#include "current_slot.hpp"
 #include "execution.hpp"
 #include "file_input.hpp"
 #include "inbound.hpp"
@@ -251,13 +254,23 @@ void comm_buffered_write_comm_no_telnet_normalize (comm_abstract_ptr& comm, cons
 }
 
 void comm_buffered_write (int slot, const void *buf, size_t len) {
+    if (mudmux_get_registered_hook(HOOK_MESSAGE_OUTBOUND)) {
+        const mudmux_hook_type_t current_hook = comm_current_hook_type();
+        if (current_hook != HOOK_MESSAGE_OUTBOUND && current_hook != HOOK_PROMPT) {
+            SPDLOG_ERROR(
+                "comm_buffered_write() is restricted while HOOK_MESSAGE_OUTBOUND is registered; "
+                "use comm_add_message() or comm_add_formatted_message() instead");
+            return;
+        }
+    }
+
     comm_abstract_ptr comm(slot, comm_slots_mtx);
     if (!comm)
         return;
     comm_buffered_write_comm(comm, buf, len);
 }
 
-void comm_write_message (int from_slot, int to_slot, const void *buf, size_t len) {
+void comm_add_message (int to_slot, const void *buf, size_t len) {
     if (!buf || len == 0)
         return;
 
@@ -272,10 +285,44 @@ void comm_write_message (int from_slot, int to_slot, const void *buf, size_t len
     async_runtime_t* runtime = async_get_current_runtime();
     (void)mudmux_dispatch_hook(HOOK_MESSAGE_OUTBOUND,
         runtime ? async_runtime_get_context(runtime) : nullptr,
-        static_cast<int>((static_cast<uint32_t>(from_slot) & 0xffffu) << 16 |
-                         (static_cast<uint32_t>(to_slot) & 0xffffu)),
+        to_slot,
         message.data(),
         len);
+}
+
+void comm_add_vformatted_message (int to_slot, const char *fmt, va_list args) {
+    if (!fmt)
+        return;
+
+    va_list size_args;
+    va_copy(size_args, args);
+    const int formatted_size = std::vsnprintf(nullptr, 0, fmt, size_args);
+    va_end(size_args);
+    if (formatted_size < 0) {
+        SPDLOG_ERROR("vsnprintf failed while formatting outbound message");
+        return;
+    }
+    if (formatted_size == 0)
+        return;
+
+    std::vector<char> message(static_cast<size_t>(formatted_size) + 1u);
+    va_list render_args;
+    va_copy(render_args, args);
+    const int written = std::vsnprintf(message.data(), message.size(), fmt, render_args);
+    va_end(render_args);
+    if (written != formatted_size) {
+        SPDLOG_ERROR("vsnprintf wrote unexpected size while formatting outbound message");
+        return;
+    }
+
+    comm_add_message(to_slot, message.data(), static_cast<size_t>(written));
+}
+
+void comm_add_formatted_message (int to_slot, const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    comm_add_vformatted_message(to_slot, fmt, args);
+    va_end(args);
 }
 
 void comm_free_outbound_buffers(comm_abstract_ptr& comm) {

@@ -17,14 +17,23 @@ The design goal is simple:
 Today, `comm_buffered_write(slot, buf, len)` appends plaintext bytes to a per-slot outbound queue.
 `comm_flush()` later drains that queue to the slot's write BIO.
 
-`comm_write_message(from_slot, to_slot, buf, len)` is the logic-layer message path. If a
+`comm_add_message(to_slot, buf, len)` is the logic-layer message path. If a
 `HOOK_MESSAGE_OUTBOUND` callback is registered, it receives an immutable copy
-of the message and a `msg` value with `from_slot` in its high 16 bits and
-`to_slot` in its low 16 bits. In relaxed mode, the copied payload may be queued
-for the destination slot. The hook is responsible for sending the resulting
-bytes (normally with `comm_buffered_write(to_slot, ...)`).
-Without that hook, `comm_write_message` directly calls `comm_buffered_write` for
+of the message and a `msg` value equal to `to_slot`. In relaxed mode, the
+copied payload may be queued for the destination slot. The hook is
+responsible for sending the resulting bytes (normally with
+`comm_buffered_write(to_slot, ...)`).
+Without that hook, `comm_add_message` directly calls `comm_buffered_write` for
 the destination slot.
+
+`comm_add_formatted_message(to_slot, fmt, ...)` is a convenience wrapper that
+formats a `printf`-style message first, then routes the rendered bytes through
+the same `comm_add_message()` path and outbound hook behavior.
+
+When `HOOK_MESSAGE_OUTBOUND` is registered, `comm_buffered_write()` is
+restricted to `HOOK_MESSAGE_OUTBOUND` and `HOOK_PROMPT` callbacks. Other logic
+paths should use `comm_add_message()`/`comm_add_formatted_message()` so
+outbound messages continue through the hook.
 
 That means the current buffering policy is:
 

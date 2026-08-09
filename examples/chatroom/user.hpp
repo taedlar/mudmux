@@ -67,6 +67,12 @@ public:
             comm_close(nullptr, comm_slot);
     }
 
+    void addMessage(const std::string& message) {
+        std::lock_guard<std::recursive_mutex> lock(users_mutex);
+        if (comm_slot >= 0)
+            comm_add_message(comm_slot, message.data(), message.size());
+    }
+
     /** Record activity received from this user's transport. */
     void resetIdleTime() {
         std::lock_guard<std::recursive_mutex> lock(users_mutex);
@@ -115,7 +121,7 @@ public:
     void promptCurrentMenu() {
         std::lock_guard<std::recursive_mutex> lock(users_mutex);
         if (menu) {
-            menu->writeMenu(comm_slot);
+            menu->writeMenu(shared_from_this());
         }
     }
 };

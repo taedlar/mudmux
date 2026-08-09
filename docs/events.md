@@ -64,7 +64,7 @@ full parsing and ordering contract.
 | `HOOK_CONNECT` | A transport destination is added to a slot. | `msg` is the slot; `data` names the configured transport entry. |
 | `HOOK_DISCONNECT` | A slot is closed; dispatched once for its lifecycle. | `msg` is the slot; `data == NULL` and `size == 0`. |
 | `HOOK_MESSAGE_INBOUND` | A complete input unit has passed the enabled transport parsers. | `msg` is the source slot; `data` is the non-null-terminated payload. |
-| `HOOK_MESSAGE_OUTBOUND` | `comm_write_message()` sends an application message. | `msg` packs source and destination slots; `data` is an immutable message copy. |
+| `HOOK_MESSAGE_OUTBOUND` | `comm_add_message()` sends an application message. | `msg` is the destination slot; `data` is an immutable message copy. |
 | `HOOK_TRANSPORT_READY` | The selected transport framing is ready for application input. It fires once before the first inbound application message. | `msg` is the slot; `data == NULL` and `size == 0`. |
 | `HOOK_PROMPT` | Inbound work has drained for a slot with prompts enabled and no pending output. | `msg` is the slot; `data == NULL` and `size == 0`. |
 | `HOOK_TELNET_SUBNEG` | A Telnet subnegotiation is parsed. | `msg` is the Telnet option; `data` and `size` are its payload. |
@@ -123,7 +123,7 @@ static int drain_completed_work(void *context, int msg, void *data, size_t size)
             continue; /* Reject malformed application messages. */
 
         /* Route this result through HOOK_MESSAGE_OUTBOUND, if registered. */
-        comm_write_message(work.slot, work.slot, work.data, work.size);
+        comm_add_message(work.slot, work.data, work.size);
     }
     return 0;
 }

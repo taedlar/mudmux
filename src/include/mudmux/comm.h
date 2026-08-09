@@ -5,6 +5,7 @@
 #include <openssl/bio.h>
 #endif
 
+#include <stdarg.h>
 #include <stdbool.h>
 
 #include "mudmux_export.h"
@@ -80,12 +81,12 @@ typedef struct mudmux_comm_api_s {
     bool (*set_char_input)(int slot);
     bool (*set_echo)(int slot, bool echo);
     /**
-     * Deliver a message from from_slot to to_slot through HOOK_MESSAGE_OUTBOUND,
-     * or buffer it directly to to_slot when no outbound hook is registered.
-     * The hook's msg value packs from_slot in the high 16 bits and to_slot in
-     * the low 16 bits.
+      * Deliver a message to to_slot through HOOK_MESSAGE_OUTBOUND, or buffer it
+      * directly to to_slot when no outbound hook is registered. The hook's msg
+      * value is the destination slot.
      */
-    void (*write_message)(int from_slot, int to_slot, const void *buf, size_t len);
+    void (*add_message)(int to_slot, const void *buf, size_t len);
+    void (*add_formatted_message)(int to_slot, const char *fmt, ...);
     void (*buffered_write)(int slot, const void *buf, size_t len);
     bool (*close)(async_runtime_t* runtime, int slot);
     bool (*ssl_init)(const char* certificate_path, const char* private_key_path);
@@ -108,7 +109,8 @@ typedef struct mudmux_comm_api_s {
 #define comm_set_line_input             mudmux_comm_api_v1->set_line_input
 #define comm_set_char_input             mudmux_comm_api_v1->set_char_input
 #define comm_set_echo                   mudmux_comm_api_v1->set_echo
-#define comm_write_message              mudmux_comm_api_v1->write_message
+#define comm_add_message                mudmux_comm_api_v1->add_message
+#define comm_add_formatted_message      mudmux_comm_api_v1->add_formatted_message
 #define comm_buffered_write             mudmux_comm_api_v1->buffered_write
 #define comm_close                      mudmux_comm_api_v1->close
 #define comm_ssl_init                   mudmux_comm_api_v1->ssl_init
@@ -119,6 +121,7 @@ typedef struct mudmux_comm_api_s {
 #endif
 
 #ifdef __cplusplus
+
 extern "C" {
 #endif
 

@@ -5,6 +5,7 @@
 #include "mudmux/mudmux.h"
 
 #include <atomic>
+#include <cstdarg>
 #include <cstdlib>
 #include <cstdint>
 #include <filesystem>
@@ -91,6 +92,15 @@ static void guarded_call_void(const char* api_name, Fn&& fn, Args&&... args) {
     fn(std::forward<Args>(args)...);
 }
 
+static void comm_api_add_formatted_message(int to_slot, const char* fmt, ...) {
+    if (!comm_api_thread_guard("add_formatted_message"))
+        return;
+    va_list args;
+    va_start(args, fmt);
+    comm_add_vformatted_message(to_slot, fmt, args);
+    va_end(args);
+}
+
 static void init_async_api (void) {
     static mudmux_async_api_v1_t async_api;
     async_api.event_init = async_event_init;
@@ -173,9 +183,10 @@ static void init_comm_api (void) {
     comm_api.enable_tls = +[]() {
         guarded_call_void("enable_tls", comm_enable_tls);
     };
-    comm_api.write_message = +[](int from_slot, int to_slot, const void* buf, size_t len) {
-        guarded_call_void("write_message", comm_write_message, from_slot, to_slot, buf, len);
+    comm_api.add_message = +[](int to_slot, const void* buf, size_t len) {
+        guarded_call_void("add_message", comm_add_message, to_slot, buf, len);
     };
+    comm_api.add_formatted_message = comm_api_add_formatted_message;
 
     mudmux_comm_api_v1 = &comm_api; // set global pointer to initialized struct
 }
