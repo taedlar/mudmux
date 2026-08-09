@@ -81,7 +81,7 @@ typedef struct mudmux_comm_api_s {
     bool (*set_char_input)(int slot);
     bool (*set_echo)(int slot, bool echo);
     /**
-     * Deliver a message to to_slot through HOOK_MESSAGE_OUTBOUND, or buffer it
+      * Deliver a message to to_slot through HOOK_MESSAGE_OUTBOUND, or buffer it
       * directly to to_slot when no outbound hook is registered. The hook's msg
       * value is the destination slot.
      */

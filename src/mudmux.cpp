@@ -5,6 +5,7 @@
 #include "mudmux/mudmux.h"
 
 #include <atomic>
+#include <cstdarg>
 #include <cstdlib>
 #include <cstdint>
 #include <filesystem>
