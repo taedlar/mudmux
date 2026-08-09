@@ -257,7 +257,7 @@ void comm_buffered_write (int slot, const void *buf, size_t len) {
     comm_buffered_write_comm(comm, buf, len);
 }
 
-void comm_write_message (int from_slot, int to_slot, const void *buf, size_t len) {
+void comm_add_message (int to_slot, const void *buf, size_t len) {
     if (!buf || len == 0)
         return;
 
@@ -272,8 +272,7 @@ void comm_write_message (int from_slot, int to_slot, const void *buf, size_t len
     async_runtime_t* runtime = async_get_current_runtime();
     (void)mudmux_dispatch_hook(HOOK_MESSAGE_OUTBOUND,
         runtime ? async_runtime_get_context(runtime) : nullptr,
-        static_cast<int>((static_cast<uint32_t>(from_slot) & 0xffffu) << 16 |
-                         (static_cast<uint32_t>(to_slot) & 0xffffu)),
+        to_slot,
         message.data(),
         len);
 }

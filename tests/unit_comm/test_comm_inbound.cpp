@@ -114,12 +114,10 @@ public:
 namespace {
 
 int outbound_hook_slot{-1};
-int outbound_hook_from_slot{-1};
 std::string outbound_hook_message;
 
-int rewrite_outbound_message(void*, int slots, void* data, size_t len) {
-    outbound_hook_from_slot = static_cast<int>(static_cast<uint32_t>(slots) >> 16);
-    outbound_hook_slot = static_cast<int>(static_cast<uint32_t>(slots) & 0xffffu);
+int rewrite_outbound_message(void*, int slot, void* data, size_t len) {
+    outbound_hook_slot = slot;
     outbound_hook_message.assign(static_cast<char*>(data), len);
     comm_buffered_write(outbound_hook_slot, data, len);
     return 0;
@@ -309,20 +307,17 @@ TEST_F(CommInboundTest, WriteMessageBuffersDirectlyOrRoutesThroughOutboundHook) 
     ASSERT_NE(slot, -1);
 
     char direct[] = "direct";
-    constexpr int from_slot = 7;
-    comm_write_message(from_slot, slot, direct, sizeof(direct) - 1);
+    comm_add_message(slot, direct, sizeof(direct) - 1);
     comm_flush(runtime, slot);
     std::array<char, 16> output{};
     ASSERT_EQ(BIO_read(comm_abstract_get(slot)->wbio, output.data(), static_cast<int>(output.size())), 6);
     EXPECT_EQ(std::string(output.data(), 6), "direct");
 
     outbound_hook_slot = -1;
-    outbound_hook_from_slot = -1;
     outbound_hook_message.clear();
     ASSERT_TRUE(mudmux_register_hook(HOOK_MESSAGE_OUTBOUND, rewrite_outbound_message));
     char hooked[] = "hello";
-    comm_write_message(from_slot, slot, hooked, sizeof(hooked) - 1);
-    EXPECT_EQ(outbound_hook_from_slot, from_slot);
+    comm_add_message(slot, hooked, sizeof(hooked) - 1);
     EXPECT_EQ(outbound_hook_slot, slot);
     EXPECT_EQ(outbound_hook_message, "hello");
     EXPECT_EQ(std::string(hooked, sizeof(hooked) - 1), "hello");
@@ -455,7 +450,7 @@ TEST_F(CommInboundTest, CurrentSlotIsAvailableOnlyToSlotScopedHooks) {
     observed_current_slot = -2;
     ASSERT_TRUE(mudmux_register_hook(HOOK_MESSAGE_OUTBOUND, CommInboundTest::hook_record_current_slot));
     const char output[] = "message";
-    comm_write_message(slot, slot, output, sizeof(output) - 1);
+    comm_add_message(slot, output, sizeof(output) - 1);
     EXPECT_EQ(observed_current_slot, -1);
     EXPECT_EQ(comm_current_slot(), -1);
 

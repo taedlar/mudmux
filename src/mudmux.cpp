@@ -173,8 +173,8 @@ static void init_comm_api (void) {
     comm_api.enable_tls = +[]() {
         guarded_call_void("enable_tls", comm_enable_tls);
     };
-    comm_api.write_message = +[](int from_slot, int to_slot, const void* buf, size_t len) {
-        guarded_call_void("write_message", comm_write_message, from_slot, to_slot, buf, len);
+    comm_api.add_message = +[](int to_slot, const void* buf, size_t len) {
+        guarded_call_void("add_message", comm_add_message, to_slot, buf, len);
     };
 
     mudmux_comm_api_v1 = &comm_api; // set global pointer to initialized struct

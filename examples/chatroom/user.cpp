@@ -100,7 +100,7 @@ void User::dispatchInboundMessage(const std::string& message) {
             for (const auto& user_ptr : User::snapshot()) {
                 if (user_ptr && user_ptr->getState() == UserState::LoggedIn && user_ptr->comm_slot != comm_slot) {
                     SPDLOG_DEBUG ("writing message to slot {}", user_ptr->comm_slot);
-                    comm_write_message(comm_slot, user_ptr->comm_slot, msg.data(), msg.size()); // broadcast the message to other users
+                    comm_add_message(user_ptr->comm_slot, msg.data(), msg.size()); // broadcast the message to other users
                 }
             }
         }
