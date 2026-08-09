@@ -16,6 +16,7 @@
 #include <openssl/err.h>
 
 #include "console.hpp"
+#include "current_slot.hpp"
 #include "execution.hpp"
 #include "file_input.hpp"
 #include "inbound.hpp"
@@ -253,6 +254,16 @@ void comm_buffered_write_comm_no_telnet_normalize (comm_abstract_ptr& comm, cons
 }
 
 void comm_buffered_write (int slot, const void *buf, size_t len) {
+    if (mudmux_get_registered_hook(HOOK_MESSAGE_OUTBOUND)) {
+        const mudmux_hook_type_t current_hook = comm_current_hook_type();
+        if (current_hook != HOOK_MESSAGE_OUTBOUND && current_hook != HOOK_PROMPT) {
+            SPDLOG_ERROR(
+                "comm_buffered_write() is restricted while HOOK_MESSAGE_OUTBOUND is registered; "
+                "use comm_add_message() or comm_add_formatted_message() instead");
+            return;
+        }
+    }
+
     comm_abstract_ptr comm(slot, comm_slots_mtx);
     if (!comm)
         return;

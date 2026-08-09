@@ -51,11 +51,15 @@ normally do not need to retry it.
 ## Close ordering
 
 The disconnect callback happens before transport teardown. It may queue a final
-message with `comm_buffered_write(slot, ...)`; mudmux normally flushes that
+message with `comm_add_message(slot, ...)`; mudmux normally flushes that
 message before closing an ordinary socket. Pending output is dropped instead
 when TLS has not completed its handshake, because it cannot be flushed safely.
 Once closing begins, prompt delivery is disabled and no further decoded input
 is retained.
+
+If no outbound hook is registered, `comm_add_message()` falls back to
+`comm_buffered_write()`. If `HOOK_MESSAGE_OUTBOUND` is registered, this keeps
+disconnect output on the outbound-hook path.
 
 For WebSocket slots that completed their upgrade, mudmux sends a normal Close
 frame after buffered application output drains, then waits for the peer Close

@@ -30,6 +30,11 @@ the destination slot.
 formats a `printf`-style message first, then routes the rendered bytes through
 the same `comm_add_message()` path and outbound hook behavior.
 
+When `HOOK_MESSAGE_OUTBOUND` is registered, `comm_buffered_write()` is
+restricted to `HOOK_MESSAGE_OUTBOUND` and `HOOK_PROMPT` callbacks. Other logic
+paths should use `comm_add_message()`/`comm_add_formatted_message()` so
+outbound messages continue through the hook.
+
 That means the current buffering policy is:
 
 - application code owns plaintext buffering

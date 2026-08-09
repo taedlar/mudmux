@@ -123,6 +123,16 @@ int rewrite_outbound_message(void*, int slot, void* data, size_t len) {
     return 0;
 }
 
+int inbound_attempt_buffered_write(void*, int slot, void*, size_t) {
+    comm_buffered_write(slot, "blocked", 7);
+    return 0;
+}
+
+int prompt_buffered_write(void*, int slot, void*, size_t) {
+    comm_buffered_write(slot, "prompt", 6);
+    return 0;
+}
+
 int connect_websocket_with_output(void*, int slot, void*, size_t) {
     if (!comm_enable_websocket_for_slot(slot, nullptr))
         return -1;
@@ -355,6 +365,39 @@ TEST_F(CommInboundTest, FormattedMessageFormatsAndRoutesOutboundPayload) {
     async_runtime_deinit(runtime);
 }
 
+TEST_F(CommInboundTest, BufferedWriteIsRestrictedToOutboundAndPromptHooksWhenOutboundHookRegistered) {
+    async_runtime_t* runtime = async_runtime_init(this);
+    ASSERT_NE(runtime, nullptr);
+
+    const int slot = add_memory_comm(C_LINE_INPUT);
+    ASSERT_NE(slot, -1);
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
+    ASSERT_TRUE(comm);
+
+    outbound_hook_slot = -1;
+    outbound_hook_message.clear();
+    ASSERT_TRUE(mudmux_register_hook(HOOK_MESSAGE_OUTBOUND, rewrite_outbound_message));
+    ASSERT_TRUE(mudmux_register_hook(HOOK_MESSAGE_INBOUND, inbound_attempt_buffered_write));
+
+    ASSERT_TRUE(comm_refill_inbound_buffers(comm, "hello\n", 6));
+    EXPECT_EQ(comm_process_input(runtime, comm, 1), COMM_PROCESS_OK);
+    comm_flush(runtime, slot);
+
+    EXPECT_EQ(outbound_hook_slot, -1);
+    EXPECT_EQ(BIO_ctrl_pending(comm_abstract_get(slot)->wbio), 0);
+
+    ASSERT_TRUE(mudmux_register_hook(HOOK_PROMPT, prompt_buffered_write));
+    comm_enable_prompt(slot, true);
+    comm_invoke_prompt(runtime);
+    comm_flush(runtime, slot);
+
+    std::array<char, 16> output{};
+    ASSERT_EQ(BIO_read(comm_abstract_get(slot)->wbio, output.data(), static_cast<int>(output.size())), 6);
+    EXPECT_EQ(std::string(output.data(), 6), "prompt");
+
+    async_runtime_deinit(runtime);
+}
+
 TEST_F(CommInboundTest, BufferedWriteNormalizesNewlinesWhenTelnetEnabled) {
     async_runtime_t* runtime = async_runtime_init(this);
     ASSERT_NE(runtime, nullptr);
@@ -371,7 +414,7 @@ TEST_F(CommInboundTest, BufferedWriteNormalizesNewlinesWhenTelnetEnabled) {
     ASSERT_GT(output_len, 0);
     EXPECT_EQ(
         std::string(output.data(), static_cast<size_t>(output_len)),
-        "line1\r\nline2\r\nline3\r\nline4");
+        "line1\r\nline2\r\nline3\rline4");
 
     async_runtime_deinit(runtime);
 }

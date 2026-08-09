@@ -90,7 +90,7 @@ static int on_input(void *context, int slot, void *data, size_t size) {
     if (is_quit_command(data, size))
         (void)comm_close(NULL, slot);
     else
-        comm_buffered_write(slot, "OK\n", 3);
+    comm_add_message(slot, "OK\n", 3);
     return 0;
 }
 ```
