@@ -1,11 +1,15 @@
 #ifndef COMM_OUTBOUND_HPP
 #define COMM_OUTBOUND_HPP
 
+#include <cstdarg>
+
 #include "abstract.hpp"
 
 #include "async/async_runtime.h"
 
 extern "C" void comm_add_message (int to_slot, const void *buf, size_t len);
+extern "C" void comm_add_formatted_message (int to_slot, const char *fmt, ...);
+void comm_add_vformatted_message (int to_slot, const char *fmt, va_list args);
 
 extern "C" void comm_buffered_write (int slot, const void *buf, size_t len);
 void comm_buffered_write_comm (comm_abstract_ptr& comm, const void *buf, size_t len);

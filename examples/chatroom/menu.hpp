@@ -5,6 +5,8 @@
 #include <vector>
 #include "mudmux/comm.h"
 
+class User;
+
 class Menu {
 protected:
     std::string title;
@@ -24,8 +26,8 @@ public:
         return selected_index;
     }
 
-    void writeMenu (int slot) const;
-    void receiveCharInput (int slot, const std::string& message);
+    void writeMenu (std::shared_ptr<User> user) const;
+    void receiveCharInput (const std::string& message);
 };
 
 #endif  // CHATROOM_MENU_HPP

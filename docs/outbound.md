@@ -26,6 +26,10 @@ responsible for sending the resulting bytes (normally with
 Without that hook, `comm_add_message` directly calls `comm_buffered_write` for
 the destination slot.
 
+`comm_add_formatted_message(to_slot, fmt, ...)` is a convenience wrapper that
+formats a `printf`-style message first, then routes the rendered bytes through
+the same `comm_add_message()` path and outbound hook behavior.
+
 That means the current buffering policy is:
 
 - application code owns plaintext buffering

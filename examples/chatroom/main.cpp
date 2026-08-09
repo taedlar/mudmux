@@ -106,7 +106,6 @@ static int on_message_inbound (void*, int slot, void* data, size_t size) {
 
 static int on_message_outbound (void*, int to_slot, void* data, size_t size) {
     // HOOK_MESSAGE_OUTBOUND receives destination slot in msg.
-    comm_buffered_write (to_slot, "\r\x1b[J", 4); // clear line and move cursor to beginning
     comm_buffered_write (to_slot, data, size);
     return 0;
 }

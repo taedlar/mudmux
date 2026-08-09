@@ -5,6 +5,8 @@
 #define NOMINMAX
 #include "outbound.hpp"
 
+#include <cstdarg>
+#include <cstdio>
 #include <algorithm>
 #include <mutex>
 #include <string>
@@ -275,6 +277,41 @@ void comm_add_message (int to_slot, const void *buf, size_t len) {
         to_slot,
         message.data(),
         len);
+}
+
+void comm_add_vformatted_message (int to_slot, const char *fmt, va_list args) {
+    if (!fmt)
+        return;
+
+    va_list size_args;
+    va_copy(size_args, args);
+    const int formatted_size = std::vsnprintf(nullptr, 0, fmt, size_args);
+    va_end(size_args);
+    if (formatted_size < 0) {
+        SPDLOG_ERROR("vsnprintf failed while formatting outbound message");
+        return;
+    }
+    if (formatted_size == 0)
+        return;
+
+    std::vector<char> message(static_cast<size_t>(formatted_size) + 1u);
+    va_list render_args;
+    va_copy(render_args, args);
+    const int written = std::vsnprintf(message.data(), message.size(), fmt, render_args);
+    va_end(render_args);
+    if (written != formatted_size) {
+        SPDLOG_ERROR("vsnprintf wrote unexpected size while formatting outbound message");
+        return;
+    }
+
+    comm_add_message(to_slot, message.data(), static_cast<size_t>(written));
+}
+
+void comm_add_formatted_message (int to_slot, const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    comm_add_vformatted_message(to_slot, fmt, args);
+    va_end(args);
 }
 
 void comm_free_outbound_buffers(comm_abstract_ptr& comm) {

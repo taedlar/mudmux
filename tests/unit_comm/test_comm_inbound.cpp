@@ -328,6 +328,33 @@ TEST_F(CommInboundTest, WriteMessageBuffersDirectlyOrRoutesThroughOutboundHook) 
     async_runtime_deinit(runtime);
 }
 
+TEST_F(CommInboundTest, FormattedMessageFormatsAndRoutesOutboundPayload) {
+    async_runtime_t* runtime = async_runtime_init(this);
+    ASSERT_NE(runtime, nullptr);
+    const int slot = add_memory_comm(0);
+    ASSERT_NE(slot, -1);
+
+    comm_add_formatted_message(slot, "%s %d", "hello", 42);
+    comm_flush(runtime, slot);
+
+    std::array<char, 16> output{};
+    ASSERT_EQ(BIO_read(comm_abstract_get(slot)->wbio, output.data(), static_cast<int>(output.size())), 8);
+    EXPECT_EQ(std::string(output.data(), 8), "hello 42");
+
+    outbound_hook_slot = -1;
+    outbound_hook_message.clear();
+    ASSERT_TRUE(mudmux_register_hook(HOOK_MESSAGE_OUTBOUND, rewrite_outbound_message));
+
+    comm_add_formatted_message(slot, "[%s]", "ok");
+    EXPECT_EQ(outbound_hook_slot, slot);
+    EXPECT_EQ(outbound_hook_message, "[ok]");
+
+    comm_flush(runtime, slot);
+    ASSERT_EQ(BIO_read(comm_abstract_get(slot)->wbio, output.data(), static_cast<int>(output.size())), 4);
+    EXPECT_EQ(std::string(output.data(), 4), "[ok]");
+    async_runtime_deinit(runtime);
+}
+
 TEST_F(CommInboundTest, BufferedWriteNormalizesNewlinesWhenTelnetEnabled) {
     async_runtime_t* runtime = async_runtime_init(this);
     ASSERT_NE(runtime, nullptr);
