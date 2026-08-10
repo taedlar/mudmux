@@ -33,6 +33,14 @@ struct comm_websocket_state_s {
     std::string decoded_input;
 };
 
+bool comm_websocket_has_pending_input(const comm_abstract_ptr& comm) {
+    const comm_websocket_state_t* websocket = comm ? comm->websocket : nullptr;
+    return websocket && (websocket->fragmented_opcode != 0 ||
+                         !websocket->fragmented_payload.empty() ||
+                         !websocket->pending_wire.empty() ||
+                         !websocket->decoded_input.empty());
+}
+
 namespace {
 
 constexpr const char* kWebSocketGuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";

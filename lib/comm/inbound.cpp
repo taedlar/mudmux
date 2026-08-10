@@ -83,6 +83,20 @@ extern "C" void comm_enable_prompt (int slot, bool enable) {
     }
 }
 
+static bool _comm_has_pending_inbound(const comm_abstract_ptr& comm) {
+    if (!comm)
+        return false;
+
+    if (comm->flags & C_DEFERRED_INBOUND)
+        return true;
+
+    for (const inbound_buffer_t* ibb = comm->inbound; ibb; ibb = ibb->next) {
+        if (ibb->end > ibb->start)
+            return true;
+    }
+    return comm_websocket_has_pending_input(comm);
+}
+
 void comm_invoke_prompt (async_runtime_t* runtime) {
     if (!runtime)
         return;
@@ -92,22 +106,29 @@ void comm_invoke_prompt (async_runtime_t* runtime) {
         comm_abstract_ptr comm(slot, comm_slots_mtx);
         if (!comm)
             continue;
-        if (comm->flags & C_BUFFERED_WRITE)
-            continue; // skip comms with pending buffered write
-        if ((comm->flags & C_ENABLE_PROMPT) && !(comm->flags & C_INVOKED_PROMPT)) {
-            const mudmux_dispatch_result_t dispatch_result = mudmux_dispatch_hook_after(
-                HOOK_PROMPT,
-                async_runtime_get_context(runtime),
-                slot,
-                nullptr,
-                0,
-                nullptr,
-                nullptr,
-                slot
-            );
-            if (dispatch_result != MUDMUX_DISPATCH_QUEUE_FULL)
-                comm->flags |= C_INVOKED_PROMPT;
-        }
+        if (!(comm->flags & C_ENABLE_PROMPT) || (comm->flags & C_INVOKED_PROMPT))
+            continue;
+
+        // A prompt is an idle notification. Do not queue it behind a hook or
+        // show it while either direction still has application work pending.
+        if ((comm->flags & (C_BUFFERED_WRITE | C_AWAITING_HOOK)) ||
+            comm->outbound || comm->websocket_upgrade_barrier ||
+            _comm_has_pending_inbound(comm) ||
+            mudmux_execution_slot_busy(slot))
+            continue;
+
+        const mudmux_dispatch_result_t dispatch_result = mudmux_dispatch_hook_after(
+            HOOK_PROMPT,
+            async_runtime_get_context(runtime),
+            slot,
+            nullptr,
+            0,
+            nullptr,
+            nullptr,
+            slot
+        );
+        if (dispatch_result == MUDMUX_DISPATCH_OK)
+            comm->flags |= C_INVOKED_PROMPT;
     }
 }
 

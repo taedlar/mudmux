@@ -77,7 +77,7 @@ All input events — regardless of source — are delivered via `HOOK_MESSAGE_IN
 HOOK_CONNECT          // New input session starts (slot=0 for console, 1+ for network)
 HOOK_MESSAGE_INBOUND  // Each line received, slot identifies source
 HOOK_MESSAGE_OUTBOUND // Data sent to output
-HOOK_PROMPT           // Finished draining inbound data
+HOOK_PROMPT           // Slot is idle after inbound work (no pending output or hook)
 ```
 
 **Key advantage:** Logic layer logic is transport-agnostic. The same code handles console, file, and network input without modification.

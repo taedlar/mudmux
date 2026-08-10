@@ -109,6 +109,8 @@ slot returns to line input before the hook runs.  A hook may explicitly re-arm
 character mode.
 
 After inbound work drains, mudmux may invoke `HOOK_PROMPT` for slots with
-`C_ENABLE_PROMPT`.  Prompt-producing logic should treat outbound writes as
-normal buffered transport output; TLS and WebSocket framing remain below the
-hook API.
+`C_ENABLE_PROMPT` only when the slot is otherwise idle: no inbound bytes,
+outbound buffers, or slot hook may remain in flight. `C_INVOKED_PROMPT` makes
+this a one-shot notification; the next inbound message clears that gate.
+Prompt-producing logic should treat outbound writes as normal buffered
+transport output; TLS and WebSocket framing remain below the hook API.

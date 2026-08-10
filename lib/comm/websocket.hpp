@@ -67,6 +67,9 @@ bool comm_websocket_process_inbound(
 /** Release per-slot WebSocket fragmentation state. */
 void comm_websocket_free_state(comm_abstract_ptr& comm);
 
+/** Whether the WebSocket decoder retains bytes or a fragmented message for a slot. */
+bool comm_websocket_has_pending_input(const comm_abstract_ptr& comm);
+
 /** Return the server subprotocol preference list configured for this slot. */
 std::string_view comm_websocket_preferred_protocols(comm_abstract_ptr& comm);
 

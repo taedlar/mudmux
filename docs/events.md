@@ -66,13 +66,14 @@ full parsing and ordering contract.
 | `HOOK_MESSAGE_INBOUND` | A complete input unit has passed the enabled transport parsers. | `msg` is the source slot; `data` is the non-null-terminated payload. |
 | `HOOK_MESSAGE_OUTBOUND` | `comm_add_message()` sends an application message. | `msg` is the destination slot; `data` is an immutable message copy. |
 | `HOOK_TRANSPORT_READY` | The selected transport framing is ready for application input. It fires once before the first inbound application message. | `msg` is the slot; `data == NULL` and `size == 0`. |
-| `HOOK_PROMPT` | Inbound work has drained for a slot with prompts enabled and no pending output. | `msg` is the slot; `data == NULL` and `size == 0`. |
+| `HOOK_PROMPT` | A prompt-enabled slot is idle: no inbound or outbound work is pending and no slot hook is in flight. It fires once until the next inbound message clears its prompt gate. | `msg` is the slot; `data == NULL` and `size == 0`. |
 | `HOOK_TELNET_SUBNEG` | A Telnet subnegotiation is parsed. | `msg` is the Telnet option; `data` and `size` are its payload. |
 | `HOOK_TIMER` | mudmux's internal timer event is signalled. | `msg` is supplied to `mudmux_trigger_timer()`; no payload. |
 | `HOOK_GARBAGE_COLLECTION` | End of every completed loop iteration. | `msg == -1`, `data == NULL`, and `size == 0`. |
 
 The hook-specific documents in [hooks/](hooks/) define the detailed argument
-and protocol contracts for the hooks that have one.
+and protocol contracts for the hooks that have one, including
+[HOOK_PROMPT](hooks/HOOK_PROMPT.md).
 
 `HOOK_GARBAGE_COLLECTION` is special: it always executes inline on the event
 loop thread, after prompt dispatch and before outbound flushes. When it is
