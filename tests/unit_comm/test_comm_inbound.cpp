@@ -123,6 +123,22 @@ int rewrite_outbound_message(void*, int slot, void* data, size_t len) {
     return 0;
 }
 
+int outbound_hook_calls{0};
+
+int outbound_attempts_recursive_add(void*, int slot, void* data, size_t len) {
+    ++outbound_hook_calls;
+    comm_add_message(slot, data, len);
+    return 0;
+}
+
+int outbound_cross_slot{-1};
+
+int outbound_attempts_cross_slot_write(void*, int, void* data, size_t len) {
+    ++outbound_hook_calls;
+    comm_buffered_write(outbound_cross_slot, data, len);
+    return 0;
+}
+
 int inbound_attempt_buffered_write(void*, int slot, void*, size_t) {
     comm_buffered_write(slot, "blocked", 7);
     return 0;
@@ -140,6 +156,12 @@ int count_prompt_hook(void*, int, void*, size_t) {
     ++prompt_hook_calls;
     if (prompt_hook_called_ptr)
         prompt_hook_called_ptr->set_value();
+    return 0;
+}
+
+int prompt_hook_attempts_add(void*, int slot, void*, size_t) {
+    ++prompt_hook_calls;
+    comm_add_message(slot, "prompt", 6);
     return 0;
 }
 
@@ -376,6 +398,62 @@ TEST_F(CommInboundTest, FormattedMessageFormatsAndRoutesOutboundPayload) {
     async_runtime_deinit(runtime);
 }
 
+TEST_F(CommInboundTest, OutboundHookCannotRecursivelyAddMessage) {
+    async_runtime_t* runtime = async_runtime_init(this);
+    ASSERT_NE(runtime, nullptr);
+    const int slot = add_memory_comm(C_LINE_INPUT);
+    ASSERT_NE(slot, -1);
+
+    outbound_hook_calls = 0;
+    ASSERT_TRUE(mudmux_register_hook(HOOK_MESSAGE_OUTBOUND, outbound_attempts_recursive_add));
+    comm_add_message(slot, "message", 7);
+
+    EXPECT_EQ(outbound_hook_calls, 1);
+    comm_flush(runtime, slot);
+    EXPECT_EQ(BIO_ctrl_pending(comm_abstract_get(slot)->wbio), 0u);
+
+    async_runtime_deinit(runtime);
+}
+
+TEST_F(CommInboundTest, OutboundHookCanOnlyWriteItsCurrentSlot) {
+    async_runtime_t* runtime = async_runtime_init(this);
+    ASSERT_NE(runtime, nullptr);
+    const int source_slot = add_memory_comm(C_LINE_INPUT);
+    const int other_slot = add_memory_comm(C_LINE_INPUT);
+    ASSERT_NE(source_slot, -1);
+    ASSERT_NE(other_slot, -1);
+
+    outbound_hook_calls = 0;
+    outbound_cross_slot = other_slot;
+    ASSERT_TRUE(mudmux_register_hook(HOOK_MESSAGE_OUTBOUND, outbound_attempts_cross_slot_write));
+    comm_add_message(source_slot, "message", 7);
+
+    EXPECT_EQ(outbound_hook_calls, 1);
+    comm_flush(runtime, other_slot);
+    EXPECT_EQ(BIO_ctrl_pending(comm_abstract_get(other_slot)->wbio), 0u);
+    outbound_cross_slot = -1;
+
+    async_runtime_deinit(runtime);
+}
+
+TEST_F(CommInboundTest, PromptHookCannotAddMessage) {
+    async_runtime_t* runtime = async_runtime_init(this);
+    ASSERT_NE(runtime, nullptr);
+    const int slot = add_memory_comm(C_LINE_INPUT);
+    ASSERT_NE(slot, -1);
+
+    prompt_hook_calls = 0;
+    ASSERT_TRUE(mudmux_register_hook(HOOK_PROMPT, prompt_hook_attempts_add));
+    comm_enable_prompt(slot, true);
+    comm_invoke_prompt(runtime);
+
+    EXPECT_EQ(prompt_hook_calls, 1);
+    comm_flush(runtime, slot);
+    EXPECT_EQ(BIO_ctrl_pending(comm_abstract_get(slot)->wbio), 0u);
+
+    async_runtime_deinit(runtime);
+}
+
 TEST_F(CommInboundTest, BufferedWriteIsRestrictedToOutboundAndPromptHooksWhenOutboundHookRegistered) {
     async_runtime_t* runtime = async_runtime_init(this);
     ASSERT_NE(runtime, nullptr);
@@ -447,6 +525,54 @@ TEST_F(CommInboundTest, PromptFiresOnlyOnceWhenSlotHasNoPendingInputOrOutput) {
     comm_invoke_prompt(runtime);
     EXPECT_EQ(prompt_hook_calls, 1);
     EXPECT_EQ(comm->flags & C_INVOKED_PROMPT, 0u);
+
+    async_runtime_deinit(runtime);
+}
+
+TEST_F(CommInboundTest, BufferedOutputRearmsPromptOnlyForCharInput) {
+    async_runtime_t* runtime = async_runtime_init(this);
+    ASSERT_NE(runtime, nullptr);
+
+    // Keep the tested memory slot away from COMM_SLOT_CONSOLE so switching
+    // input mode cannot alter the test process terminal.
+    ASSERT_NE(add_memory_comm(C_LINE_INPUT), -1);
+    const int slot = add_memory_comm(C_LINE_INPUT);
+    ASSERT_NE(slot, -1);
+    ASSERT_NE(slot, COMM_SLOT_CONSOLE);
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
+    ASSERT_TRUE(comm);
+
+    prompt_hook_calls = 0;
+    ASSERT_TRUE(mudmux_register_hook(HOOK_PROMPT, count_prompt_hook));
+    comm_enable_prompt(slot, true);
+    comm_invoke_prompt(runtime);
+    ASSERT_EQ(prompt_hook_calls, 1);
+    ASSERT_NE(comm->flags & C_INVOKED_PROMPT, 0u);
+
+    // Normal command input keeps the current prompt gate across broadcasts.
+    comm_buffered_write(slot, "line output", 11);
+    EXPECT_NE(comm->flags & C_INVOKED_PROMPT, 0u);
+    comm_flush(runtime, slot);
+    // Memory BIOs do not expose a socket fd, so model the final writable
+    // completion that clears this transport bookkeeping flag.
+    comm->flags &= ~C_BUFFERED_WRITE;
+
+    ASSERT_TRUE(comm_set_char_input(slot));
+    comm_buffered_write(slot, "choice update", 13);
+    EXPECT_EQ(comm->flags & C_INVOKED_PROMPT, 0u);
+    comm_flush(runtime, slot);
+    comm->flags &= ~C_BUFFERED_WRITE;
+    comm_invoke_prompt(runtime);
+    EXPECT_EQ(prompt_hook_calls, 2);
+    EXPECT_NE(comm->flags & C_INVOKED_PROMPT, 0u);
+
+    // Output emitted by the prompt callback itself must not schedule another
+    // prompt after it drains.
+    {
+        comm_hook_type_scope_t prompt_scope(HOOK_PROMPT);
+        comm_buffered_write(slot, "> ", 2);
+    }
+    EXPECT_NE(comm->flags & C_INVOKED_PROMPT, 0u);
 
     async_runtime_deinit(runtime);
 }
@@ -637,7 +763,7 @@ TEST_F(CommInboundTest, CurrentSlotIsAvailableOnlyToSlotScopedHooks) {
     ASSERT_TRUE(mudmux_register_hook(HOOK_MESSAGE_OUTBOUND, CommInboundTest::hook_record_current_slot));
     const char output[] = "message";
     comm_add_message(slot, output, sizeof(output) - 1);
-    EXPECT_EQ(observed_current_slot, -1);
+    EXPECT_EQ(observed_current_slot, slot);
     EXPECT_EQ(comm_current_slot(), -1);
 
     async_runtime_deinit(runtime);

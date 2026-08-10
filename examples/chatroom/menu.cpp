@@ -20,7 +20,7 @@ void Menu::writeMenu (std::shared_ptr<User> user) const {
     }
     menu_text += CUU(options.size() + 1) + "\r"; // move cursor up to the prompt line
     menu_text += title; // display the menu title and let cursor stay at the end of title for user input
-    user->addMessage(menu_text);
+    comm_buffered_write(user->getCommSlot(), menu_text.c_str(), menu_text.size());
 }
 
 void Menu::receiveCharInput (const std::string& message) {

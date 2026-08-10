@@ -254,8 +254,19 @@ void comm_buffered_write_comm_no_telnet_normalize (comm_abstract_ptr& comm, cons
 }
 
 void comm_buffered_write (int slot, const void *buf, size_t len) {
+    const mudmux_hook_type_t current_hook = comm_current_hook_type();
+    if (current_hook == HOOK_MESSAGE_OUTBOUND || current_hook == HOOK_PROMPT) {
+        const int current_slot = comm_current_slot();
+        if (current_slot < 0 || slot != current_slot) {
+            SPDLOG_ERROR(
+                "comm_buffered_write() from {} must target its current slot {}",
+                current_hook == HOOK_MESSAGE_OUTBOUND ? "HOOK_MESSAGE_OUTBOUND" : "HOOK_PROMPT",
+                current_slot);
+            return;
+        }
+    }
+
     if (mudmux_get_registered_hook(HOOK_MESSAGE_OUTBOUND)) {
-        const mudmux_hook_type_t current_hook = comm_current_hook_type();
         if (current_hook != HOOK_MESSAGE_OUTBOUND && current_hook != HOOK_PROMPT) {
             SPDLOG_ERROR(
                 "comm_buffered_write() is restricted while HOOK_MESSAGE_OUTBOUND is registered; "
@@ -267,12 +278,32 @@ void comm_buffered_write (int slot, const void *buf, size_t len) {
     comm_abstract_ptr comm(slot, comm_slots_mtx);
     if (!comm)
         return;
+
+    // Unsolicited application output displaces a character-mode choice
+    // prompt. Re-arm it so the post-flush idle pass redraws that prompt.
+    // Line-input sessions deliberately retain their existing prompt state,
+    // and prompt output itself must not re-arm another prompt.
+    if ((comm->flags & C_ENABLE_PROMPT) && !(comm->flags & C_LINE_INPUT) &&
+        comm_current_hook_type() != HOOK_PROMPT)
+        comm->flags &= ~C_INVOKED_PROMPT;
     comm_buffered_write_comm(comm, buf, len);
 }
 
 void comm_add_message (int to_slot, const void *buf, size_t len) {
     if (!buf || len == 0)
         return;
+
+    // Prompt and outbound hooks own their final output. Routing through this
+    // API would recursively dispatch (or requeue) an outbound hook; use the
+    // current-slot comm_buffered_write() path instead.
+    const mudmux_hook_type_t current_hook = comm_current_hook_type();
+    if (current_hook == HOOK_MESSAGE_OUTBOUND || current_hook == HOOK_PROMPT) {
+        SPDLOG_ERROR(
+            "comm_add_message() cannot be called from {}; use comm_buffered_write() "
+            "for the current slot instead",
+            current_hook == HOOK_MESSAGE_OUTBOUND ? "HOOK_MESSAGE_OUTBOUND" : "HOOK_PROMPT");
+        return;
+    }
 
     if (!mudmux_get_registered_hook(HOOK_MESSAGE_OUTBOUND)) {
         comm_buffered_write(to_slot, buf, len);

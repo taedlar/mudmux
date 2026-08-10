@@ -37,8 +37,12 @@ callback is dispatched only when all of the following are true:
 After a successful dispatch, mudmux sets `C_INVOKED_PROMPT`; this prevents
 duplicate prompts while the slot remains idle. The next
 `HOOK_MESSAGE_INBOUND` clears that gate, allowing a later idle transition to
-produce another prompt. Disabling and re-enabling prompts does not itself
-clear the gate.
+produce another prompt. In character-input mode, an application call to
+`comm_buffered_write()` also clears the gate: unsolicited output can displace
+a choice prompt, so mudmux redraws it after the output drains. Line-input
+mode deliberately does not rearm on output, avoiding a new command prompt
+after every broadcast. Output produced by `HOOK_PROMPT` itself does not rearm
+the gate. Disabling and re-enabling prompts does not itself clear the gate.
 
 If the callback cannot be dispatched, for example because the worker queue
 cannot accept it, the gate remains clear and mudmux can retry when the slot is
@@ -46,10 +50,12 @@ next evaluated as idle.
 
 ## Output and threading
 
-Prompt callbacks may use `comm_buffered_write()` to send the prompt. This is
-also permitted when `HOOK_MESSAGE_OUTBOUND` is registered, avoiding recursive
-outbound-hook dispatch. Do not expect the prompt bytes to be delivered before
-the callback returns; they follow the normal non-blocking flush path.
+Prompt callbacks may use `comm_buffered_write()` to send the prompt, but only
+to their `comm_current_slot()`. This is also permitted when
+`HOOK_MESSAGE_OUTBOUND` is registered, avoiding recursive outbound-hook
+dispatch. `comm_add_message()` is rejected from this callback. Do not expect
+the prompt bytes to be delivered before the callback returns; they follow the
+normal non-blocking flush path.
 
 In strict mode, the callback runs on the event-loop thread. In relaxed mode,
 it may run on a worker, but it remains serialized with other hooks for the

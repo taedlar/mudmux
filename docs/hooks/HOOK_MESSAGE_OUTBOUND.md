@@ -44,15 +44,20 @@ When this hook is registered, it owns the final send decision:
 - Build and write a replacement message with `comm_buffered_write()`.
 - Omit the write to suppress the message.
 
+`comm_current_slot()` is the same destination slot as `msg`. Calls to
+`comm_buffered_write()` from this hook must target that current slot.
+
 When `HOOK_MESSAGE_OUTBOUND` is registered, `comm_buffered_write()` is
 restricted to `HOOK_MESSAGE_OUTBOUND` and `HOOK_PROMPT` callbacks. For regular
 application output from other contexts, call `comm_add_message()` (or
 `comm_add_formatted_message()`) so outbound transformation still runs through
 this hook.
 
-`comm_add_message()` does not automatically buffer the original message after
-an outbound hook returns. Calling `comm_buffered_write()` inside the hook avoids
-recursively invoking `HOOK_MESSAGE_OUTBOUND`.
+`comm_add_message()` is rejected from inside `HOOK_MESSAGE_OUTBOUND` (and
+`HOOK_PROMPT`). An outbound hook must call `comm_buffered_write()` to forward
+or replace its final message; this avoids recursive dispatch in strict mode
+and self-requeuing work in relaxed mode. `comm_add_message()` does not
+automatically buffer the original message after an outbound hook returns.
 
 ## Example
 

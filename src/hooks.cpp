@@ -61,7 +61,10 @@ MUDMUX_EXPORT bool mudmux_register_hook (enum mudmux_hook_type_t hook_type, mudm
 }
 
 MUDMUX_EXPORT int mudmux_invoke_hook (enum mudmux_hook_type_t hook_type, void* ctx, int msg, void* data, size_t size) {
-    return mudmux_invoke_registered_hook(hook_type, ctx, msg, data, size, true);
+    const int current_slot = hook_type == HOOK_MESSAGE_OUTBOUND
+        ? static_cast<int>(static_cast<uint32_t>(msg) & 0xffffu)
+        : -1;
+    return mudmux_invoke_registered_hook(hook_type, ctx, msg, data, size, true, current_slot);
 }
 
 mudmux_dispatch_result_t mudmux_dispatch_hook(enum mudmux_hook_type_t hook_type, void* ctx, int msg, const void* data, size_t size) {
@@ -77,9 +80,15 @@ mudmux_dispatch_result_t mudmux_dispatch_hook_after(
     mudmux_hook_completion_t completion,
     void* completion_context,
     int current_slot_) {
+    // The outbound hook's message identifies its destination slot. Make that
+    // slot available to the callback just like other slot-scoped hooks.
+    const int callback_current_slot = hook_type == HOOK_MESSAGE_OUTBOUND && current_slot_ < 0
+        ? static_cast<int>(static_cast<uint32_t>(msg) & 0xffffu)
+        : current_slot_;
+
     if (!mudmux_execution_should_dispatch_async(hook_type)) {
         const mudmux_dispatch_result_t result = static_cast<mudmux_dispatch_result_t>(
-            mudmux_invoke_registered_hook(hook_type, ctx, msg, const_cast<void*>(data), size, true, current_slot_) < 0
+            mudmux_invoke_registered_hook(hook_type, ctx, msg, const_cast<void*>(data), size, true, callback_current_slot) < 0
                 ? MUDMUX_DISPATCH_ERROR
                 : MUDMUX_DISPATCH_OK);
         if (completion)
@@ -100,5 +109,5 @@ mudmux_dispatch_result_t mudmux_dispatch_hook_after(
         ? static_cast<int>(static_cast<uint32_t>(msg) & 0xffffu)
         : -1;
     return mudmux_execution_enqueue_hook(
-        hook_type, ctx, msg, data, size, completion, completion_context, allow_pending, queue_slot, current_slot_);
+        hook_type, ctx, msg, data, size, completion, completion_context, allow_pending, queue_slot, callback_current_slot);
 }
