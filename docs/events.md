@@ -23,10 +23,9 @@ static int on_input(void *context, int slot, void *data, size_t size) {
 mudmux_register_hook(HOOK_MESSAGE_INBOUND, on_input);
 ```
 
-The callback return value is returned by `mudmux_invoke_hook()` when that API
-is used directly. The event loop currently does not use a hook return value to
-control I/O; callbacks should use the public comm API for actions such as
-writing output, changing input mode, or closing a slot.
+The event loop does not use a hook return value to control I/O; callbacks
+should use the public comm API for actions such as writing output, changing
+input mode, or closing a slot.
 
 ## Where hooks run in an iteration
 
@@ -242,10 +241,10 @@ between different slots, and synchronize logic-layer state shared by callbacks.
 
 `mudmux_comm_api_v1->current_slot()` (normally used as
 `comm_current_slot()`) returns the callback's current communication slot. It
-is available for `HOOK_CONNECT`, `HOOK_MESSAGE_INBOUND`, `HOOK_PROMPT`, and
-`HOOK_TELNET_SUBNEG`, including when those callbacks run on relaxed-mode
-workers. It returns `-1` in every other hook, when called outside a hook, and
-for explicit `mudmux_invoke_hook()` calls. The value is thread-local and is
+is available for `HOOK_CONNECT`, `HOOK_MESSAGE_INBOUND`,
+`HOOK_MESSAGE_OUTBOUND`, `HOOK_PROMPT`, and `HOOK_TELNET_SUBNEG`, including
+when those callbacks run on relaxed-mode workers. It returns `-1` in every
+other hook and when called outside a hook. The value is thread-local and is
 restored when the callback returns; do not retain it as a substitute for the
 slot argument supplied to a hook.
 

@@ -8,7 +8,6 @@ MUDMUX_0.1 {
         mudmux_execution_api_v1;
         mudmux_get_timer_event;
         mudmux_init;
-        mudmux_invoke_hook;
         mudmux_register_event;
         mudmux_register_hook;
         mudmux_run;

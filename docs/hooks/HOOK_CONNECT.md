@@ -90,5 +90,4 @@ transport combinations.
 
 ## Return value
 
-The event loop does not interpret this hook's return value. Return values only
-matter to a caller that invokes the hook directly through `mudmux_invoke_hook()`.
+The event loop does not interpret this hook's return value.

@@ -314,7 +314,7 @@ void comm_add_message (int to_slot, const void *buf, size_t len) {
     // immutable even when the generic hook signature exposes a void pointer.
     std::vector<char> message(static_cast<const char*>(buf), static_cast<const char*>(buf) + len);
     async_runtime_t* runtime = async_get_current_runtime();
-    (void)mudmux_dispatch_hook(HOOK_MESSAGE_OUTBOUND,
+    (void)mudmux_dispatch_hook_after(HOOK_MESSAGE_OUTBOUND,
         runtime ? async_runtime_get_context(runtime) : nullptr,
         to_slot,
         message.data(),
@@ -668,7 +668,7 @@ bool comm_close (async_runtime_t* runtime, int slot) {
 }
 
 int comm_invoke_disconnect (async_runtime_t* runtime, int slot) {
-    return mudmux_dispatch_hook (HOOK_DISCONNECT,
+    return mudmux_dispatch_hook_after (HOOK_DISCONNECT,
         async_runtime_get_context(runtime),
         slot,
         nullptr,

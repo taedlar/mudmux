@@ -1406,7 +1406,7 @@ TEST_F(CommInboundTest, ThreadPoolKeepsPerSlotOrderWhileOtherSlotsAdvance) {
     ASSERT_EQ(mudmux_execution_enqueue_hook(HOOK_MESSAGE_INBOUND, this, 0, slot0_first, strlen(slot0_first)), MUDMUX_DISPATCH_OK);
     ASSERT_EQ(first_slot_entered_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
     EXPECT_EQ(mudmux_execution_enqueue_hook(HOOK_MESSAGE_INBOUND, this, 0, slot0_second, strlen(slot0_second)), MUDMUX_DISPATCH_QUEUE_FULL);
-    EXPECT_EQ(mudmux_dispatch_hook(HOOK_PROMPT, this, 0, nullptr, 0), MUDMUX_DISPATCH_OK);
+    EXPECT_EQ(mudmux_dispatch_hook_after(HOOK_PROMPT, this, 0, nullptr, 0), MUDMUX_DISPATCH_OK);
 
     for (int slot = 1; slot <= 5; ++slot) {
         const std::string payload = "slot" + std::to_string(slot);

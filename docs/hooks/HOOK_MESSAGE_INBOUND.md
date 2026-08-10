@@ -38,8 +38,8 @@ Notes:
 - payload may contain arbitrary bytes, depending on input mode and transport.
 
 ## Return Value
-The return value is propagated back from `mudmux_invoke_hook`, but inbound processing currently does not branch on it.
-Use hook side effects (for example `comm_close`, `comm_add_message`) to control behavior.
+Inbound processing does not branch on this hook's return value. Use hook side
+effects (for example `comm_close`, `comm_add_message`) to control behavior.
 
 When `HOOK_MESSAGE_OUTBOUND` is registered, `comm_buffered_write()` is blocked
 outside `HOOK_MESSAGE_OUTBOUND` and `HOOK_PROMPT`. Use `comm_add_message()` or

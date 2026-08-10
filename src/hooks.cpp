@@ -22,7 +22,7 @@ mudmux_hook_func_t mudmux_get_registered_hook(enum mudmux_hook_type_t hook_type)
 int mudmux_invoke_registered_hook(enum mudmux_hook_type_t hook_type, void* ctx, int msg, void* data, size_t size,
                                   bool flush_after, int current_slot_) {
     if (hook_type <= 0 || hook_type >= MAX_HOOK_TYPE) {
-        SPDLOG_ERROR ("mudmux_invoke_hook() called with invalid hook_type");
+        SPDLOG_ERROR ("invalid hook type for registered-hook dispatch");
         return -1;
     }
 
@@ -60,17 +60,6 @@ MUDMUX_EXPORT bool mudmux_register_hook (enum mudmux_hook_type_t hook_type, mudm
     return true;
 }
 
-MUDMUX_EXPORT int mudmux_invoke_hook (enum mudmux_hook_type_t hook_type, void* ctx, int msg, void* data, size_t size) {
-    const int current_slot = hook_type == HOOK_MESSAGE_OUTBOUND
-        ? static_cast<int>(static_cast<uint32_t>(msg) & 0xffffu)
-        : -1;
-    return mudmux_invoke_registered_hook(hook_type, ctx, msg, data, size, true, current_slot);
-}
-
-mudmux_dispatch_result_t mudmux_dispatch_hook(enum mudmux_hook_type_t hook_type, void* ctx, int msg, const void* data, size_t size) {
-    return mudmux_dispatch_hook_after(hook_type, ctx, msg, data, size, nullptr, nullptr);
-}
-
 mudmux_dispatch_result_t mudmux_dispatch_hook_after(
     enum mudmux_hook_type_t hook_type,
     void* ctx,
@@ -83,7 +72,7 @@ mudmux_dispatch_result_t mudmux_dispatch_hook_after(
     // The outbound hook's message identifies its destination slot. Make that
     // slot available to the callback just like other slot-scoped hooks.
     const int callback_current_slot = hook_type == HOOK_MESSAGE_OUTBOUND && current_slot_ < 0
-        ? static_cast<int>(static_cast<uint32_t>(msg) & 0xffffu)
+        ? msg
         : current_slot_;
 
     if (!mudmux_execution_should_dispatch_async(hook_type)) {
@@ -106,7 +95,7 @@ mudmux_dispatch_result_t mudmux_dispatch_hook_after(
     // retain it in that target slot's bounded FIFO after the active hook.
     const bool allow_pending = hook_type != HOOK_MESSAGE_INBOUND;
     const int queue_slot = hook_type == HOOK_MESSAGE_OUTBOUND
-        ? static_cast<int>(static_cast<uint32_t>(msg) & 0xffffu)
+        ? msg
         : -1;
     return mudmux_execution_enqueue_hook(
         hook_type, ctx, msg, data, size, completion, completion_context, allow_pending, queue_slot, callback_current_slot);
