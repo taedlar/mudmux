@@ -570,6 +570,7 @@ TEST_F(CommInboundTest, BufferedOutputRearmsPromptOnlyForCharInput) {
     // prompt after it drains.
     {
         comm_hook_type_scope_t prompt_scope(HOOK_PROMPT);
+        comm_current_slot_scope_t current_slot_scope(slot);
         comm_buffered_write(slot, "> ", 2);
     }
     EXPECT_NE(comm->flags & C_INVOKED_PROMPT, 0u);

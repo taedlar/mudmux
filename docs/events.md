@@ -75,7 +75,7 @@ and protocol contracts for the hooks that have one, including
 [HOOK_PROMPT](hooks/HOOK_PROMPT.md).
 
 `HOOK_GARBAGE_COLLECTION` is special: it always executes inline on the event
-loop thread, after prompt dispatch and before outbound flushes. When it is
+loop thread, before outbound flushes. Prompts are evaluated after flushes. When it is
 registered, an idle loop also wakes at `transport.keep_alive_interval` (20
 seconds by default). Keep this hook brief; it delays all I/O progress.
 
