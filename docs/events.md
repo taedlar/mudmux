@@ -23,10 +23,9 @@ static int on_input(void *context, int slot, void *data, size_t size) {
 mudmux_register_hook(HOOK_MESSAGE_INBOUND, on_input);
 ```
 
-The callback return value is returned by `mudmux_invoke_hook()` when that API
-is used directly. The event loop currently does not use a hook return value to
-control I/O; callbacks should use the public comm API for actions such as
-writing output, changing input mode, or closing a slot.
+The event loop does not use a hook return value to control I/O; callbacks
+should use the public comm API for actions such as writing output, changing
+input mode, or closing a slot.
 
 ## Where hooks run in an iteration
 
@@ -66,16 +65,17 @@ full parsing and ordering contract.
 | `HOOK_MESSAGE_INBOUND` | A complete input unit has passed the enabled transport parsers. | `msg` is the source slot; `data` is the non-null-terminated payload. |
 | `HOOK_MESSAGE_OUTBOUND` | `comm_add_message()` sends an application message. | `msg` is the destination slot; `data` is an immutable message copy. |
 | `HOOK_TRANSPORT_READY` | The selected transport framing is ready for application input. It fires once before the first inbound application message. | `msg` is the slot; `data == NULL` and `size == 0`. |
-| `HOOK_PROMPT` | Inbound work has drained for a slot with prompts enabled and no pending output. | `msg` is the slot; `data == NULL` and `size == 0`. |
+| `HOOK_PROMPT` | A prompt-enabled slot is idle: no inbound or outbound work is pending and no slot hook is in flight. It fires once until the next inbound message clears its prompt gate. | `msg` is the slot; `data == NULL` and `size == 0`. |
 | `HOOK_TELNET_SUBNEG` | A Telnet subnegotiation is parsed. | `msg` is the Telnet option; `data` and `size` are its payload. |
 | `HOOK_TIMER` | mudmux's internal timer event is signalled. | `msg` is supplied to `mudmux_trigger_timer()`; no payload. |
 | `HOOK_GARBAGE_COLLECTION` | End of every completed loop iteration. | `msg == -1`, `data == NULL`, and `size == 0`. |
 
 The hook-specific documents in [hooks/](hooks/) define the detailed argument
-and protocol contracts for the hooks that have one.
+and protocol contracts for the hooks that have one, including
+[HOOK_PROMPT](hooks/HOOK_PROMPT.md).
 
 `HOOK_GARBAGE_COLLECTION` is special: it always executes inline on the event
-loop thread, after prompt dispatch and before outbound flushes. When it is
+loop thread, before outbound flushes. Prompts are evaluated after flushes. When it is
 registered, an idle loop also wakes at `transport.keep_alive_interval` (20
 seconds by default). Keep this hook brief; it delays all I/O progress.
 
@@ -241,10 +241,10 @@ between different slots, and synchronize logic-layer state shared by callbacks.
 
 `mudmux_comm_api_v1->current_slot()` (normally used as
 `comm_current_slot()`) returns the callback's current communication slot. It
-is available for `HOOK_CONNECT`, `HOOK_MESSAGE_INBOUND`, `HOOK_PROMPT`, and
-`HOOK_TELNET_SUBNEG`, including when those callbacks run on relaxed-mode
-workers. It returns `-1` in every other hook, when called outside a hook, and
-for explicit `mudmux_invoke_hook()` calls. The value is thread-local and is
+is available for `HOOK_CONNECT`, `HOOK_MESSAGE_INBOUND`,
+`HOOK_MESSAGE_OUTBOUND`, `HOOK_PROMPT`, and `HOOK_TELNET_SUBNEG`, including
+when those callbacks run on relaxed-mode workers. It returns `-1` in every
+other hook and when called outside a hook. The value is thread-local and is
 restored when the callback returns; do not retain it as a substitute for the
 slot argument supplied to a hook.
 

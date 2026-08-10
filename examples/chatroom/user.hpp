@@ -61,6 +61,11 @@ public:
         return comm_slot;
     }
 
+    inline bool isDoingMenu() const {
+        std::lock_guard<std::recursive_mutex> lock(users_mutex);
+        return menu != nullptr;
+    }
+
     void closeComm() {
         std::lock_guard<std::recursive_mutex> lock(users_mutex);
         if (comm_slot >= 0)

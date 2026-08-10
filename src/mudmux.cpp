@@ -550,7 +550,6 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
         }
         if (comm_has_deferred_input())
             comm_resume_deferred_input(runtime);
-        comm_invoke_prompt(runtime); // invoke prompt hook for all comms with C_ENABLE_PROMPT flag set
 
         // invoke garbage collection hook before continue to next iteration of event loop
         // typically used to implement mark-and-sweep garbage collection for scripting languages like Lua, Python, etc.
@@ -558,6 +557,9 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
             HOOK_GARBAGE_COLLECTION, async_runtime_get_context(runtime), -1, nullptr, 0, false);
 
         comm_flush_all(runtime); // advance buffered writes and TLS state in non-blocking mode
+        // Prompt only after flushes have settled: a hook may have produced
+        // output this iteration, and a prompt denotes that the slot is idle.
+        comm_invoke_prompt(runtime);
     }
     SPDLOG_INFO ("===== exited event loop =====");
 

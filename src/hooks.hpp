@@ -11,8 +11,6 @@ int mudmux_invoke_hook_function(mudmux_hook_func_t hook_func, void* ctx, int msg
                                 bool flush_after, int current_slot_ = -1);
 mudmux_hook_func_t mudmux_get_registered_hook(enum mudmux_hook_type_t hook_type);
 
-mudmux_dispatch_result_t mudmux_dispatch_hook(enum mudmux_hook_type_t hook_type, void* ctx, int msg, const void* data, size_t size);
-
 /**
  * @brief Dispatch a hook for execution in the thread pool, with optional completion callback.
  * @param hook_type The type of hook to dispatch.
@@ -33,8 +31,8 @@ mudmux_dispatch_result_t mudmux_dispatch_hook_after(
     int msg,
     const void* data,
     size_t size,
-    mudmux_hook_completion_t completion,
-    void* completion_context,
+    mudmux_hook_completion_t completion = nullptr,
+    void* completion_context = nullptr,
     int current_slot_ = -1);
 
 #endif

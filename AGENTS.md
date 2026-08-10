@@ -85,7 +85,8 @@ Hooks (`mudmux_hook_type_t`) let the loaded logic layer react to transport event
 | `HOOK_MESSAGE_OUTBOUND` | data sent to client |
 | `HOOK_PROMPT` | finished draining inbound data |
 
-Register with `mudmux_register_hook()`; invoke with `mudmux_invoke_hook()`.
+Register with `mudmux_register_hook()`; mudmux invokes registered hooks as the
+corresponding transport events occur.
 
 ### Hook API Protection and Threading Model
 

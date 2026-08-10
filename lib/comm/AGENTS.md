@@ -169,7 +169,7 @@ Outbound writes are intentionally staged and flushed after hook execution.
 ### Flush Triggers
 
 - `comm_buffered_write()` sets `C_BUFFERED_WRITE` to mark pending outbound data.
-- `mudmux_invoke_hook()` calls `comm_flush_all(async_get_current_runtime())` after each hook callback returns.
+- Hook dispatch calls `comm_flush_all(async_get_current_runtime())` after each callback returns.
 - `comm_flush_all()` iterates all slots and flushes those with `C_BUFFERED_WRITE`.
 
 ### Proactive Close Path (`comm_close`)
@@ -454,7 +454,7 @@ telnet localhost 4000
 
 **"Outbound text not sent"**
 - Check: Is hook code writing via `*comm << ...` or `comm_buffered_write()`?
-- Check: Is `mudmux_invoke_hook()` being called (flush happens after hook callback)?
+- Check: Does the event loop have an opportunity to flush after the hook callback?
 - Check: Is slot capped at max outbound buffers (look for "Exceeded maximum outbound buffers per slot")?
 - Check: BIO errors from flush (`BIO_write failed during flush`, `BIO_get_fd failed during flush`)?
 

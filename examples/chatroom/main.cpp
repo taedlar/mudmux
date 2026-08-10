@@ -106,6 +106,9 @@ static int on_message_inbound (void*, int slot, void* data, size_t size) {
 
 static int on_message_outbound (void*, int to_slot, void* data, size_t size) {
     // HOOK_MESSAGE_OUTBOUND receives destination slot in msg.
+    if (auto user = User::find(to_slot); user && user->isDoingMenu()) {
+        comm_buffered_write(to_slot, "\r\x1B[J", 5); // clear menu prompt line before sending message to user
+    }
     comm_buffered_write (to_slot, data, size);
     return 0;
 }

@@ -123,6 +123,22 @@ int rewrite_outbound_message(void*, int slot, void* data, size_t len) {
     return 0;
 }
 
+int outbound_hook_calls{0};
+
+int outbound_attempts_recursive_add(void*, int slot, void* data, size_t len) {
+    ++outbound_hook_calls;
+    comm_add_message(slot, data, len);
+    return 0;
+}
+
+int outbound_cross_slot{-1};
+
+int outbound_attempts_cross_slot_write(void*, int, void* data, size_t len) {
+    ++outbound_hook_calls;
+    comm_buffered_write(outbound_cross_slot, data, len);
+    return 0;
+}
+
 int inbound_attempt_buffered_write(void*, int slot, void*, size_t) {
     comm_buffered_write(slot, "blocked", 7);
     return 0;
@@ -130,6 +146,22 @@ int inbound_attempt_buffered_write(void*, int slot, void*, size_t) {
 
 int prompt_buffered_write(void*, int slot, void*, size_t) {
     comm_buffered_write(slot, "prompt", 6);
+    return 0;
+}
+
+int prompt_hook_calls{0};
+std::promise<void>* prompt_hook_called_ptr{nullptr};
+
+int count_prompt_hook(void*, int, void*, size_t) {
+    ++prompt_hook_calls;
+    if (prompt_hook_called_ptr)
+        prompt_hook_called_ptr->set_value();
+    return 0;
+}
+
+int prompt_hook_attempts_add(void*, int slot, void*, size_t) {
+    ++prompt_hook_calls;
+    comm_add_message(slot, "prompt", 6);
     return 0;
 }
 
@@ -152,6 +184,7 @@ std::promise<void>* thread_pool_first_slot_finished_ptr{nullptr};
 std::atomic<int> thread_pool_other_slots_completed{0};
 int thread_pool_other_slots_expected{0};
 int thread_pool_first_slot_count{0};
+int thread_pool_blocked_slot{0};
 
 std::promise<void>* comm_api_blocked_slot_entered_ptr{nullptr};
 std::promise<void>* comm_api_blocked_slot_finished_ptr{nullptr};
@@ -218,7 +251,7 @@ int thread_pool_stress_hook(void*, int slot, void* data, size_t len) {
     (void)data;
     (void)len;
 
-    if (slot == 0) {
+    if (slot == thread_pool_blocked_slot) {
         const int count = ++thread_pool_first_slot_count;
         if (count == 1) {
             if (thread_pool_first_slot_entered_ptr)
@@ -365,6 +398,62 @@ TEST_F(CommInboundTest, FormattedMessageFormatsAndRoutesOutboundPayload) {
     async_runtime_deinit(runtime);
 }
 
+TEST_F(CommInboundTest, OutboundHookCannotRecursivelyAddMessage) {
+    async_runtime_t* runtime = async_runtime_init(this);
+    ASSERT_NE(runtime, nullptr);
+    const int slot = add_memory_comm(C_LINE_INPUT);
+    ASSERT_NE(slot, -1);
+
+    outbound_hook_calls = 0;
+    ASSERT_TRUE(mudmux_register_hook(HOOK_MESSAGE_OUTBOUND, outbound_attempts_recursive_add));
+    comm_add_message(slot, "message", 7);
+
+    EXPECT_EQ(outbound_hook_calls, 1);
+    comm_flush(runtime, slot);
+    EXPECT_EQ(BIO_ctrl_pending(comm_abstract_get(slot)->wbio), 0u);
+
+    async_runtime_deinit(runtime);
+}
+
+TEST_F(CommInboundTest, OutboundHookCanOnlyWriteItsCurrentSlot) {
+    async_runtime_t* runtime = async_runtime_init(this);
+    ASSERT_NE(runtime, nullptr);
+    const int source_slot = add_memory_comm(C_LINE_INPUT);
+    const int other_slot = add_memory_comm(C_LINE_INPUT);
+    ASSERT_NE(source_slot, -1);
+    ASSERT_NE(other_slot, -1);
+
+    outbound_hook_calls = 0;
+    outbound_cross_slot = other_slot;
+    ASSERT_TRUE(mudmux_register_hook(HOOK_MESSAGE_OUTBOUND, outbound_attempts_cross_slot_write));
+    comm_add_message(source_slot, "message", 7);
+
+    EXPECT_EQ(outbound_hook_calls, 1);
+    comm_flush(runtime, other_slot);
+    EXPECT_EQ(BIO_ctrl_pending(comm_abstract_get(other_slot)->wbio), 0u);
+    outbound_cross_slot = -1;
+
+    async_runtime_deinit(runtime);
+}
+
+TEST_F(CommInboundTest, PromptHookCannotAddMessage) {
+    async_runtime_t* runtime = async_runtime_init(this);
+    ASSERT_NE(runtime, nullptr);
+    const int slot = add_memory_comm(C_LINE_INPUT);
+    ASSERT_NE(slot, -1);
+
+    prompt_hook_calls = 0;
+    ASSERT_TRUE(mudmux_register_hook(HOOK_PROMPT, prompt_hook_attempts_add));
+    comm_enable_prompt(slot, true);
+    comm_invoke_prompt(runtime);
+
+    EXPECT_EQ(prompt_hook_calls, 1);
+    comm_flush(runtime, slot);
+    EXPECT_EQ(BIO_ctrl_pending(comm_abstract_get(slot)->wbio), 0u);
+
+    async_runtime_deinit(runtime);
+}
+
 TEST_F(CommInboundTest, BufferedWriteIsRestrictedToOutboundAndPromptHooksWhenOutboundHookRegistered) {
     async_runtime_t* runtime = async_runtime_init(this);
     ASSERT_NE(runtime, nullptr);
@@ -395,6 +484,160 @@ TEST_F(CommInboundTest, BufferedWriteIsRestrictedToOutboundAndPromptHooksWhenOut
     ASSERT_EQ(BIO_read(comm_abstract_get(slot)->wbio, output.data(), static_cast<int>(output.size())), 6);
     EXPECT_EQ(std::string(output.data(), 6), "prompt");
 
+    async_runtime_deinit(runtime);
+}
+
+TEST_F(CommInboundTest, PromptFiresOnlyOnceWhenSlotHasNoPendingInputOrOutput) {
+    async_runtime_t* runtime = async_runtime_init(this);
+    ASSERT_NE(runtime, nullptr);
+    const int slot = add_memory_comm(C_LINE_INPUT);
+    ASSERT_NE(slot, -1);
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
+    ASSERT_TRUE(comm);
+
+    prompt_hook_calls = 0;
+    ASSERT_TRUE(mudmux_register_hook(HOOK_PROMPT, count_prompt_hook));
+    comm_enable_prompt(slot, true);
+
+    // A partial line remains buffered but is not marked C_DEFERRED_INBOUND.
+    ASSERT_TRUE(comm_refill_inbound_buffers(comm, "partial", 7));
+    comm_invoke_prompt(runtime);
+    EXPECT_EQ(prompt_hook_calls, 0);
+    EXPECT_EQ(comm_get_flags(slot) & C_INVOKED_PROMPT, 0u);
+
+    comm_free_inbound_buffers(comm);
+    comm_invoke_prompt(runtime);
+    EXPECT_EQ(prompt_hook_calls, 1);
+    EXPECT_NE(comm->flags & C_INVOKED_PROMPT, 0u);
+
+    // C_INVOKED_PROMPT makes the idle notification one-shot.
+    comm_invoke_prompt(runtime);
+    EXPECT_EQ(prompt_hook_calls, 1);
+
+    comm->flags &= ~C_INVOKED_PROMPT;
+    comm->flags |= C_DEFERRED_INBOUND;
+    comm_invoke_prompt(runtime);
+    EXPECT_EQ(prompt_hook_calls, 1);
+    EXPECT_EQ(comm->flags & C_INVOKED_PROMPT, 0u);
+
+    comm->flags &= ~C_DEFERRED_INBOUND;
+    comm_buffered_write(slot, "output", 6);
+    comm_invoke_prompt(runtime);
+    EXPECT_EQ(prompt_hook_calls, 1);
+    EXPECT_EQ(comm->flags & C_INVOKED_PROMPT, 0u);
+
+    async_runtime_deinit(runtime);
+}
+
+TEST_F(CommInboundTest, BufferedOutputRearmsPromptOnlyForCharInput) {
+    async_runtime_t* runtime = async_runtime_init(this);
+    ASSERT_NE(runtime, nullptr);
+
+    // Keep the tested memory slot away from COMM_SLOT_CONSOLE so switching
+    // input mode cannot alter the test process terminal.
+    ASSERT_NE(add_memory_comm(C_LINE_INPUT), -1);
+    const int slot = add_memory_comm(C_LINE_INPUT);
+    ASSERT_NE(slot, -1);
+    ASSERT_NE(slot, COMM_SLOT_CONSOLE);
+    comm_abstract_ptr comm(slot, comm_slots_mtx);
+    ASSERT_TRUE(comm);
+
+    prompt_hook_calls = 0;
+    ASSERT_TRUE(mudmux_register_hook(HOOK_PROMPT, count_prompt_hook));
+    comm_enable_prompt(slot, true);
+    comm_invoke_prompt(runtime);
+    ASSERT_EQ(prompt_hook_calls, 1);
+    ASSERT_NE(comm->flags & C_INVOKED_PROMPT, 0u);
+
+    // Normal command input keeps the current prompt gate across broadcasts.
+    comm_buffered_write(slot, "line output", 11);
+    EXPECT_NE(comm->flags & C_INVOKED_PROMPT, 0u);
+    comm_flush(runtime, slot);
+    // Memory BIOs do not expose a socket fd, so model the final writable
+    // completion that clears this transport bookkeeping flag.
+    comm->flags &= ~C_BUFFERED_WRITE;
+
+    ASSERT_TRUE(comm_set_char_input(slot));
+    comm_buffered_write(slot, "choice update", 13);
+    EXPECT_EQ(comm->flags & C_INVOKED_PROMPT, 0u);
+    comm_flush(runtime, slot);
+    comm->flags &= ~C_BUFFERED_WRITE;
+    comm_invoke_prompt(runtime);
+    EXPECT_EQ(prompt_hook_calls, 2);
+    EXPECT_NE(comm->flags & C_INVOKED_PROMPT, 0u);
+
+    // Output emitted by the prompt callback itself must not schedule another
+    // prompt after it drains.
+    {
+        comm_hook_type_scope_t prompt_scope(HOOK_PROMPT);
+        comm_current_slot_scope_t current_slot_scope(slot);
+        comm_buffered_write(slot, "> ", 2);
+    }
+    EXPECT_NE(comm->flags & C_INVOKED_PROMPT, 0u);
+
+    async_runtime_deinit(runtime);
+}
+
+TEST_F(CommInboundTest, PromptWaitsForAnInFlightSlotHook) {
+    mudmux_deinit();
+    ASSERT_TRUE(mudmux_init("{\"transport\": {\"thread_pool\": {\"size\": 2}}}"));
+
+    async_runtime_t* runtime = async_runtime_init(this);
+    ASSERT_NE(runtime, nullptr);
+    const int slot = add_memory_comm(C_LINE_INPUT);
+    ASSERT_NE(slot, -1);
+    {
+        comm_abstract_ptr comm(slot, comm_slots_mtx);
+        ASSERT_TRUE(comm);
+    }
+
+    std::promise<void> inbound_entered_promise;
+    std::future<void> inbound_entered_future = inbound_entered_promise.get_future();
+    std::promise<void> inbound_release_promise;
+    std::shared_future<void> inbound_release_future = inbound_release_promise.get_future().share();
+    std::promise<void> inbound_finished_promise;
+    std::future<void> inbound_finished_future = inbound_finished_promise.get_future();
+    std::promise<void> prompt_called_promise;
+    std::future<void> prompt_called_future = prompt_called_promise.get_future();
+
+    thread_pool_first_slot_entered_ptr = &inbound_entered_promise;
+    thread_pool_first_slot_release_future_ptr = &inbound_release_future;
+    thread_pool_first_slot_finished_ptr = &inbound_finished_promise;
+    thread_pool_first_slot_count = 0;
+    thread_pool_blocked_slot = slot;
+    prompt_hook_calls = 0;
+    prompt_hook_called_ptr = &prompt_called_promise;
+
+    ASSERT_TRUE(mudmux_register_hook(HOOK_MESSAGE_INBOUND, thread_pool_stress_hook));
+    ASSERT_TRUE(mudmux_register_hook(HOOK_PROMPT, count_prompt_hook));
+    comm_enable_prompt(slot, true);
+
+    const char input[] = "busy";
+    ASSERT_EQ(mudmux_execution_enqueue_hook(HOOK_MESSAGE_INBOUND, this, slot, input, sizeof(input) - 1),
+              MUDMUX_DISPATCH_OK);
+    ASSERT_EQ(inbound_entered_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+
+    comm_invoke_prompt(runtime);
+    EXPECT_EQ(prompt_hook_calls, 0);
+    EXPECT_EQ(comm_get_flags(slot) & C_INVOKED_PROMPT, 0u);
+
+    inbound_release_promise.set_value();
+    ASSERT_EQ(inbound_finished_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    const auto idle_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (mudmux_execution_slot_busy(slot) && std::chrono::steady_clock::now() < idle_deadline)
+        std::this_thread::yield();
+    ASSERT_FALSE(mudmux_execution_slot_busy(slot));
+
+    comm_invoke_prompt(runtime);
+    EXPECT_EQ(prompt_called_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_EQ(prompt_hook_calls, 1);
+    EXPECT_NE(comm_get_flags(slot) & C_INVOKED_PROMPT, 0u);
+
+    prompt_hook_called_ptr = nullptr;
+    thread_pool_first_slot_entered_ptr = nullptr;
+    thread_pool_first_slot_release_future_ptr = nullptr;
+    thread_pool_first_slot_finished_ptr = nullptr;
+    thread_pool_blocked_slot = 0;
     async_runtime_deinit(runtime);
 }
 
@@ -521,7 +764,7 @@ TEST_F(CommInboundTest, CurrentSlotIsAvailableOnlyToSlotScopedHooks) {
     ASSERT_TRUE(mudmux_register_hook(HOOK_MESSAGE_OUTBOUND, CommInboundTest::hook_record_current_slot));
     const char output[] = "message";
     comm_add_message(slot, output, sizeof(output) - 1);
-    EXPECT_EQ(observed_current_slot, -1);
+    EXPECT_EQ(observed_current_slot, slot);
     EXPECT_EQ(comm_current_slot(), -1);
 
     async_runtime_deinit(runtime);
@@ -1164,7 +1407,7 @@ TEST_F(CommInboundTest, ThreadPoolKeepsPerSlotOrderWhileOtherSlotsAdvance) {
     ASSERT_EQ(mudmux_execution_enqueue_hook(HOOK_MESSAGE_INBOUND, this, 0, slot0_first, strlen(slot0_first)), MUDMUX_DISPATCH_OK);
     ASSERT_EQ(first_slot_entered_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
     EXPECT_EQ(mudmux_execution_enqueue_hook(HOOK_MESSAGE_INBOUND, this, 0, slot0_second, strlen(slot0_second)), MUDMUX_DISPATCH_QUEUE_FULL);
-    EXPECT_EQ(mudmux_dispatch_hook(HOOK_PROMPT, this, 0, nullptr, 0), MUDMUX_DISPATCH_OK);
+    EXPECT_EQ(mudmux_dispatch_hook_after(HOOK_PROMPT, this, 0, nullptr, 0), MUDMUX_DISPATCH_OK);
 
     for (int slot = 1; slot <= 5; ++slot) {
         const std::string payload = "slot" + std::to_string(slot);

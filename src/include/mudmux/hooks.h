@@ -2,6 +2,7 @@
 #define MUDMUX_HOOKS_H
 
 #include "mudmux_export.h"
+#include "mudmux/async.h"
 #include <stdbool.h>
 #include <stddef.h>
 
@@ -39,7 +40,13 @@ typedef int (*mudmux_hook_func_t)(void* ctx, int msg, void* data, size_t size);
  */
 MUDMUX_EXPORT bool mudmux_register_hook (enum mudmux_hook_type_t hook_type, mudmux_hook_func_t hook_func);
 
-MUDMUX_EXPORT int mudmux_invoke_hook (enum mudmux_hook_type_t hook_type, void* ctx, int msg, void* data, size_t size);
+/**
+ * Register a manual or auto-reset async event. The event is watched by
+ * mudmux_run(); a manual-reset signal is reset before hook_func is invoked,
+ * while an auto-reset signal is consumed by one dispatch. The event must remain
+ * initialized until mudmux_deinit() returns.
+ */
+MUDMUX_EXPORT bool mudmux_register_event(async_event_t* event, mudmux_hook_func_t hook_func);
 
 #ifdef __cplusplus
 }
