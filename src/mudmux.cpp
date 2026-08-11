@@ -198,8 +198,10 @@ static int context_to_slot (void* context) {
 
 MUDMUX_EXPORT void mudmux_set_log_level (int level) {
     if (!spdlog_initialized) {
-        if (!spdlog::default_logger())
-            spdlog::set_default_logger(spdlog::stderr_color_mt("mudmux"));
+        if (!spdlog::default_logger()) {
+            auto sink = std::make_shared<spdlog::sinks::stderr_color_sink_mt>();
+            spdlog::set_default_logger(std::make_shared<spdlog::logger>("mudmux", std::move(sink)));
+        }
         spdlog_initialized = true;
     }
     spdlog::set_level(static_cast<spdlog::level::level_enum>(level));
@@ -214,6 +216,11 @@ MUDMUX_EXPORT void mudmux_enable_console (bool enable) {
 }
 
 MUDMUX_EXPORT bool mudmux_init (const char* config_yaml) {
+    if (!spdlog_initialized) {
+        auto sink = std::make_shared<spdlog::sinks::stderr_color_sink_mt>();
+        spdlog::set_default_logger(std::make_shared<spdlog::logger>("mudmux", std::move(sink)));
+        spdlog_initialized = true;
+    }
     if (is_running.load()) {
         SPDLOG_ERROR ("mudmux_init() called while already running");
         return false;
@@ -318,8 +325,12 @@ MUDMUX_EXPORT void mudmux_deinit (void) {
 #ifdef _WIN32
     WSACleanup();
 #endif
-    // FIXME: we may need to call spdlog::drop() here if we link to spdlog shared library.
-    spdlog::shutdown();
+    {
+        // Replace the default logger to release any custom callback sinks while
+        // keeping spdlog functional for subsequent code (e.g. TearDown in tests).
+        auto sink = std::make_shared<spdlog::sinks::stderr_color_sink_mt>();
+        spdlog::set_default_logger(std::make_shared<spdlog::logger>("mudmux", std::move(sink)));
+    }
     spdlog_initialized = false;
 }
 

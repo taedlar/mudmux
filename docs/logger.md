@@ -70,10 +70,15 @@ progress or shutdown.
 
 ## Shutdown
 
-`mudmux_deinit()` calls `spdlog::shutdown()` and clears mudmux's internal
-`spdlog_initialized` flag. After deinitialization, register the callback again
-before starting a new run if logs should continue to be routed through the
-application callback.
+`mudmux_deinit()` replaces the active spdlog default logger with a fresh stderr
+logger, releasing any callback sinks. After deinitialization, spdlog remains
+functional so that code running after `mudmux_deinit()` (such as test teardown
+or subsequent API calls) can still log safely.
+
+`mudmux_init()` installs a new stderr logger when `spdlog_initialized` is
+false, so the pattern `mudmux_deinit()` → `mudmux_init()` is safe within the
+same process. Register the callback again after `mudmux_init()` if log records
+from the new run should be routed through the application.
 
 Passing a null callback is ignored and leaves the current spdlog default logger
 unchanged.
