@@ -3,8 +3,14 @@
 #endif
 
 #include <cstring>
+#include <memory>
 #include <mutex>
+#include <string>
 #include <vector>
+
+#include <spdlog/logger.h>
+#include <spdlog/sinks/callback_sink.h>
+#include <spdlog/spdlog.h>
 
 #include "execution.hpp"
 #include "mudmux/mudmux.h"
@@ -12,6 +18,8 @@
 #include "comm/outbound.hpp"
 #include "comm/current_slot.hpp"
 #include "hooks.hpp"
+
+bool spdlog_initialized{false};
 
 static mudmux_hook_func_t all_hooks[MAX_HOOK_TYPE] = {nullptr}; // array of hook functions
 
@@ -58,6 +66,27 @@ MUDMUX_EXPORT bool mudmux_register_hook (enum mudmux_hook_type_t hook_type, mudm
     }
     all_hooks[hook_type] = hook_func;
     return true;
+}
+
+MUDMUX_EXPORT void mudmux_register_logger_callback(mudmux_logger_callback_t callback, void* ctx) {
+    if (!callback)
+        return;
+
+    auto sink = std::make_shared<spdlog::sinks::callback_sink_mt>(
+        [callback, ctx](const spdlog::details::log_msg& log_msg) {
+            const std::string message(log_msg.payload.data(), log_msg.payload.size());
+            const char* file = log_msg.source.filename ? strstr(log_msg.source.filename, "mudmux") : "";
+            callback(
+                ctx,
+                static_cast<int>(log_msg.level),
+                file ? file : "",
+                static_cast<int>(log_msg.source.line),
+                log_msg.source.funcname ? log_msg.source.funcname : "",
+                message.c_str());
+        });
+
+    spdlog::set_default_logger(std::make_shared<spdlog::logger>("mudmux", sink));
+    spdlog_initialized = true;
 }
 
 mudmux_dispatch_result_t mudmux_dispatch_hook_after(

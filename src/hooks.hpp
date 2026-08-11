@@ -3,6 +3,8 @@
 
 #include "mudmux/hooks.h"
 
+extern bool spdlog_initialized;
+
 using mudmux_hook_completion_t = void (*)(void* context, int msg);
 
 int mudmux_invoke_registered_hook(enum mudmux_hook_type_t hook_type, void* ctx, int msg, void* data, size_t size,

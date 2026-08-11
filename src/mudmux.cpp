@@ -3,6 +3,9 @@
 #endif
 
 #include "mudmux/mudmux.h"
+#include "mudmux/async.h"
+#include "mudmux/comm.h"
+#include "mudmux/execution.h"
 
 #include <atomic>
 #include <cstdarg>
@@ -15,7 +18,14 @@
 #include <thread>
 #include <vector>
 #include <yaml-cpp/yaml.h>
+#include <spdlog/sinks/callback_sink.h>
+#include <spdlog/sinks/stdout_color_sinks.h>
+#ifdef _WIN32
+#include <winsock2.h>
+#pragma comment(lib, "ws2_32.lib")
+#endif
 
+#include "execution.hpp"
 #include "async/async_event.h"
 #include "async/async_queue.h"
 #include "async/console_worker.h"
@@ -30,11 +40,6 @@
 #include "comm/ssl.hpp"
 #include "comm/telnet.hpp"
 #include "comm/websocket.hpp"
-#include "execution.hpp"
-#include "mudmux/async.h"
-#include "mudmux/comm.h"
-#include "mudmux/execution.h"
-#include "mudmux/hooks.h"
 
 extern "C" {
     mudmux_async_api_v1_t* mudmux_async_api_v1 {nullptr}; // global pointer to async API struct, initialized by mudmux_init()
@@ -196,6 +201,13 @@ static int context_to_slot (void* context) {
 }
 
 MUDMUX_EXPORT void mudmux_set_log_level (int level) {
+    if (!spdlog_initialized) {
+        if (!spdlog::default_logger()) {
+            auto sink = std::make_shared<spdlog::sinks::stderr_color_sink_mt>();
+            spdlog::set_default_logger(std::make_shared<spdlog::logger>("mudmux", std::move(sink)));
+        }
+        spdlog_initialized = true;
+    }
     spdlog::set_level(static_cast<spdlog::level::level_enum>(level));
 }
 
@@ -208,10 +220,23 @@ MUDMUX_EXPORT void mudmux_enable_console (bool enable) {
 }
 
 MUDMUX_EXPORT bool mudmux_init (const char* config_yaml) {
+    if (!spdlog_initialized) {
+        auto sink = std::make_shared<spdlog::sinks::stderr_color_sink_mt>();
+        spdlog::set_default_logger(std::make_shared<spdlog::logger>("mudmux", std::move(sink)));
+        spdlog_initialized = true;
+    }
     if (is_running.load()) {
         SPDLOG_ERROR ("mudmux_init() called while already running");
         return false;
     }
+    bool init_success = true;
+#ifdef _WIN32
+    WSADATA wsa_data;
+    if (WSAStartup(MAKEWORD(2, 2), &wsa_data) != 0) {
+        SPDLOG_ERROR("WSAStartup failed");
+        return false;
+    }
+#endif
     mudmux_workers_configure(1);
     keep_alive_interval_seconds = 20;
     timer_event_msg.store(-1, std::memory_order_relaxed);
@@ -221,7 +246,8 @@ MUDMUX_EXPORT bool mudmux_init (const char* config_yaml) {
     if (!timer_event_initialized) {
         if (!async_event_init(&timer_event, true, false)) {
             SPDLOG_ERROR("failed to initialize timer event");
-            return false;
+            init_success = false;
+            goto done;
         }
         timer_event_initialized = true;
     }
@@ -246,7 +272,8 @@ MUDMUX_EXPORT bool mudmux_init (const char* config_yaml) {
             const int thread_pool_size = transport["thread_pool"]["size"].as<int>();
             if (thread_pool_size < 1) {
                 SPDLOG_ERROR ("transport.thread_pool.size must be at least 1");
-                return false;
+                init_success = false;
+                goto done;
             }
             mudmux_workers_configure(thread_pool_size);
         }
@@ -254,7 +281,8 @@ MUDMUX_EXPORT bool mudmux_init (const char* config_yaml) {
             const int interval = transport["keep_alive_interval"].as<int>();
             if (interval < 1) {
                 SPDLOG_ERROR("transport.keep_alive_interval must be at least 1 second");
-                return false;
+                init_success = false;
+                goto done;
             }
             keep_alive_interval_seconds = interval;
         }
@@ -263,20 +291,26 @@ MUDMUX_EXPORT bool mudmux_init (const char* config_yaml) {
             server_private_key_path = transport["ssl"]["private_key"].as<std::string>();
             if (!comm_ssl_init(server_certificate_path, server_private_key_path)) {
                 SPDLOG_ERROR ("failed to initialize SSL with certificate {} and private key {}", server_certificate_path.string(), server_private_key_path.string());
-                return false;
+                init_success = false;
+                goto done;
             }
         }
         if (!mudmux_workers_start()) {
             SPDLOG_ERROR("failed to start thread pool with {} workers", mudmux_workers_configured_pool_size());
-            return false;
+            init_success = false;
+            goto done;
         }
         is_shutting_down.store(false);
     }
     catch (const YAML::Exception& e) {
         SPDLOG_ERROR ("configuration error: {}", e.what());
-        return false;
+        init_success = false;
+        goto done;
     }
-    return true;
+done:
+    if (!init_success)
+        mudmux_deinit();
+    return init_success;
 }
 
 MUDMUX_EXPORT void mudmux_deinit (void) {
@@ -302,6 +336,16 @@ MUDMUX_EXPORT void mudmux_deinit (void) {
     memset(mudmux_async_api_v1, 0, sizeof(mudmux_async_api_v1_t));
     memset(mudmux_execution_api_v1, 0, sizeof(mudmux_execution_api_v1_t));
     comm_ssl_deinit();
+#ifdef _WIN32
+    WSACleanup();
+#endif
+    {
+        // Replace the default logger to release any custom callback sinks while
+        // keeping spdlog functional for subsequent code (e.g. TearDown in tests).
+        auto sink = std::make_shared<spdlog::sinks::stderr_color_sink_mt>();
+        spdlog::set_default_logger(std::make_shared<spdlog::logger>("mudmux", std::move(sink)));
+    }
+    spdlog_initialized = false;
 }
 
 MUDMUX_EXPORT bool mudmux_register_event(async_event_t* event, mudmux_hook_func_t hook_func) {
