@@ -6,6 +6,7 @@
 #include "comm/inbound.hpp"
 #include "comm/outbound.hpp"
 #include "comm/ssl.hpp"
+#include "comm/telnet.hpp"
 #include "comm/websocket.hpp"
 #include "mudmux/comm.h"
 #include "mudmux/hooks.h"
@@ -23,6 +24,15 @@
 #include <vector>
 
 namespace {
+
+constexpr unsigned char TELNET_WILL = 251;
+constexpr unsigned char TELNET_WONT = 252;
+constexpr unsigned char TELNET_DO = 253;
+constexpr unsigned char TELNET_DONT = 254;
+constexpr unsigned char TELNET_IAC = 255;
+constexpr unsigned char TELNET_ECHO = 1;
+constexpr unsigned char TELNET_SGA = 3;
+constexpr unsigned char TELNET_LINEMODE = 34;
 
 std::string random_suffix() {
     std::mt19937_64 rng(static_cast<unsigned long long>(
@@ -133,6 +143,40 @@ struct inbound_collector_t {
         return 0;
     }
 };
+
+bool pump_tls_handshake(async_runtime_t* runtime, int slot, SSL* client_ssl) {
+    bool server_done = false;
+    bool client_done = false;
+
+    for (int i = 0; i < 256 && !(server_done && client_done); ++i) {
+        comm_abstract_ptr comm(slot, comm_slots_mtx);
+        if (!comm)
+            return false;
+
+        if (!comm_refill_inbound_buffers(comm))
+            return false;
+
+        if (!server_done) {
+            const int result = comm_tls_handshake_step(runtime, slot);
+            if (result < 0)
+                return false;
+            server_done = result == 1;
+        }
+
+        if (!client_done) {
+            const int result = SSL_do_handshake(client_ssl);
+            if (result == 1) {
+                client_done = true;
+            } else {
+                const int error = SSL_get_error(client_ssl, result);
+                if (error != SSL_ERROR_WANT_READ && error != SSL_ERROR_WANT_WRITE)
+                    return false;
+            }
+        }
+    }
+
+    return server_done && client_done;
+}
 
 #ifdef _WIN32
 static bool feed_tls_from_src_fragments(comm_abstract_ptr& comm, async_runtime_t* runtime, size_t fragment_size) {
@@ -313,6 +357,68 @@ TEST_F(CommSslTest, WebSocketUpgradeBarrierFlushesOverTls) {
     EXPECT_EQ(upgrade, 0u);
     EXPECT_NE(banner, std::string::npos);
     EXPECT_GT(banner, upgrade);
+
+    async_runtime_deinit(runtime);
+    SSL_free(client_ssl);
+    SSL_CTX_free(client_ctx);
+}
+
+TEST_F(CommSslTest, TlsTelnetAcceptsEncryptedLineInputWithoutServerNegotiation) {
+    BIO* server_io = nullptr;
+    BIO* client_io = nullptr;
+    ASSERT_EQ(BIO_new_bio_pair(&server_io, 0, &client_io, 0), 1);
+
+    const int slot = comm_abstract_add_bio(server_io, server_io, -1, C_SOCKET_READABLE | C_LINE_INPUT);
+    ASSERT_GE(slot, 0);
+
+    SSL_CTX* client_ctx = SSL_CTX_new(TLS_client_method());
+    ASSERT_NE(client_ctx, nullptr);
+    SSL_CTX_set_verify(client_ctx, SSL_VERIFY_NONE, nullptr);
+    SSL* client_ssl = SSL_new(client_ctx);
+    ASSERT_NE(client_ssl, nullptr);
+    SSL_set_connect_state(client_ssl);
+    SSL_set_bio(client_ssl, client_io, client_io);
+
+    inbound_collector_t collector;
+    ASSERT_TRUE(mudmux_register_hook(HOOK_MESSAGE_INBOUND, inbound_collector_t::hook));
+
+    comm_enable_tls_for_slot(slot);
+    comm_enable_telnet_for_slot(slot);
+
+    async_runtime_t* runtime = async_runtime_init(&collector);
+    ASSERT_NE(runtime, nullptr);
+    ASSERT_TRUE(pump_tls_handshake(runtime, slot, client_ssl));
+
+    comm_flush(runtime, slot);
+    std::array<char, 128> buffer{};
+    size_t bytes_read = 0;
+    const int read_result = SSL_read_ex(client_ssl, buffer.data(), buffer.size(), &bytes_read);
+    if (read_result != 1) {
+        const int error = SSL_get_error(client_ssl, read_result);
+        ASSERT_TRUE(error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE);
+    }
+    EXPECT_EQ(bytes_read, 0u);
+
+    const char telnet_and_line[] = {
+        static_cast<char>(TELNET_IAC), static_cast<char>(TELNET_WILL), static_cast<char>(TELNET_SGA),
+        static_cast<char>(TELNET_IAC), static_cast<char>(TELNET_DO), static_cast<char>(TELNET_SGA),
+        static_cast<char>(TELNET_IAC), static_cast<char>(TELNET_DONT), static_cast<char>(TELNET_ECHO),
+        static_cast<char>(TELNET_IAC), static_cast<char>(TELNET_WONT), static_cast<char>(TELNET_LINEMODE),
+        'a', 'l', 'i', 'c', 'e', '\r', '\n',
+    };
+    size_t sent = 0;
+    ASSERT_EQ(SSL_write_ex(client_ssl, telnet_and_line, sizeof(telnet_and_line), &sent), 1);
+    ASSERT_EQ(sent, sizeof(telnet_and_line));
+
+    for (int i = 0; i < 256 && collector.messages.empty(); ++i) {
+        comm_abstract_ptr comm(slot, comm_slots_mtx);
+        ASSERT_TRUE(comm);
+        ASSERT_TRUE(comm_refill_inbound_buffers(comm));
+        ASSERT_EQ(comm_process_input(runtime, comm, -1), COMM_PROCESS_OK);
+    }
+
+    ASSERT_FALSE(collector.messages.empty());
+    EXPECT_EQ(collector.messages.front(), "alice");
 
     async_runtime_deinit(runtime);
     SSL_free(client_ssl);

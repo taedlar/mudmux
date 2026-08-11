@@ -400,6 +400,7 @@ void comm_flush (async_runtime_t* runtime, int slot) {
         if (data_len > 0) {
             if (comm->ssl) {
                 size_t written = 0;
+                ERR_clear_error();
                 int ok = SSL_write_ex(comm->ssl, obb->buffer + obb->start, data_len, &written);
                 if (ok != 1) {
                     const int ssl_err = SSL_get_error(comm->ssl, ok);
@@ -515,6 +516,7 @@ void comm_flush (async_runtime_t* runtime, int slot) {
         if ((comm->flags & C_CLOSING) && !waiting_for_websocket_close) {
             SPDLOG_TRACE ("comm slot has C_CLOSING flag set, sending shutdown signal to peer");
             if (comm->ssl && (comm->flags & C_TLS_ESTABLISHED)) {
+                ERR_clear_error();
                 (void) SSL_shutdown(comm->ssl);
             } else {
                 BIO_shutdown_wr(comm->wbio); // shutdown write side of the socket and expect the peer to close the connection
@@ -649,6 +651,7 @@ bool comm_close (async_runtime_t* runtime, int slot) {
 
     if (comm->ssl && (comm->flags & C_TLS_ESTABLISHED)) {
         // Best-effort TLS close_notify before tearing down transport.
+        ERR_clear_error();
         const int shutdown_rc = SSL_shutdown(comm->ssl);
         if (shutdown_rc < 0) {
             const int ssl_err = SSL_get_error(comm->ssl, shutdown_rc);

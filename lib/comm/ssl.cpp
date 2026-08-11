@@ -211,6 +211,7 @@ int comm_tls_handshake_step (async_runtime_t* runtime, int slot) {
 		return 1;
 	}
 
+	ERR_clear_error();
 	const int ret = SSL_do_handshake(comm->ssl);
 	if (ret == 1) {
 		comm->flags |= C_TLS_ESTABLISHED;

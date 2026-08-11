@@ -24,6 +24,9 @@
 #include "mudmux/comm.h"
 
 static void _negotiate_telnet_line_input(comm_abstract_ptr& comm, bool enable) {
+    if (comm->ssl)
+        return;
+
     // RFC 1184: LINEMODE option negotiation
     if (enable) {
         // negotiate LINEMODE
@@ -185,6 +188,8 @@ bool comm_set_echo (int slot, bool echo) {
         break;
     default:
         if (comm->flags & C_ENABLE_TELNET) {
+            if (comm->ssl)
+                break;
             // - when we claim won't echo, the client is expected to echo locally (e.g., for line input)
             // - when we claim will echo, the client is expected to suppress local echo (e.g., for password input)
             if (echo && !(comm->flags & C_CLIENT_ECHO))
@@ -305,6 +310,8 @@ bool comm_set_echo (int slot, bool echo) {
         break;
     default:
         if (comm->flags & C_ENABLE_TELNET) {
+            if (comm->ssl)
+                break;
             // - when we claim won't echo, the client is expected to echo locally (e.g., for line input)
             // - when we claim will echo, the client is expected to suppress local echo (e.g., for password input)
             if (echo && !(comm->flags & C_CLIENT_ECHO))
