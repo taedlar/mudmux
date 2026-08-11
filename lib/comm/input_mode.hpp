@@ -22,7 +22,8 @@ bool comm_set_line_input (int slot, bool echo);
 bool comm_set_char_input (int slot);
 
 /**
- * @brief Set or negotiate client echo for the communication slot, without changing the input mode.
+ * @brief Set the desired client echo mode for the communication slot, without changing
+ *      the input mode. TELNET transports may negotiate protocol ECHO separately.
  * @param slot Communication slot to set echo mode. Supports special slots such as
  *      COMM_SLOT_CONSOLE for the process console stdin.
  * @param echo true to enable local echo, false to disable it.

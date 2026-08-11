@@ -321,6 +321,7 @@ RFC 854 permits either endpoint to initiate TELNET option negotiation (`IAC WILL
 For TLS + TELNET compatibility:
 - Treat TLS as the outer transport boundary: never consume or emit TELNET bytes outside TLS.
 - Prefer passive TELNET behavior on TLS slots. Parse client-initiated TELNET commands if they arrive inside TLS, but avoid proactively sending server-initiated TELNET negotiation unless the specific client path is known to handle it correctly.
+- Keep desired application echo (`C_CLIENT_ECHO`) separate from negotiated TELNET ECHO capability (`client_capabilities_s::telnet_echo`); TLS passive mode may change the desired echo state without emitting TELNET negotiation bytes.
 - Do not "fix" a TLS TELNET issue by moving TELNET parsing below TLS or by accepting plaintext after TLS has started; that masks a client layering bug and corrupts the transport contract.
 - When adding compatibility workarounds for particular TELNET clients, document whether the behavior is standards-required, standards-allowed, or a client-specific mitigation.
 

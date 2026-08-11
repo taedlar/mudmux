@@ -31,6 +31,7 @@ typedef struct comm_abstract_s {
         uint32_t telnet_ttype : 1; // client says WILL TELOPT_TTYPE (RFC 930)
         uint32_t telnet_tspeed : 1; // client says WILL TELOPT_TSPEED (RFC 1079)
         uint32_t telnet_new_environ : 1; // client says WILL TELOPT_NEW_ENVIRON (RFC 1572)
+        uint32_t telnet_echo : 1; // client says DO TELOPT_ECHO (RFC 857); server-side echo is negotiated
     } caps;
 } comm_abstract_t;
 

@@ -241,6 +241,14 @@ void comm_process_telnet_options (comm_abstract_ptr& comm, comm_telnet_negotiati
             // when enable telnet on the slot.
         }
     }
+    if (PLEASE_DO(negotiation, TELOPT_ECHO)) {
+        comm->caps.telnet_echo = 1;
+        SPDLOG_DEBUG("client capabilities updated: TELNET ECHO accepted for slot {}", comm.slot());
+    }
+    else if (PLEASE_DONT(negotiation, TELOPT_ECHO)) {
+        comm->caps.telnet_echo = 0;
+        SPDLOG_DEBUG("client capabilities updated: TELNET ECHO disabled for slot {}", comm.slot());
+    }
 }
 
 mudmux_dispatch_result_t comm_dispatch_telnet_subnegotiation(async_runtime_t* runtime, comm_abstract_ptr& comm, const comm_telnet_negotiation_t& telnet_neg) {

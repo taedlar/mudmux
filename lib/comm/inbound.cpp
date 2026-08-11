@@ -307,7 +307,7 @@ static void _resume_input_after_connect_hook(void* context, int slot) {
 
 #ifdef _WIN32
 static void _post_initial_socket_read_after_connect(async_runtime_t* runtime, int slot) {
-    if (!runtime || slot < 0)
+    if (!runtime || slot <= COMM_SLOT_CONSOLE)
         return;
 
     socket_fd_t fd{INVALID_SOCKET_FD};

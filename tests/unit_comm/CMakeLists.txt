@@ -18,4 +18,4 @@ target_link_libraries(unit_comm PRIVATE
     GTest::gtest_main
 )
 
-gtest_discover_tests(unit_comm)
+gtest_discover_tests(unit_comm DISCOVERY_TIMEOUT 30)

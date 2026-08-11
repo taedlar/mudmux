@@ -19,4 +19,4 @@ add_custom_command(TARGET unit_mudmux POST_BUILD
     COMMAND_EXPAND_LISTS
 )
 
-gtest_discover_tests(unit_mudmux)
+gtest_discover_tests(unit_mudmux DISCOVERY_TIMEOUT 30)
