@@ -25,9 +25,10 @@
 static void sigint_handler (int signal);
 static void process_command_line (int argc, char* argv[]);
 
+static std::shared_ptr<spdlog::logger> s_pre_callback_logger; // logger that existed before mudmux replaced the default with a callback sink
 static void my_logger_callback(void* ctx, int level, const char* file, int line, const char* func, const char* msg) {
-    auto logger = spdlog::default_logger_raw();
-    (void)ctx;
+    // ctx is the logger that existed before mudmux replaced the default with a callback sink.
+    auto* logger = static_cast<spdlog::logger*>(ctx);
     (void)func;
     if (logger)
         logger->log(static_cast<spdlog::level::level_enum>(level), "[{}:{}] {}", file, line, msg);
@@ -146,7 +147,10 @@ static int on_disconnect (void*, int slot, void*, size_t) {
 
 int main (int argc, char* argv[]) {
     std::signal(SIGINT, sigint_handler);
-    mudmux_register_logger_callback(my_logger_callback, nullptr); // register logger callback for spdlog
+    // Capture the current default logger before mudmux replaces it with a callback sink.
+    // Using default_logger_raw() in the callback would reenter the same sink and deadlock.
+    s_pre_callback_logger = spdlog::default_logger();
+    mudmux_register_logger_callback(my_logger_callback, s_pre_callback_logger.get());
     process_command_line (argc, argv); // calls mudmux_init() when returning
 
 #ifdef _WIN32
@@ -212,7 +216,10 @@ static void process_command_line (int argc, char* argv[]) {
     try {
         program.parse_args (argc, argv);
         spdlog::set_level(static_cast<spdlog::level::level_enum>(log_level));
-        mudmux_set_log_level(log_level); // set shared library log level to match main program
+        if (s_pre_callback_logger)
+            s_pre_callback_logger->set_level(static_cast<spdlog::level::level_enum>(log_level));
+        else
+            mudmux_set_log_level(log_level); // set shared library log level to match main program
         SPDLOG_DEBUG ("log level set to {}", spdlog::level::to_string_view(spdlog::get_level()));
     }
     catch (const std::runtime_error& err) {
