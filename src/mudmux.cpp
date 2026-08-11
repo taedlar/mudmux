@@ -20,6 +20,10 @@
 #include <yaml-cpp/yaml.h>
 #include <spdlog/sinks/callback_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
+#ifdef _WIN32
+#include <winsock2.h>
+#pragma comment(lib, "ws2_32.lib")
+#endif
 
 #include "execution.hpp"
 #include "async/async_event.h"
@@ -225,6 +229,7 @@ MUDMUX_EXPORT bool mudmux_init (const char* config_yaml) {
         SPDLOG_ERROR ("mudmux_init() called while already running");
         return false;
     }
+    bool init_success = true;
 #ifdef _WIN32
     WSADATA wsa_data;
     if (WSAStartup(MAKEWORD(2, 2), &wsa_data) != 0) {
@@ -241,7 +246,8 @@ MUDMUX_EXPORT bool mudmux_init (const char* config_yaml) {
     if (!timer_event_initialized) {
         if (!async_event_init(&timer_event, true, false)) {
             SPDLOG_ERROR("failed to initialize timer event");
-            return false;
+            init_success = false;
+            goto done;
         }
         timer_event_initialized = true;
     }
@@ -266,7 +272,8 @@ MUDMUX_EXPORT bool mudmux_init (const char* config_yaml) {
             const int thread_pool_size = transport["thread_pool"]["size"].as<int>();
             if (thread_pool_size < 1) {
                 SPDLOG_ERROR ("transport.thread_pool.size must be at least 1");
-                return false;
+                init_success = false;
+                goto done;
             }
             mudmux_workers_configure(thread_pool_size);
         }
@@ -274,7 +281,8 @@ MUDMUX_EXPORT bool mudmux_init (const char* config_yaml) {
             const int interval = transport["keep_alive_interval"].as<int>();
             if (interval < 1) {
                 SPDLOG_ERROR("transport.keep_alive_interval must be at least 1 second");
-                return false;
+                init_success = false;
+                goto done;
             }
             keep_alive_interval_seconds = interval;
         }
@@ -283,20 +291,26 @@ MUDMUX_EXPORT bool mudmux_init (const char* config_yaml) {
             server_private_key_path = transport["ssl"]["private_key"].as<std::string>();
             if (!comm_ssl_init(server_certificate_path, server_private_key_path)) {
                 SPDLOG_ERROR ("failed to initialize SSL with certificate {} and private key {}", server_certificate_path.string(), server_private_key_path.string());
-                return false;
+                init_success = false;
+                goto done;
             }
         }
         if (!mudmux_workers_start()) {
             SPDLOG_ERROR("failed to start thread pool with {} workers", mudmux_workers_configured_pool_size());
-            return false;
+            init_success = false;
+            goto done;
         }
         is_shutting_down.store(false);
     }
     catch (const YAML::Exception& e) {
         SPDLOG_ERROR ("configuration error: {}", e.what());
-        return false;
+        init_success = false;
+        goto done;
     }
-    return true;
+done:
+    if (!init_success)
+        mudmux_deinit();
+    return init_success;
 }
 
 MUDMUX_EXPORT void mudmux_deinit (void) {
