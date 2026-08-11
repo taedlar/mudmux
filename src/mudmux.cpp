@@ -3,6 +3,9 @@
 #endif
 
 #include "mudmux/mudmux.h"
+#include "mudmux/async.h"
+#include "mudmux/comm.h"
+#include "mudmux/execution.h"
 
 #include <atomic>
 #include <cstdarg>
@@ -15,8 +18,10 @@
 #include <thread>
 #include <vector>
 #include <yaml-cpp/yaml.h>
+#include <spdlog/sinks/callback_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 
+#include "execution.hpp"
 #include "async/async_event.h"
 #include "async/async_queue.h"
 #include "async/console_worker.h"
@@ -31,11 +36,6 @@
 #include "comm/ssl.hpp"
 #include "comm/telnet.hpp"
 #include "comm/websocket.hpp"
-#include "execution.hpp"
-#include "mudmux/async.h"
-#include "mudmux/comm.h"
-#include "mudmux/execution.h"
-#include "mudmux/hooks.h"
 
 extern "C" {
     mudmux_async_api_v1_t* mudmux_async_api_v1 {nullptr}; // global pointer to async API struct, initialized by mudmux_init()
@@ -47,7 +47,6 @@ static std::thread::id mud_logic_thread_id; // thread ID of the logic layer thre
 static std::atomic<bool> is_running{false};
 static std::atomic<bool> is_shutting_down{false};
 
-static bool spdlog_initialized{false};
 static bool enable_standard_input{false};
 static bool enable_console{false};
 static std::vector<std::string> accept_names; // array of names for BIO_set_accept_name()
@@ -318,6 +317,8 @@ MUDMUX_EXPORT void mudmux_deinit (void) {
 #ifdef _WIN32
     WSACleanup();
 #endif
+    spdlog::shutdown();
+    spdlog_initialized = false;
 }
 
 MUDMUX_EXPORT bool mudmux_register_event(async_event_t* event, mudmux_hook_func_t hook_func) {

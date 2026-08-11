@@ -9,8 +9,11 @@
 #include <future>
 #include <mutex>
 #include <stdexcept>
+#include <string>
 #include <thread>
 #include <vector>
+
+#include <spdlog/spdlog.h>
 
 #include "mudmux/mudmux.h"
 #include "mudmux/workers.h"
@@ -135,6 +138,55 @@ static void throw_from_detached_destroy(void*) {
 static int count_garbage_collection(void*, int, void*, size_t) {
     ++garbage_collection_hook_calls;
     return 0;
+}
+
+struct logger_callback_record_t {
+    void* context;
+    int level;
+    std::string file;
+    int line;
+    std::string function;
+    std::string message;
+};
+
+static std::mutex logger_callback_mutex;
+static std::vector<logger_callback_record_t> logger_callback_records;
+
+static void record_logger_callback(void* context, int level, const char* file, int line, const char* function, const char* message) {
+    std::lock_guard<std::mutex> lock(logger_callback_mutex);
+    logger_callback_records.push_back(logger_callback_record_t{
+        context,
+        level,
+        file ? file : "",
+        line,
+        function ? function : "",
+        message ? message : ""});
+}
+
+TEST(MudmuxTest, LoggerCallbackReceivesDefaultLoggerMessages) {
+    {
+        std::lock_guard<std::mutex> lock(logger_callback_mutex);
+        logger_callback_records.clear();
+    }
+
+    int logger_context = 0;
+    mudmux_register_logger_callback(record_logger_callback, &logger_context);
+    mudmux_set_log_level(spdlog::level::info);
+    SPDLOG_INFO("callback smoke {}", 17);
+
+    {
+        std::lock_guard<std::mutex> lock(logger_callback_mutex);
+        ASSERT_EQ(logger_callback_records.size(), 1u);
+        EXPECT_EQ(logger_callback_records[0].context, &logger_context);
+        EXPECT_EQ(logger_callback_records[0].level, spdlog::level::info);
+        EXPECT_NE(logger_callback_records[0].line, 0);
+        EXPECT_NE(logger_callback_records[0].file.find("test_mudmux.cpp"), std::string::npos);
+        EXPECT_NE(logger_callback_records[0].function.find("TestBody"), std::string::npos);
+        EXPECT_EQ(logger_callback_records[0].message, "callback smoke 17");
+    }
+
+    ASSERT_TRUE(mudmux_init(nullptr));
+    mudmux_deinit();
 }
 
 TEST(MudmuxTest, BasicInitialization) {

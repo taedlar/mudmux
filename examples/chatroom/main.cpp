@@ -25,6 +25,14 @@
 static void sigint_handler (int signal);
 static void process_command_line (int argc, char* argv[]);
 
+static void my_logger_callback(void* ctx, int level, const char* file, int line, const char* func, const char* msg) {
+    auto logger = spdlog::default_logger_raw();
+    (void)ctx;
+    (void)func;
+    if (logger)
+        logger->log(static_cast<spdlog::level::level_enum>(level), "[{}:{}] {}", file, line, msg);
+}
+
 enum class Transport {
     Plaintext,
     Telnet,
@@ -138,6 +146,7 @@ static int on_disconnect (void*, int slot, void*, size_t) {
 
 int main (int argc, char* argv[]) {
     std::signal(SIGINT, sigint_handler);
+    mudmux_register_logger_callback(my_logger_callback, nullptr); // register logger callback for spdlog
     process_command_line (argc, argv); // calls mudmux_init() when returning
 
 #ifdef _WIN32

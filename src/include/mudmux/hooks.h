@@ -48,6 +48,14 @@ MUDMUX_EXPORT bool mudmux_register_hook (enum mudmux_hook_type_t hook_type, mudm
  */
 MUDMUX_EXPORT bool mudmux_register_event(async_event_t* event, mudmux_hook_func_t hook_func);
 
+typedef void (*mudmux_logger_callback_t)(void* ctx, int level, const char* file, int line, const char* func, const char* msg);
+/**
+ * @brief Register a callback function for logging.
+ * @param callback Function pointer to the logger callback.
+ * @param ctx Context pointer to pass to the logger callback.
+ */
+MUDMUX_EXPORT void mudmux_register_logger_callback(mudmux_logger_callback_t callback, void* ctx);
+
 #ifdef __cplusplus
 }
 #endif

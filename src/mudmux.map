@@ -10,6 +10,7 @@ MUDMUX_0.1 {
         mudmux_init;
         mudmux_register_event;
         mudmux_register_hook;
+        mudmux_register_logger_callback;
         mudmux_run;
         mudmux_set_log_level;
         mudmux_shutdown;
