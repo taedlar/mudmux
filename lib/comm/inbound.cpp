@@ -314,8 +314,12 @@ static void _post_initial_socket_read_after_connect(async_runtime_t* runtime, in
     if (!comm_abstract_get_rbio_fd(slot, &fd) || fd == INVALID_SOCKET_FD)
         return;
 
-    if (async_runtime_post_read(runtime, fd, nullptr, 0) < 0)
-        SPDLOG_WARN("failed to post initial read for slot {} after connect hook", slot);
+    if (async_runtime_post_read(runtime, fd, nullptr, 0) < 0) {
+        SPDLOG_ERROR("failed to post initial read for slot {} after connect hook", slot);
+        async_runtime_remove(runtime, fd);
+        comm_abstract_remove(slot);
+        return;
+    }
 }
 #endif
 
