@@ -198,7 +198,8 @@ static int context_to_slot (void* context) {
 
 MUDMUX_EXPORT void mudmux_set_log_level (int level) {
     if (!spdlog_initialized) {
-        spdlog::set_default_logger(spdlog::stderr_color_mt("mudmux"));
+        if (!spdlog::default_logger())
+            spdlog::set_default_logger(spdlog::stderr_color_mt("mudmux"));
         spdlog_initialized = true;
     }
     spdlog::set_level(static_cast<spdlog::level::level_enum>(level));
@@ -317,6 +318,7 @@ MUDMUX_EXPORT void mudmux_deinit (void) {
 #ifdef _WIN32
     WSACleanup();
 #endif
+    // FIXME: we may need to call spdlog::drop() here if we link to spdlog shared library.
     spdlog::shutdown();
     spdlog_initialized = false;
 }

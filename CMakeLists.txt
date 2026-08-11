@@ -44,7 +44,6 @@ endif()
 if(WIN32)
     add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
 endif()
-add_compile_definitions(SPDLOG_COMPILED_LIB)
 add_compile_definitions($<$<CONFIG:Debug>:SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE>) # compile-time log level, default: >= SPDLOG_LEVEL_INFO
 
 # dependencies

@@ -7,12 +7,14 @@
 #include <filesystem>
 #include <fstream>
 #include <future>
+#include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
 
+#include <spdlog/sinks/null_sink.h>
 #include <spdlog/spdlog.h>
 
 #include "mudmux/mudmux.h"
@@ -187,6 +189,22 @@ TEST(MudmuxTest, LoggerCallbackReceivesDefaultLoggerMessages) {
 
     ASSERT_TRUE(mudmux_init(nullptr));
     mudmux_deinit();
+}
+
+TEST(MudmuxTest, SetLogLevelKeepsExistingDefaultLogger) {
+    ASSERT_TRUE(mudmux_init(nullptr));
+    mudmux_deinit();
+
+    auto sink = std::make_shared<spdlog::sinks::null_sink_mt>();
+    auto logger = std::make_shared<spdlog::logger>("host-default", sink);
+    spdlog::set_default_logger(logger);
+
+    mudmux_set_log_level(spdlog::level::debug);
+
+    EXPECT_EQ(spdlog::default_logger(), logger);
+    EXPECT_EQ(spdlog::get_level(), spdlog::level::debug);
+
+    spdlog::shutdown();
 }
 
 TEST(MudmuxTest, BasicInitialization) {
