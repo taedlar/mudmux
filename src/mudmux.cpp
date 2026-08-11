@@ -15,6 +15,7 @@
 #include <thread>
 #include <vector>
 #include <yaml-cpp/yaml.h>
+#include <spdlog/sinks/stdout_color_sinks.h>
 
 #include "async/async_event.h"
 #include "async/async_queue.h"
@@ -46,6 +47,7 @@ static std::thread::id mud_logic_thread_id; // thread ID of the logic layer thre
 static std::atomic<bool> is_running{false};
 static std::atomic<bool> is_shutting_down{false};
 
+static bool spdlog_initialized{false};
 static bool enable_standard_input{false};
 static bool enable_console{false};
 static std::vector<std::string> accept_names; // array of names for BIO_set_accept_name()
@@ -196,6 +198,10 @@ static int context_to_slot (void* context) {
 }
 
 MUDMUX_EXPORT void mudmux_set_log_level (int level) {
+    if (!spdlog_initialized) {
+        spdlog::set_default_logger(spdlog::stderr_color_mt("mudmux"));
+        spdlog_initialized = true;
+    }
     spdlog::set_level(static_cast<spdlog::level::level_enum>(level));
 }
 
@@ -212,6 +218,13 @@ MUDMUX_EXPORT bool mudmux_init (const char* config_yaml) {
         SPDLOG_ERROR ("mudmux_init() called while already running");
         return false;
     }
+#ifdef _WIN32
+    WSADATA wsa_data;
+    if (WSAStartup(MAKEWORD(2, 2), &wsa_data) != 0) {
+        SPDLOG_ERROR("WSAStartup failed");
+        return false;
+    }
+#endif
     mudmux_workers_configure(1);
     keep_alive_interval_seconds = 20;
     timer_event_msg.store(-1, std::memory_order_relaxed);
@@ -302,6 +315,9 @@ MUDMUX_EXPORT void mudmux_deinit (void) {
     memset(mudmux_async_api_v1, 0, sizeof(mudmux_async_api_v1_t));
     memset(mudmux_execution_api_v1, 0, sizeof(mudmux_execution_api_v1_t));
     comm_ssl_deinit();
+#ifdef _WIN32
+    WSACleanup();
+#endif
 }
 
 MUDMUX_EXPORT bool mudmux_register_event(async_event_t* event, mudmux_hook_func_t hook_func) {
