@@ -206,22 +206,6 @@ int comm_process_listener_event (async_runtime_t* runtime, comm_abstract_ptr& li
 	}
 	// we don't need to register write events; we will write when needed and handle EAGAIN/EWOULDBLOCK
 
-#ifdef _WIN32
-	// [IOCP] post an initial IOCP read for the accepted socket to trigger the first read event
-	socket_fd_t accepted_fd {INVALID_SOCKET_FD};
-	if (!comm_abstract_get_rbio_fd(accepted_slot, &accepted_fd)) {
-		SPDLOG_ERROR ("BIO_get_fd failed for accepted slot {}", accepted_slot);
-		comm_abstract_remove (accepted_slot);
-		return -1;
-	}
-	if (async_runtime_post_read (runtime, accepted_fd, nullptr, 0) < 0) {
-		SPDLOG_ERROR ("failed to post initial read for fd {}", accepted_fd);
-		async_runtime_remove (runtime, accepted_fd);
-		comm_abstract_remove (accepted_slot);
-		return -1;
-	}
-#endif
-
 	comm_invoke_connect (runtime, accepted_slot, listener.slot());
 
 	return accepted_slot;

@@ -13,6 +13,11 @@
 #include "mudmux/comm.h"
 
 static void _start_telnet_negotiation(comm_abstract_ptr& comm) {
+    if (comm->ssl) {
+        SPDLOG_DEBUG("TLS TELNET slot {}; waiting for client-initiated negotiation", comm.slot());
+        return;
+    }
+
     // Suppress obsolete Go Ahead (SGA), we are capable of full-duplex
     comm_telnet_send_will(comm, TELOPT_SGA);
     comm_telnet_send_do(comm, TELOPT_SGA);
@@ -236,10 +241,20 @@ void comm_process_telnet_options (comm_abstract_ptr& comm, comm_telnet_negotiati
             // when enable telnet on the slot.
         }
     }
+    if (PLEASE_DO(negotiation, TELOPT_ECHO)) {
+        comm->caps.telnet_echo = 1;
+        SPDLOG_DEBUG("client capabilities updated: TELNET ECHO accepted for slot {}", comm.slot());
+    }
+    else if (PLEASE_DONT(negotiation, TELOPT_ECHO)) {
+        comm->caps.telnet_echo = 0;
+        SPDLOG_DEBUG("client capabilities updated: TELNET ECHO disabled for slot {}", comm.slot());
+    }
 }
 
 mudmux_dispatch_result_t comm_dispatch_telnet_subnegotiation(async_runtime_t* runtime, comm_abstract_ptr& comm, const comm_telnet_negotiation_t& telnet_neg) {
     if (telnet_neg.sb_len == 0)
+        return MUDMUX_DISPATCH_OK;
+    if (!mudmux_get_registered_hook(HOOK_TELNET_SUBNEG))
         return MUDMUX_DISPATCH_OK;
 
     const int option = static_cast<unsigned char>(telnet_neg.subopt_buf[0]);

@@ -24,6 +24,9 @@
 #include "mudmux/comm.h"
 
 static void _negotiate_telnet_line_input(comm_abstract_ptr& comm, bool enable) {
+    if (comm->ssl)
+        return;
+
     // RFC 1184: LINEMODE option negotiation
     if (enable) {
         // negotiate LINEMODE
@@ -41,10 +44,9 @@ static void _negotiate_telnet_line_input(comm_abstract_ptr& comm, bool enable) {
             // client supports LINEMODE, request character mode by turn off local editing
             char lm_mode_request[2] = { 1, 0 }; // LINEMODE MODE: disable local edit mode
             comm_telnet_send_subnegotiation(comm, TELOPT_LINEMODE, lm_mode_request, sizeof(lm_mode_request));
-            comm_telnet_send_will(comm, TELOPT_ECHO); // take control of local echo for character mode
         }
-        else {
-            // fallback to Kludge character mode (using TELOPT_ECHO).
+        if (!comm->caps.telnet_echo) {
+            comm_telnet_send_will(comm, TELOPT_ECHO); // take control of local echo for character mode
         }
     }
 }
@@ -185,11 +187,13 @@ bool comm_set_echo (int slot, bool echo) {
         break;
     default:
         if (comm->flags & C_ENABLE_TELNET) {
-            // - when we claim won't echo, the client is expected to echo locally (e.g., for line input)
-            // - when we claim will echo, the client is expected to suppress local echo (e.g., for password input)
-            if (echo && !(comm->flags & C_CLIENT_ECHO))
+            if (comm->ssl)
+                break;
+            // C_CLIENT_ECHO records the desired local/client echo mode.
+            // caps.telnet_echo records whether the client accepted our TELNET ECHO negotiation.
+            if (echo && comm->caps.telnet_echo)
                 comm_telnet_send_wont(comm, TELOPT_ECHO);
-            else if (!echo && (comm->flags & C_CLIENT_ECHO))
+            else if (!echo && !comm->caps.telnet_echo)
                 comm_telnet_send_will(comm, TELOPT_ECHO);
         }
         break;
@@ -305,11 +309,13 @@ bool comm_set_echo (int slot, bool echo) {
         break;
     default:
         if (comm->flags & C_ENABLE_TELNET) {
-            // - when we claim won't echo, the client is expected to echo locally (e.g., for line input)
-            // - when we claim will echo, the client is expected to suppress local echo (e.g., for password input)
-            if (echo && !(comm->flags & C_CLIENT_ECHO))
+            if (comm->ssl)
+                break;
+            // C_CLIENT_ECHO records the desired local/client echo mode.
+            // caps.telnet_echo records whether the client accepted our TELNET ECHO negotiation.
+            if (echo && comm->caps.telnet_echo)
                 comm_telnet_send_wont(comm, TELOPT_ECHO);
-            else if (!echo && (comm->flags & C_CLIENT_ECHO))
+            else if (!echo && !comm->caps.telnet_echo)
                 comm_telnet_send_will(comm, TELOPT_ECHO);
         }
         break;

@@ -13,6 +13,7 @@
 #include <vector>
 #include <wchar.h>
 #include <openssl/bio.h>
+#include <openssl/err.h>
 
 #include "abstract.hpp"
 #include "execution.hpp"
@@ -33,6 +34,19 @@ typedef SSIZE_T ssize_t;
 #define INBOUND_BAND_SUBNEG     1
 
 std::atomic<bool> has_deferred_input{false};
+
+static void log_openssl_error_queue(const char* where, int slot) {
+    unsigned long err = 0;
+    bool any = false;
+    while ((err = ERR_get_error()) != 0) {
+        any = true;
+        char err_buf[256] {};
+        ERR_error_string_n(err, err_buf, sizeof(err_buf));
+        SPDLOG_ERROR("{} for slot {}: {}", where, slot, err_buf);
+    }
+    if (!any)
+        SPDLOG_ERROR("{} for slot {} with no OpenSSL error detail", where, slot);
+}
 
 struct inbound_buffer_s {
     inbound_buffer_t* next{nullptr};
@@ -241,6 +255,8 @@ static void _resume_input_after_transport_ready_hook(void*, int slot) {
     has_deferred_input.store(true, std::memory_order_release);
 }
 
+static void _finish_connect_configuration(async_runtime_t* runtime, int slot);
+
 void comm_invoke_transport_ready(async_runtime_t* runtime, int slot) {
     if (!runtime || slot < 0)
         return;
@@ -284,9 +300,34 @@ static void _resume_input_after_connect_hook(void* context, int slot) {
     // lets the latter occupy the same slot's normal serialized lifecycle lane.
     if (!(comm->flags & C_CLOSING))
         comm->flags &= ~C_AWAITING_HOOK;
-    comm_invoke_transport_ready(runtime, slot);
+    _finish_connect_configuration(runtime, slot);
     comm->flags |= C_DEFERRED_INBOUND;
     has_deferred_input.store(true, std::memory_order_release);
+}
+
+#ifdef _WIN32
+static void _post_initial_socket_read_after_connect(async_runtime_t* runtime, int slot) {
+    if (!runtime || slot <= COMM_SLOT_CONSOLE)
+        return;
+
+    socket_fd_t fd{INVALID_SOCKET_FD};
+    if (!comm_abstract_get_rbio_fd(slot, &fd) || fd == INVALID_SOCKET_FD)
+        return;
+
+    if (async_runtime_post_read(runtime, fd, nullptr, 0) < 0) {
+        SPDLOG_ERROR("failed to post initial read for slot {} after connect hook", slot);
+        async_runtime_remove(runtime, fd);
+        comm_abstract_remove(slot);
+        return;
+    }
+}
+#endif
+
+static void _finish_connect_configuration(async_runtime_t* runtime, int slot) {
+    comm_invoke_transport_ready(runtime, slot);
+#ifdef _WIN32
+    _post_initial_socket_read_after_connect(runtime, slot);
+#endif
 }
 
 int comm_invoke_connect (async_runtime_t* runtime, int slot, int entry_slot) {
@@ -328,7 +369,7 @@ int comm_invoke_connect (async_runtime_t* runtime, int slot, int entry_slot) {
             comm->flags &= ~C_AWAITING_HOOK;
     }
     if (!await_connect_hook)
-        comm_invoke_transport_ready(runtime, slot);
+        _finish_connect_configuration(runtime, slot);
     return static_cast<int>(result);
 }
 
@@ -560,6 +601,7 @@ bool comm_refill_inbound_buffers (comm_abstract_ptr& comm, const char* src, size
         std::array<char, 4096> plain_data{};
         for (;;) {
             size_t out_len = 0;
+            ERR_clear_error();
             int ret = SSL_read_ex(comm->ssl, plain_data.data(), plain_data.size(), &out_len);
             if (ret == 1) {
                 if (out_len == 0)
@@ -582,6 +624,7 @@ bool comm_refill_inbound_buffers (comm_abstract_ptr& comm, const char* src, size
                 return false;
 
             SPDLOG_ERROR("SSL_read_ex failed for slot {} (ssl_err={})", comm.slot(), ssl_err);
+            log_openssl_error_queue("SSL_read_ex", comm.slot());
             return false;
         }
     }

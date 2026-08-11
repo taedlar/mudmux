@@ -314,6 +314,17 @@ int comm_accept(async_runtime_t* runtime, const char* accept_name);
 int comm_process_listener_event(async_runtime_t* runtime, int listener_slot, socket_fd_t event_fd);
 ```
 
+### TELNET Client Compatibility Notes
+
+RFC 854 permits either endpoint to initiate TELNET option negotiation (`IAC WILL/DO/...`), so server-initiated negotiation is valid for plain TELNET. In practice, some clients have broken protocol stacking when TELNET is combined with TLS. For example, `ncat --ssl --telnet` may answer server-initiated TELNET negotiation as raw socket bytes instead of TLS records, which OpenSSL then reports as record-layer errors such as "packet length too long".
+
+For TLS + TELNET compatibility:
+- Treat TLS as the outer transport boundary: never consume or emit TELNET bytes outside TLS.
+- Prefer passive TELNET behavior on TLS slots. Parse client-initiated TELNET commands if they arrive inside TLS, but avoid proactively sending server-initiated TELNET negotiation unless the specific client path is known to handle it correctly.
+- Keep desired application echo (`C_CLIENT_ECHO`) separate from negotiated TELNET ECHO capability (`client_capabilities_s::telnet_echo`); TLS passive mode may change the desired echo state without emitting TELNET negotiation bytes.
+- Do not "fix" a TLS TELNET issue by moving TELNET parsing below TLS or by accepting plaintext after TLS has started; that masks a client layering bug and corrupts the transport contract.
+- When adding compatibility workarounds for particular TELNET clients, document whether the behavior is standards-required, standards-allowed, or a client-specific mitigation.
+
 ## Data Flow Diagram
 
 ```

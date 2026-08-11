@@ -12,4 +12,4 @@ target_link_libraries(unit_async PRIVATE
 )
 target_compile_definitions(unit_async PRIVATE MUDMUX_STATIC_DEFINE)
 
-gtest_discover_tests(unit_async)
+gtest_discover_tests(unit_async DISCOVERY_TIMEOUT 30)
