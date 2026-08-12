@@ -339,7 +339,8 @@ int comm_invoke_connect (async_runtime_t* runtime, int slot, int entry_slot) {
     } else {
         comm_abstract_ptr comm(entry_slot, comm_slots_mtx);
         if (comm && (comm->flags & C_SOCKET_LISTENING)) {
-            entry_name = BIO_get_accept_name(comm->rbio);
+            entry_name = "tcp://";
+            entry_name += BIO_get_accept_name(comm->rbio);
             entry_name += ":";
             entry_name += BIO_get_accept_port(comm->rbio);
         }

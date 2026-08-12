@@ -7,7 +7,7 @@
 /**
  * @brief Add a listening transport for accepting incoming connections.
  * @param runtime The async_runtime_t instance.
- * @param accept_name The accept name in host:port to be passed to BIO_set_accept_name() (e.g., "*:4000")
+ * @param accept_name A TCP listener URI in tcp://host:port form (for example, tcp://localhost:4000).
  * @return 0 on success, -1 on error
  */
 int comm_accept (async_runtime_t* runtime, const char* accept_name);
