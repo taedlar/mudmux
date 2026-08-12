@@ -276,6 +276,9 @@ MUDMUX_EXPORT bool mudmux_init (const char* config_yaml) {
                 goto done;
             }
             mudmux_workers_configure(thread_pool_size);
+            if (thread_pool_size > 1) {
+                SPDLOG_INFO ("----- thread pool size set to {} (processing user requests concurrently)", thread_pool_size);
+            }
         }
         if (transport["keep_alive_interval"].IsDefined()) {
             const int interval = transport["keep_alive_interval"].as<int>();
@@ -453,9 +456,6 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
         "thread pool execution configured: size={} mode={}",
         mudmux_workers_pool_size(),
         mudmux_execution_mode_name());
-    if (mudmux_execution_mode() == MUDMUX_DETERMINISM_RELAXED) {
-        SPDLOG_WARN ("relaxed mode enabled: inbound data will be processed concurrently");
-    }
 
     // Timer lifecycle notifications are synchronous: logic sees the running
     // state before I/O dispatch begins, regardless of execution-pool mode.
@@ -624,7 +624,7 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
 
 MUDMUX_EXPORT void mudmux_shutdown (void) {
     if (is_running.load()) {
-        SPDLOG_INFO ("mudmux_shutdown() called");
+        SPDLOG_DEBUG ("mudmux_shutdown() called");
         is_shutting_down.store(true);
         async_runtime_wakeup(async_get_current_runtime());
     }

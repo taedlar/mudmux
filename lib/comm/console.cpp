@@ -215,7 +215,7 @@ int comm_process_console_input (async_runtime_t *runtime, bool allow_reconnect) 
         console_disconnect_pending.store(false, std::memory_order_release);
         if (!allow_reconnect) {
             // stdin is either a pipe or a file, so EOF means the end of input; shut down the server
-            SPDLOG_INFO ("EOF detected on STDIN, shutting down server");
+            SPDLOG_DEBUG ("EOF detected on STDIN, shutting down server");
             mudmux_shutdown();
         }
     }
