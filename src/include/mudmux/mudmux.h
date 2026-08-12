@@ -15,7 +15,7 @@ extern "C" {
 /**
  * @brief Set mudmux internal logger level.
  *
- * @param level Integer value from spdlog::level::level_enum.
+ * @param level mudmux integer severity value.
  */
 MUDMUX_EXPORT void mudmux_set_log_level (int level);
 
