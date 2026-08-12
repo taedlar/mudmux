@@ -3,8 +3,17 @@
 #endif
 
 #include <gtest/gtest.h>
+#include <filesystem>
 #include <limits>
 #include <openssl/bio.h>
+#ifndef _WIN32
+#include <cerrno>
+#include <cstring>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/un.h>
+#include <unistd.h>
+#endif
 
 #include "comm/accept.hpp"
 #include "comm/abstract.hpp"
@@ -88,6 +97,53 @@ TEST(CommTest, AcceptRequiresTcpScheme) {
 
     async_runtime_deinit(runtime);
 }
+
+#ifndef _WIN32
+TEST(CommTest, AcceptsUnixDomainSocketAndRemovesItsPath) {
+    const std::string path = (std::filesystem::current_path() /
+        ("mudmux-unit-" + std::to_string(getpid()) + ".sock")).string();
+    unlink(path.c_str());
+
+    const int probe_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    ASSERT_NE(probe_fd, -1);
+    sockaddr_un probe_address{};
+    probe_address.sun_family = AF_UNIX;
+    std::strncpy(probe_address.sun_path, path.c_str(), sizeof(probe_address.sun_path) - 1);
+    if (bind(probe_fd, reinterpret_cast<const sockaddr*>(&probe_address),
+             offsetof(sockaddr_un, sun_path) + std::strlen(probe_address.sun_path) + 1) != 0) {
+        const int bind_errno = errno;
+        close(probe_fd);
+        if (bind_errno == EPERM)
+            GTEST_SKIP() << "Unix-domain socket bind is blocked by the test sandbox";
+        FAIL() << "Unix-domain socket bind probe failed: " << std::strerror(bind_errno);
+    }
+    close(probe_fd);
+    unlink(path.c_str());
+
+    async_runtime_t* runtime = async_runtime_init(nullptr);
+    ASSERT_NE(runtime, nullptr);
+    ASSERT_EQ(comm_accept(runtime, ("unix://" + path).c_str()), 0);
+
+    struct stat status {};
+    EXPECT_EQ(stat(path.c_str(), &status), 0);
+    EXPECT_TRUE(S_ISSOCK(status.st_mode));
+
+    int listener_slot = -1;
+    for (int slot = 0; slot < comm_max_slot(); ++slot) {
+        comm_abstract_t* comm = comm_abstract_get(slot);
+        if (comm && (comm->flags & C_SOCKET_LISTENING))
+            listener_slot = slot;
+    }
+    ASSERT_NE(listener_slot, -1);
+    {
+        comm_abstract_ptr listener(listener_slot, comm_slots_mtx);
+        EXPECT_EQ(comm_listener_name(listener), "unix://" + path);
+    }
+    EXPECT_EQ(comm_abstract_remove(listener_slot), 0);
+    EXPECT_NE(stat(path.c_str(), &status), 0);
+    async_runtime_deinit(runtime);
+}
+#endif
 
 #ifdef _WIN32
 TEST(CommTest, SocketFdToBioFdRejectsValuesAboveIntMax) {

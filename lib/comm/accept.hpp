@@ -1,16 +1,21 @@
 #ifndef COMM_ACCEPT_HPP
 #define COMM_ACCEPT_HPP
 
+#include <string>
+
 #include "abstract.hpp"
 #include "async/async_runtime.h"
 
 /**
  * @brief Add a listening transport for accepting incoming connections.
  * @param runtime The async_runtime_t instance.
- * @param accept_name A TCP listener URI in tcp://host:port form (for example, tcp://localhost:4000).
+ * @param accept_name A listener URI: tcp://host:port or unix:///path/to/socket.
  * @return 0 on success, -1 on error
  */
 int comm_accept (async_runtime_t* runtime, const char* accept_name);
+
+/** Return the URI form for a listening comm slot. */
+std::string comm_listener_name(comm_abstract_ptr& listener);
 
 /**
  * @brief Process a listener event for a comm slot.

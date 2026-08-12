@@ -18,7 +18,8 @@ accepted TCP sockets.
 `slot` identifies the new destination. The console is always
 `COMM_SLOT_CONSOLE` (0); accepted sockets use an available nonzero slot.
 
-`entry_name` points to the configured transport-entry name, such as `tcp://*:4000`.
+`entry_name` points to the configured transport-entry name, such as
+`tcp://*:4000` or `unix:///var/run/chatroom.sock`.
 It is null-terminated for convenience, but `len` is its length excluding that
 terminator.
 

@@ -184,9 +184,12 @@ transport:
   console: true
   accept:
     - "tcp://*:4000"
+    - "unix:///var/run/chatroom.sock"
 ```
 
-The `tcp://` scheme is required; TCP is currently the supported listener type.
+Supported listener schemes are `tcp://host:port` and, on POSIX platforms,
+`unix:///path/to/socket`. Unix-domain socket paths must not already exist;
+mudmux removes its socket path when the listener is shut down.
 
 Each listen address occupies a unique slot for inbound message routing.
 

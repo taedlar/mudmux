@@ -5,8 +5,16 @@
 #include "accept.hpp"
 
 #include <cstdint>
+#include <cerrno>
+#include <cstddef>
+#include <cstring>
 #include <string_view>
 #include <openssl/bio.h>
+#ifndef _WIN32
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
+#endif
 
 #include "abstract.hpp"
 #include "inbound.hpp"
@@ -35,6 +43,113 @@ static bool set_socket_nonblocking (socket_fd_t fd) {
 	return true;
 }
 
+std::string comm_listener_name(comm_abstract_ptr& listener) {
+	if (!listener || !listener.has_rbio())
+		return {};
+
+#ifndef _WIN32
+	socket_fd_t fd {INVALID_SOCKET_FD};
+	sockaddr_un unix_address{};
+	socklen_t unix_address_length = sizeof(unix_address);
+	if (comm_bio_get_socket_fd(listener->rbio, &fd) &&
+		getsockname(fd, reinterpret_cast<sockaddr*>(&unix_address), &unix_address_length) == 0 &&
+		unix_address.sun_family == AF_UNIX) {
+		return std::string{"unix://"} + unix_address.sun_path;
+	}
+#endif
+
+	const char* host = BIO_get_accept_name(listener->rbio);
+	const char* port = BIO_get_accept_port(listener->rbio);
+	if (!host || !port)
+		return {};
+	return std::string{"tcp://"} + host + ":" + port;
+}
+
+#ifndef _WIN32
+static bool listener_is_unix_socket (BIO* listener_bio) {
+	socket_fd_t fd {INVALID_SOCKET_FD};
+	if (!comm_bio_get_socket_fd(listener_bio, &fd))
+		return false;
+
+	sockaddr_storage address{};
+	socklen_t address_length = sizeof(address);
+	return getsockname(fd, reinterpret_cast<sockaddr*>(&address), &address_length) == 0 &&
+		address.ss_family == AF_UNIX;
+}
+
+static int accept_unix_listener (BIO* listener_bio) {
+	socket_fd_t listener_fd {INVALID_SOCKET_FD};
+	if (!comm_bio_get_socket_fd(listener_bio, &listener_fd))
+		return -1;
+
+	const socket_fd_t accepted_fd = accept(listener_fd, nullptr, nullptr);
+	if (accepted_fd == INVALID_SOCKET_FD) {
+		if (errno != EAGAIN && errno != EWOULDBLOCK)
+			SPDLOG_WARN("accept failed for Unix-domain listener: {}", strerror(errno));
+		return -1;
+	}
+	if (!set_socket_nonblocking(accepted_fd)) {
+		close(accepted_fd);
+		return -1;
+	}
+
+	BIO* accepted_bio = BIO_new_socket(accepted_fd, BIO_CLOSE);
+	if (!accepted_bio) {
+		close(accepted_fd);
+		return -1;
+	}
+	const int accepted_slot = comm_abstract_add_bio(accepted_bio, accepted_bio, -1, C_SOCKET_READABLE);
+	if (accepted_slot < 0)
+		BIO_free(accepted_bio);
+	return accepted_slot;
+}
+
+static int create_unix_listener (async_runtime_t* runtime, const char* accept_name, const char* path) {
+	if (std::strlen(path) >= sizeof(sockaddr_un::sun_path)) {
+		SPDLOG_ERROR("Unix-domain socket path is too long for {}", accept_name);
+		return -1;
+	}
+
+	const socket_fd_t listener_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+	if (listener_fd == INVALID_SOCKET_FD) {
+		SPDLOG_ERROR("failed to create Unix-domain listener {}: {}", accept_name, strerror(errno));
+		return -1;
+	}
+	if (!set_socket_nonblocking(listener_fd)) {
+		close(listener_fd);
+		return -1;
+	}
+
+	sockaddr_un address{};
+	address.sun_family = AF_UNIX;
+	std::strncpy(address.sun_path, path, sizeof(address.sun_path) - 1);
+	const socklen_t address_length = static_cast<socklen_t>(offsetof(sockaddr_un, sun_path) + std::strlen(address.sun_path) + 1);
+	if (bind(listener_fd, reinterpret_cast<const sockaddr*>(&address), address_length) != 0 || listen(listener_fd, SOMAXCONN) != 0) {
+		SPDLOG_ERROR("failed to bind Unix-domain listener {}: {}", accept_name, strerror(errno));
+		close(listener_fd);
+		return -1;
+	}
+
+	BIO* listener_bio = BIO_new_socket(listener_fd, BIO_CLOSE);
+	if (!listener_bio) {
+		close(listener_fd);
+		return -1;
+	}
+	const int slot = comm_abstract_add_bio(listener_bio, nullptr, -1, C_SOCKET_LISTENING);
+	if (slot < 0) {
+		BIO_free(listener_bio);
+		return -1;
+	}
+	if (async_runtime_add(runtime, listener_fd, EVENT_READ, slot_to_context(slot)) < 0) {
+		SPDLOG_ERROR("failed to register Unix-domain listener {}", accept_name);
+		comm_abstract_remove(slot);
+		return -1;
+	}
+	SPDLOG_INFO("listening transport {} registered (slot={}, fd={})", accept_name, slot, listener_fd);
+	return 0;
+}
+#endif
+
 int comm_accept (async_runtime_t* runtime, const char* accept_name) {
 	if (!runtime || !accept_name || !*accept_name) {
 		SPDLOG_ERROR ("comm_accept() called with invalid runtime or accept_name");
@@ -42,10 +157,24 @@ int comm_accept (async_runtime_t* runtime, const char* accept_name) {
 	}
 
 	constexpr std::string_view tcp_scheme{"tcp://"};
+	constexpr std::string_view unix_scheme{"unix://"};
 	const std::string_view configured_name{accept_name};
+	if (configured_name.compare(0, unix_scheme.size(), unix_scheme) == 0) {
+		const char* path = accept_name + unix_scheme.size();
+		if (!*path) {
+			SPDLOG_ERROR("invalid Unix-domain accept transport {}; expected unix:///path/to/socket", accept_name);
+			return -1;
+		}
+#ifdef _WIN32
+		SPDLOG_ERROR("Unix-domain accept transport {} is not supported on Windows", accept_name);
+		return -1;
+#else
+		return create_unix_listener(runtime, accept_name, path);
+#endif
+	}
 	if (configured_name.compare(0, tcp_scheme.size(), tcp_scheme) != 0 ||
 		configured_name.size() == tcp_scheme.size()) {
-		SPDLOG_ERROR ("invalid accept transport {}; expected tcp://host:port", accept_name);
+		SPDLOG_ERROR ("invalid accept transport {}; expected tcp://host:port or unix:///path/to/socket", accept_name);
 		return -1;
 	}
 	const char* endpoint = accept_name + tcp_scheme.size();
@@ -113,6 +242,11 @@ static int _accept_new_comm (comm_abstract_ptr& listener_comm, socket_fd_t event
 	if (!listener_comm.has_rbio() || !(listener_comm->flags & C_SOCKET_LISTENING)) {
 		return -1; // invalid listener port
 	}
+
+#ifndef _WIN32
+	if (listener_is_unix_socket(listener_bio))
+		return accept_unix_listener(listener_bio);
+#endif
 
 #ifdef _WIN32
     // Windows IOCP delivers the accepted fd directly in the event (proactive).
