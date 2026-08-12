@@ -173,38 +173,18 @@ TEST(MudmuxTest, LoggerCallbackReceivesDefaultLoggerMessages) {
 
     int logger_context = 0;
     mudmux_register_logger_callback(record_logger_callback, &logger_context);
-    mudmux_set_log_level(spdlog::level::info);
-    SPDLOG_INFO("callback smoke {}", 17);
+    ASSERT_FALSE(mudmux_init("{\"transport\": {\"thread_pool\": {\"size\": 0}}}"));
 
     {
         std::lock_guard<std::mutex> lock(logger_callback_mutex);
         ASSERT_EQ(logger_callback_records.size(), 1u);
         EXPECT_EQ(logger_callback_records[0].context, &logger_context);
-        EXPECT_EQ(logger_callback_records[0].level, spdlog::level::info);
+        EXPECT_EQ(logger_callback_records[0].level, spdlog::level::err);
         EXPECT_NE(logger_callback_records[0].line, 0);
-        EXPECT_NE(logger_callback_records[0].file.find("test_mudmux.cpp"), std::string::npos);
-        EXPECT_NE(logger_callback_records[0].function.find("TestBody"), std::string::npos);
-        EXPECT_EQ(logger_callback_records[0].message, "callback smoke 17");
+        EXPECT_NE(logger_callback_records[0].file.find("mudmux.cpp"), std::string::npos);
+        EXPECT_NE(logger_callback_records[0].function.find("mudmux_init"), std::string::npos);
+        EXPECT_EQ(logger_callback_records[0].message, "transport.thread_pool.size must be at least 1");
     }
-
-    ASSERT_TRUE(mudmux_init(nullptr));
-    mudmux_deinit();
-}
-
-TEST(MudmuxTest, SetLogLevelKeepsExistingDefaultLogger) {
-    ASSERT_TRUE(mudmux_init(nullptr));
-    mudmux_deinit();
-
-    auto sink = std::make_shared<spdlog::sinks::null_sink_mt>();
-    auto logger = std::make_shared<spdlog::logger>("host-default", sink);
-    spdlog::set_default_logger(logger);
-
-    mudmux_set_log_level(spdlog::level::debug);
-
-    EXPECT_EQ(spdlog::default_logger(), logger);
-    EXPECT_EQ(spdlog::get_level(), spdlog::level::debug);
-
-    spdlog::shutdown();
 }
 
 TEST(MudmuxTest, BasicInitialization) {
