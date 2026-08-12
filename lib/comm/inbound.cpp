@@ -16,6 +16,7 @@
 #include <openssl/err.h>
 
 #include "abstract.hpp"
+#include "accept.hpp"
 #include "execution.hpp"
 #include "hooks.hpp"
 #include "input_mode.hpp"
@@ -338,12 +339,8 @@ int comm_invoke_connect (async_runtime_t* runtime, int slot, int entry_slot) {
         entry_name = "-";
     } else {
         comm_abstract_ptr comm(entry_slot, comm_slots_mtx);
-        if (comm && (comm->flags & C_SOCKET_LISTENING)) {
-            entry_name = "tcp://";
-            entry_name += BIO_get_accept_name(comm->rbio);
-            entry_name += ":";
-            entry_name += BIO_get_accept_port(comm->rbio);
-        }
+        if (comm && (comm->flags & C_SOCKET_LISTENING))
+            entry_name = comm_listener_name(comm);
     }
     if (entry_name.empty())
         entry_name = "unknown";

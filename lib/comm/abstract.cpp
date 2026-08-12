@@ -9,9 +9,11 @@
 #include <vector>
 #include <type_traits>
 #include <string.h>
-#ifdef HAVE_UNISTD_H
+#ifndef _WIN32
 #include <unistd.h>
-#elif defined(_WIN32)
+#include <sys/socket.h>
+#include <sys/un.h>
+#else
 #include <io.h>
 #define STDIN_FILENO    _fileno(stdin)
 #define STDOUT_FILENO   _fileno(stdout)
@@ -171,6 +173,19 @@ int comm_abstract_remove (int slot) {
     comm_abstract_t* raw = comm.raw();
     if (!raw)
         return 0;
+#ifndef _WIN32
+    if ((raw->flags & C_SOCKET_LISTENING) && raw->rbio) {
+        socket_fd_t fd {INVALID_SOCKET_FD};
+        sockaddr_un address{};
+        socklen_t address_length = sizeof(address);
+        // A filesystem Unix-domain listener owns its pathname until it closes.
+        if (comm_bio_get_socket_fd(raw->rbio, &fd) &&
+            getsockname(fd, reinterpret_cast<sockaddr*>(&address), &address_length) == 0 &&
+            address.sun_family == AF_UNIX && address.sun_path[0] != '\0') {
+            unlink(address.sun_path);
+        }
+    }
+#endif
     if (raw->rbio)
         BIO_free_all (raw->rbio);
     if (raw->wbio && raw->wbio != raw->rbio)
