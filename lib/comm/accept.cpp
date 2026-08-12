@@ -5,6 +5,7 @@
 #include "accept.hpp"
 
 #include <cstdint>
+#include <string_view>
 #include <openssl/bio.h>
 
 #include "abstract.hpp"
@@ -40,13 +41,22 @@ int comm_accept (async_runtime_t* runtime, const char* accept_name) {
 		return -1;
 	}
 
+	constexpr std::string_view tcp_scheme{"tcp://"};
+	const std::string_view configured_name{accept_name};
+	if (configured_name.compare(0, tcp_scheme.size(), tcp_scheme) != 0 ||
+		configured_name.size() == tcp_scheme.size()) {
+		SPDLOG_ERROR ("invalid accept transport {}; expected tcp://host:port", accept_name);
+		return -1;
+	}
+	const char* endpoint = accept_name + tcp_scheme.size();
+
 	BIO* listener_bio = BIO_new(BIO_s_accept());
 	if (!listener_bio) {
 		SPDLOG_ERROR ("BIO_new(BIO_s_accept) failed for {}", accept_name);
 		return -1;
 	}
 
-	if (BIO_set_accept_name(listener_bio, accept_name) <= 0) {
+	if (BIO_set_accept_name(listener_bio, endpoint) <= 0) {
 		SPDLOG_ERROR ("BIO_set_accept_name failed for {}", accept_name);
 		BIO_free(listener_bio);
 		return -1;

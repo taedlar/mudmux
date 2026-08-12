@@ -6,6 +6,7 @@
 #include <limits>
 #include <openssl/bio.h>
 
+#include "comm/accept.hpp"
 #include "comm/abstract.hpp"
 #include "mudmux/comm.h"
 
@@ -76,6 +77,16 @@ TEST(CommTest, SocketFdToBioFdRoundTripsIntMax) {
     int round_trip_bio_fd = -1;
     ASSERT_TRUE(comm_socket_fd_to_bio_fd(socket_fd, &round_trip_bio_fd));
     EXPECT_EQ(round_trip_bio_fd, source_bio_fd);
+}
+
+TEST(CommTest, AcceptRequiresTcpScheme) {
+    async_runtime_t* runtime = async_runtime_init(nullptr);
+    ASSERT_NE(runtime, nullptr);
+
+    EXPECT_EQ(comm_accept(runtime, "*:4000"), -1);
+    EXPECT_EQ(comm_accept(runtime, "udp://*:4000"), -1);
+
+    async_runtime_deinit(runtime);
 }
 
 #ifdef _WIN32

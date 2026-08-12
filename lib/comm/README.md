@@ -183,8 +183,10 @@ Network listen addresses are configured in `mud.conf`:
 transport:
   console: true
   accept:
-    - "*:4000"
+    - "tcp://*:4000"
 ```
+
+The `tcp://` scheme is required; TCP is currently the supported listener type.
 
 Each listen address occupies a unique slot for inbound message routing.
 
