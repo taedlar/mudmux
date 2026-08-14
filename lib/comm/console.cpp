@@ -68,7 +68,7 @@ bool comm_init_console (async_runtime_t *runtime) {
     }
 
     // invoke connect hook for console user
-    if (console_type == CONSOLE_TYPE_REAL) {
+    if (console_type == CONSOLE_TYPE_TTY) {
         SPDLOG_INFO ("----- connecting console user");
     }
     comm_invoke_connect (runtime, COMM_SLOT_CONSOLE, COMM_SLOT_CONSOLE);
@@ -147,7 +147,7 @@ int comm_process_console_input (async_runtime_t *runtime, bool allow_reconnect) 
         std::lock_guard<std::mutex> lock(console_mutex);
         if (console_ctx && console_worker_take_eof (console_ctx)) {
             auto console_type = async_runtime_get_console_type (runtime);
-            if (console_type == CONSOLE_TYPE_REAL) {
+            if (console_type == CONSOLE_TYPE_TTY) {
 #ifdef _WIN32
                 comm_set_char_input (COMM_SLOT_CONSOLE); /* interrupt line mode console read */
 #endif
@@ -159,7 +159,7 @@ int comm_process_console_input (async_runtime_t *runtime, bool allow_reconnect) 
             console_worker_destroy (console_ctx);
             console_ctx = nullptr;
             comm_set_line_input (COMM_SLOT_CONSOLE, true); /* re-enable echo to avoid leaving console in a bad state */
-            if (console_type == CONSOLE_TYPE_REAL && allow_reconnect) {
+            if (console_type == CONSOLE_TYPE_TTY && allow_reconnect) {
                 // re-arm console worker for next console input (e.g., after Ctrl+D EOF)
                 SPDLOG_INFO ("----- console user disconnected (press ENTER to reconnect)");
                 console_ctx = console_worker_init (runtime, console_queue, CONSOLE_COMPLETION_KEY);
