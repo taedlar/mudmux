@@ -133,6 +133,7 @@ static bool mudmux_is_running(void) {
 static void init_execution_api(void) {
     static mudmux_execution_api_v1_t execution_api;
     execution_api.is_running = mudmux_is_running;
+    execution_api.slot_is_busy = mudmux_execution_slot_busy;
     mudmux_execution_api_v1 = &execution_api;
 }
 

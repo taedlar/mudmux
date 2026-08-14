@@ -19,10 +19,12 @@ typedef struct mudmux_execution_api_s {
      * independent of the worker-pool lifecycle.
      */
     bool (*is_running)(void);
+    bool (*slot_is_busy)(int slot);
 } mudmux_execution_api_v1_t;
 
 #if !defined(MUDMUX_STATIC_DEFINE) && !defined(mudmux_EXPORTS)
 #define mudmux_is_running mudmux_execution_api_v1->is_running
+#define mudmux_execution_slot_busy mudmux_execution_api_v1->slot_is_busy
 #endif
 
 MUDMUX_EXPORT extern mudmux_execution_api_v1_t* mudmux_execution_api_v1;
