@@ -7,8 +7,6 @@
  * - POSIX: Uses read() on STDIN_FILENO with termios canonical mode
  *
  * Worker posts completions to async_runtime, main thread dequeues from async_queue.
- *
- * Implementation: docs/history/agent-reports/async-phase2-console-worker-2026-01-20.md
  */
 
 #ifndef CONSOLE_WORKER_H
@@ -93,9 +91,17 @@ void console_worker_set_eof (console_worker_context_t* ctx);
 bool console_worker_take_eof (console_worker_context_t* ctx);
 
 /**
- * Get console type string (for logging)
+ * Convert console type to a URI string.
+ *
+ * Compared to socket, a console is a local resource, so we use the "console:" scheme.
+ * The URI is used in HOOK_CONNECT to identify the console type.
+ * We can expect very-low latency on console input and output, so we can use simple flow control
+ * without worrying about network congestion or packet loss.
+ *
+ * NOTE: A socket has EOF detection, no random access, no seek, and certain latency is expected.
+ *
  * @param type Console type
- * @returns Human-readable string
+ * @returns Human-readable URI string
  */
 const char* console_type_str (console_type_t type);
 

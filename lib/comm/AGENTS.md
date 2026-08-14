@@ -482,7 +482,7 @@ telnet localhost 4000
 [console.cpp]     "console user disconnected"
 [file_input.cpp]  "file input reader thread started for slot X"
 [file_input.cpp]  "file EOF detected for slot X"
-[accept.cpp]      "listening transport *:XXXX registered (slot=X)"
+[accept.cpp]      "listening transport {URI} registered (slot={SLOT}, fd={FD})"
 [inbound.cpp]     "invoking hook MESSAGE_INBOUND for slot X"
 [outbound.cpp]    "Exceeded maximum outbound buffers per slot"
 [outbound.cpp]    "BIO_write failed during flush"

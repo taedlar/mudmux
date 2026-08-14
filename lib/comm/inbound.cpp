@@ -24,6 +24,7 @@
 #include "ssl.hpp"
 #include "telnet.hpp"
 #include "websocket.hpp"
+#include "async/console_worker.h"
 #include "mudmux/comm.h"
 #include "mudmux/hooks.h"
 
@@ -336,14 +337,15 @@ int comm_invoke_connect (async_runtime_t* runtime, int slot, int entry_slot) {
         return -1;
     std::string entry_name;
     if (entry_slot == COMM_SLOT_CONSOLE) {
-        entry_name = "-";
+        auto console_type = async_runtime_get_console_type (runtime);
+        entry_name = console_type_str(console_type);
     } else {
         comm_abstract_ptr comm(entry_slot, comm_slots_mtx);
         if (comm && (comm->flags & C_SOCKET_LISTENING))
             entry_name = comm_listener_name(comm);
     }
-    if (entry_name.empty())
-        entry_name = "unknown";
+    if (entry_name.empty()) // not an accepted connection (e.g. we are the client connecting to a remote server)
+        entry_name = "x-unknown:" + std::to_string(entry_slot);
     assert(!entry_name.empty());
     const bool await_connect_hook = mudmux_execution_should_dispatch_async(HOOK_CONNECT);
     if (await_connect_hook) {

@@ -86,7 +86,7 @@ static bool parse_transport (const std::string& name, Transport& transport) {
 static int on_connect (void*, int slot, void* data, size_t len) {
     std::string entry_name{static_cast<const char*>(data), len};
     SPDLOG_INFO ("New connection on slot {} from entry '{}'", slot, entry_name);
-    if (entry_name != "-") {
+    if (entry_name != "console:tty") {
         if (!configure_transport()) {
             SPDLOG_ERROR ("failed to enable selected transport on slot {}", slot);
             return -1;

@@ -104,16 +104,13 @@ void console_worker_set_eof(console_worker_context_t* ctx) {
     async_runtime_post_completion(ctx->runtime, ctx->completion_key, 0);
 }
 
-/**
- * Convert console type to string
- */
 extern "C" const char* console_type_str(console_type_t type) {
     switch (type) {
-        case CONSOLE_TYPE_NONE: return "NONE";
-        case CONSOLE_TYPE_REAL: return "REAL";
-        case CONSOLE_TYPE_PIPE: return "PIPE";
-        case CONSOLE_TYPE_FILE: return "FILE";
-        default: return "UNKNOWN";
+        case CONSOLE_TYPE_NONE: return "console:none"; // deliberately no console
+        case CONSOLE_TYPE_TTY: return "console:tty"; // Windows console or POSIX TTY, isatty(STDIN_FILENO) returns true
+        case CONSOLE_TYPE_PIPE: return "console:pipe"; // No random access, no EOF detection, no seek (FILE_TYPE_PIPE on Windows)
+        case CONSOLE_TYPE_FILE: return "console:file"; // Has EOF detection, random access, and seek (FILE_TYPE_DISK on Windows)
+        default: return "console:unknown-type";
     }
 }
 
@@ -130,7 +127,7 @@ extern "C" console_type_t console_detect_type(void) {
     DWORD mode;
     if (GetConsoleMode(hStdin, &mode)) {
         /* Real Windows console */
-        return CONSOLE_TYPE_REAL;
+        return CONSOLE_TYPE_TTY;
     }
 
     /* Not a console - check if pipe or file */
@@ -146,7 +143,7 @@ extern "C" console_type_t console_detect_type(void) {
     /* POSIX: use isatty */
     if (isatty(STDIN_FILENO)) {
         SPDLOG_DEBUG ("stdin is a TTY, assuming real console");
-        return CONSOLE_TYPE_REAL;
+        return CONSOLE_TYPE_TTY;
     }
 
     /* Check if pipe or file via stat */
@@ -205,7 +202,7 @@ static void console_worker_proc_win32(console_worker_context_t* cctx) {
             /* stdin is signaled - data available, read it synchronously */
             BOOL result;
             DWORD err {ERROR_SUCCESS};
-            if (console_type == CONSOLE_TYPE_REAL) {
+            if (console_type == CONSOLE_TYPE_TTY) {
                 /* Real console: ReadConsoleW (Unicode).
                  * dwCtrlWakeupMask is only honored by ReadConsoleW, not ReadConsoleA.
                  * Bit 27 (ESC = 0x1B) lets ESCAPE unblock ReadConsole in cooked mode.
