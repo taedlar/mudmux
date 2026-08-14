@@ -1,7 +1,7 @@
 # CMakeLists.txt
 cmake_minimum_required(VERSION 3.28)
 
-set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake")
+set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -18,7 +18,7 @@ project(mudmux
     LANGUAGES CXX
 )
 set(MUDMUX_MAIN_PROJECT OFF)
-if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
+if(CMAKE_CURRENT_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
   set(MUDMUX_MAIN_PROJECT ON)
 endif()
 
@@ -69,7 +69,7 @@ endif()
 
 # configure source files
 # ======================
-configure_file(${CMAKE_SOURCE_DIR}/config.h.in ${CMAKE_BINARY_DIR}/config.h)
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/config.h.in ${CMAKE_BINARY_DIR}/config.h)
 include_directories(${CMAKE_BINARY_DIR})
 add_compile_definitions(HAVE_CONFIG_H)
 

@@ -2,6 +2,7 @@ MUDMUX_0.1 {
     global:
         mudmux_async_api_v1;
         mudmux_comm_api_v1;
+        mudmux_execution_api_v1;
         mudmux_deinit;
         mudmux_enable_console;
         mudmux_enable_standard_input;
