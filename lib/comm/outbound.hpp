@@ -37,6 +37,9 @@ void comm_flush_all (async_runtime_t* runtime);
  */
 bool comm_close(async_runtime_t* runtime, int slot);
 
+/** Complete a console close after its input worker has already observed EOF. */
+bool comm_close_after_console_eof(async_runtime_t* runtime, int slot);
+
 int comm_invoke_disconnect (async_runtime_t* runtime, int slot);
 
 #endif // COMM_OUTBOUND_HPP

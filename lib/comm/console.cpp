@@ -207,8 +207,16 @@ int comm_process_console_input (async_runtime_t *runtime, bool allow_reconnect) 
         }
 
         if (comm) {
-            if (!(comm->flags & C_CLOSING))
-                comm_invoke_disconnect (runtime, COMM_SLOT_CONSOLE); // invoke disconnect hook for console user
+            if (!(comm->flags & C_CLOSING) || (comm->flags & C_DISCONNECT_PENDING))
+                (void)comm_close_after_console_eof(runtime, COMM_SLOT_CONSOLE);
+
+            // In relaxed mode comm_close() queues the terminal callback.
+            // Keep the slot alive until its worker completion runs; otherwise
+            // the generation guard drops the disconnect hook.
+            if ((comm->flags & (C_AWAITING_HOOK | C_DISCONNECT_PENDING)) ||
+                mudmux_execution_slot_busy(COMM_SLOT_CONSOLE)) {
+                return 0;
+            }
             comm_abstract_remove (COMM_SLOT_CONSOLE); // remove console from comm_abstract
         }
         async_queue_clear (console_queue); // clear any pending lines in the queue

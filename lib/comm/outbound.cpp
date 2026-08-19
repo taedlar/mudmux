@@ -553,7 +553,7 @@ static void _disconnect_hook_complete(void*, int slot) {
         comm->flags &= ~C_AWAITING_HOOK;
 }
 
-bool comm_close (async_runtime_t* runtime, int slot) {
+static bool comm_close_impl(async_runtime_t* runtime, int slot, bool signal_console_eof) {
     comm_abstract_ptr comm(slot, comm_slots_mtx);
     if (!comm)
         return true; // already removed
@@ -585,13 +585,16 @@ bool comm_close (async_runtime_t* runtime, int slot) {
         }
         if (dispatch_result != MUDMUX_DISPATCH_OK) {
             comm->flags &= ~C_AWAITING_HOOK;
-        } else if (mudmux_execution_should_dispatch_async(HOOK_DISCONNECT)) {
+        }
+
+        comm->flags &= ~C_ENABLE_PROMPT; // disable prompt to avoid corrupted L7 shutdown sequence
+
+        if (dispatch_result == MUDMUX_DISPATCH_OK &&
+            mudmux_execution_should_dispatch_async(HOOK_DISCONNECT)) {
             // Do not remove/reuse the slot while the disconnect callback is
             // executing on a worker.  Its completion wakes the event loop.
             return false;
         }
-
-        comm->flags &= ~C_ENABLE_PROMPT; // disable prompt to avoid corrupted L7 shutdown sequence
     }
 
     if (comm->flags & C_AWAITING_HOOK)
@@ -613,8 +616,10 @@ bool comm_close (async_runtime_t* runtime, int slot) {
 
         // Standard/interactive console mode: signal worker EOF and let
         // comm_process_console_input perform final disconnect + shutdown decision.
-        comm_signal_console_eof(runtime);
-        SPDLOG_TRACE("signaling EOF to console worker");
+        if (signal_console_eof) {
+            comm_signal_console_eof(runtime);
+            SPDLOG_TRACE("signaling EOF to console worker");
+        }
         return false;
     }
 
@@ -667,6 +672,14 @@ bool comm_close (async_runtime_t* runtime, int slot) {
 
     comm_abstract_remove(slot);
     return true;
+}
+
+bool comm_close(async_runtime_t* runtime, int slot) {
+    return comm_close_impl(runtime, slot, true);
+}
+
+bool comm_close_after_console_eof(async_runtime_t* runtime, int slot) {
+    return comm_close_impl(runtime, slot, false);
 }
 
 int comm_invoke_disconnect (async_runtime_t* runtime, int slot) {

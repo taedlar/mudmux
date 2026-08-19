@@ -59,10 +59,12 @@ is retained.
 
 Calling `mudmux_shutdown()` also dispatches this callback for every still-live
 user slot before final teardown (listeners and slots already closing are
-excluded). After those callbacks return, mudmux makes one best-effort outbound
-flush before removing the remaining slots. A disconnect hook may therefore
-queue final output during server shutdown, but must not rely on delivery: the
-peer, transport, or non-blocking write may already be unavailable.
+excluded). In relaxed mode, mudmux waits for any queued terminal callback
+before removing its slot. After those callbacks return, mudmux makes one
+best-effort outbound flush before removing the remaining slots. A disconnect
+hook may therefore queue final output during server shutdown, but must not rely
+on delivery: the peer, transport, or non-blocking write may already be
+unavailable.
 
 If no outbound hook is registered, `comm_add_message()` falls back to
 `comm_buffered_write()`. If `HOOK_MESSAGE_OUTBOUND` is registered, this keeps
