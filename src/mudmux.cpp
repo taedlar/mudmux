@@ -613,6 +613,24 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
     mudmux_invoke_registered_hook(
         HOOK_TIMER, async_runtime_get_context(runtime), -1, nullptr, 0, false);
 
+    // The shutdown flag stops I/O dispatch before connected transports reach
+    // their normal comm_close() path.  Notify each still-live user while its
+    // slot and the runtime remain available; listeners are not user sessions,
+    // and closing slots have already dispatched this lifecycle hook.
+    if (is_shutting_down.load()) {
+        for (int slot = comm_max_slot() - 1; slot >= 0; --slot) {
+            comm_abstract_ptr comm(slot, comm_slots_mtx);
+            if (comm && !(comm->flags & (C_SOCKET_LISTENING | C_CLOSING)))
+                comm_invoke_disconnect(runtime, slot);
+        }
+
+        // A disconnect hook may queue a final message.  The event loop is no
+        // longer running, but the transports are still valid here, so make a
+        // best-effort attempt to send that output before teardown removes
+        // their slots.
+        comm_flush_all(runtime);
+    }
+
     // cleanup communications and teardown subsystems
     comm_shutdown_async_file_input();
     comm_shutdown_console (runtime);
