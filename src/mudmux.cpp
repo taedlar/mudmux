@@ -614,14 +614,42 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
         HOOK_TIMER, async_runtime_get_context(runtime), -1, nullptr, 0, false);
 
     // The shutdown flag stops I/O dispatch before connected transports reach
-    // their normal comm_close() path.  Notify each still-live user while its
-    // slot and the runtime remain available; listeners are not user sessions,
-    // and closing slots have already dispatched this lifecycle hook.
+    // their normal comm_close() path.  Start close processing while the slots
+    // and runtime are still available.  This retains the terminal disconnect
+    // transition behind any in-flight relaxed-mode callback.
     if (is_shutting_down.load()) {
         for (int slot = comm_max_slot() - 1; slot >= 0; --slot) {
             comm_abstract_ptr comm(slot, comm_slots_mtx);
-            if (comm && !(comm->flags & (C_SOCKET_LISTENING | C_CLOSING)))
-                comm_invoke_disconnect(runtime, slot);
+            if (comm && !(comm->flags & C_SOCKET_LISTENING))
+                (void)comm_close(runtime, slot);
+        }
+
+        // A relaxed-mode disconnect callback can be queued behind another
+        // same-slot hook.  Wait for that terminal callback to complete before
+        // final removal so its generation check cannot discard it.
+        bool disconnects_pending = true;
+        while (disconnects_pending) {
+            disconnects_pending = false;
+            for (int slot = comm_max_slot() - 1; slot >= 0; --slot) {
+                comm_abstract_ptr comm(slot, comm_slots_mtx);
+                if (!comm || (comm->flags & C_SOCKET_LISTENING))
+                    continue;
+
+                if ((comm->flags & C_DISCONNECT_PENDING) &&
+                    !mudmux_execution_slot_busy(slot)) {
+                    (void)comm_close(runtime, slot);
+                }
+
+                if ((comm->flags & (C_AWAITING_HOOK | C_DISCONNECT_PENDING)) ||
+                    mudmux_execution_slot_busy(slot)) {
+                    disconnects_pending = true;
+                }
+            }
+            if (disconnects_pending &&
+                async_runtime_wait(runtime, events, sizeof(events) / sizeof(events[0]), nullptr) < 0) {
+                SPDLOG_WARN("async_runtime_wait failed while waiting for disconnect hooks during shutdown");
+                break;
+            }
         }
 
         // A disconnect hook may queue a final message.  The event loop is no

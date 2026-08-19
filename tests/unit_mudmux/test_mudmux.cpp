@@ -553,7 +553,8 @@ TEST(MudmuxTest, EventLoopRunWithConsoleEnabled) {
 
 TEST(MudmuxTest, ShutdownDispatchesDisconnectForConnectedConsole) {
     shutdown_disconnect_hook_calls.store(0);
-    ASSERT_TRUE(mudmux_init("{\"transport\": {\"console\": true}}"));
+    ASSERT_TRUE(mudmux_init(
+        "{\"transport\": {\"console\": true, \"thread_pool\": {\"size\": 2}}}"));
     ASSERT_TRUE(mudmux_register_hook(HOOK_DISCONNECT, count_shutdown_disconnect));
 
     std::thread server_thread([]() {
