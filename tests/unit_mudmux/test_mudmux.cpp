@@ -83,6 +83,13 @@ static int resignal_auto_reset_event(void*, int, void*, size_t) {
 
 static std::atomic<int> garbage_collection_hook_calls{0};
 
+static std::atomic<int> shutdown_disconnect_hook_calls{0};
+
+static int count_shutdown_disconnect(void*, int, void*, size_t) {
+    ++shutdown_disconnect_hook_calls;
+    return 0;
+}
+
 struct detached_closure_context_t {
     std::atomic<int> work_calls{0};
     std::atomic<int> completion_calls{0};
@@ -542,6 +549,23 @@ TEST(MudmuxTest, EventLoopRunWithConsoleEnabled) {
     server_thread.join();
 
     ASSERT_NO_FATAL_FAILURE(mudmux_deinit());
+}
+
+TEST(MudmuxTest, ShutdownDispatchesDisconnectForConnectedConsole) {
+    shutdown_disconnect_hook_calls.store(0);
+    ASSERT_TRUE(mudmux_init("{\"transport\": {\"console\": true}}"));
+    ASSERT_TRUE(mudmux_register_hook(HOOK_DISCONNECT, count_shutdown_disconnect));
+
+    std::thread server_thread([]() {
+        EXPECT_EQ(mudmux_run(nullptr), EXIT_SUCCESS);
+    });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    mudmux_shutdown();
+    server_thread.join();
+
+    EXPECT_EQ(shutdown_disconnect_hook_calls.load(), 1);
+    mudmux_deinit();
 }
 
 TEST(MudmuxTest, FileInputQuitShutsDownServer) {
