@@ -40,6 +40,8 @@ FetchContent_Declare(
     yaml-cpp
     GIT_REPOSITORY https://github.com/jbeder/yaml-cpp.git
     GIT_TAG fb9107556b1e28028091f39d5d7d0c9c8758cfbd
+    FIND_PACKAGE_ARGS
+        NAMES yaml-cpp
 )
 set(YAML_CPP_BUILD_CONTRIB OFF CACHE BOOL "" FORCE)
 set(YAML_CPP_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
