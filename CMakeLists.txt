@@ -24,6 +24,8 @@ endif()
 
 include(CTest) # optionally enable testing with -DBUILD_TESTING=ON
 include(CMakeDependentOption)
+include(CMakePackageConfigHelpers)
+include(GNUInstallDirs)
 include(utils)
 
 # options
@@ -60,7 +62,10 @@ find_boost(1.70 COMPONENTS json)
 find_boost_headers(boost/json.hpp)
 find_package(OpenSSL COMPONENTS SSL Crypto REQUIRED)
 include(fetch-settings) # pulls in FetchContent and declares dependencies
-FetchContent_MakeAvailable(argparse spdlog yaml-cpp)
+FetchContent_MakeAvailable(spdlog yaml-cpp)
+if(MUDMUX_BUILD_EXAMPLES)
+    FetchContent_MakeAvailable(argparse)
+endif()
 
 # patches for dependencies
 if (MSVC AND TARGET yaml-cpp)
@@ -83,6 +88,36 @@ add_subdirectory(lib/comm)
 add_subdirectory(src)
 add_subdirectory(examples/chatroom)
 
+# install and package configuration
+# =================================
+set(MUDMUX_CMAKE_INSTALL_DIR "${CMAKE_INSTALL_LIBDIR}/cmake/mudmux")
+
+configure_package_config_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/mudmuxConfig.cmake.in
+    ${CMAKE_CURRENT_BINARY_DIR}/mudmuxConfig.cmake
+    INSTALL_DESTINATION ${MUDMUX_CMAKE_INSTALL_DIR}
+)
+write_basic_package_version_file(
+    ${CMAKE_CURRENT_BINARY_DIR}/mudmuxConfigVersion.cmake
+    VERSION ${PROJECT_VERSION}
+    COMPATIBILITY SameMajorVersion
+)
+
+install(TARGETS mudmux mudmux_headers
+    EXPORT mudmuxTargets
+    FILE_SET HEADERS DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    FILE_SET generated_headers DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/mudmux
+)
+install(EXPORT mudmuxTargets
+    FILE mudmuxTargets.cmake
+    NAMESPACE mudmux::
+    DESTINATION ${MUDMUX_CMAKE_INSTALL_DIR}
+)
+install(FILES
+    ${CMAKE_CURRENT_BINARY_DIR}/mudmuxConfig.cmake
+    ${CMAKE_CURRENT_BINARY_DIR}/mudmuxConfigVersion.cmake
+    DESTINATION ${MUDMUX_CMAKE_INSTALL_DIR}
+)
 # add tests
 if (MUDMUX_BUILD_TESTS)
     FetchContent_MakeAvailable(GTest) # always fetch GoogleTest (as recommended by Google)

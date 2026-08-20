@@ -30,6 +30,8 @@ FetchContent_Declare(
     argparse
     GIT_REPOSITORY https://github.com/p-ranav/argparse.git
     GIT_TAG v3.2
+    FIND_PACKAGE_ARGS
+        NAMES argparse
 )
 
 # FIXME: Promote this to a proper release tag once the issues of VS2019 builds 
