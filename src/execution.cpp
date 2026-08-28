@@ -507,7 +507,7 @@ bool mudmux_workers_is_worker_thread() { return is_execution_worker_thread; }
 
 static void run_event_task(execution_state_t::event_task_t task) {
     worker_thread_scope_t worker_scope;
-    (void)mudmux_invoke_hook_function(task.hook_func, task.ctx, task.msg, nullptr, 0, true);
+    (void)mudmux_invoke_hook(task.hook_func, task.ctx, task.msg, nullptr, 0, true);
 
     execution_state_t::event_task_t next{};
     bool run_next = false;
@@ -532,7 +532,7 @@ bool mudmux_execution_dispatch_event(mudmux_hook_func_t hook_func, void* ctx, in
     if (!hook_func || !execution_state.running.load())
         return false;
     if (execution_state.determinism_mode == MUDMUX_DETERMINISM_STRICT) {
-        (void)mudmux_invoke_hook_function(hook_func, ctx, msg, nullptr, 0, true);
+        (void)mudmux_invoke_hook(hook_func, ctx, msg, nullptr, 0, true);
         return true;
     }
     {

@@ -350,6 +350,7 @@ MUDMUX_EXPORT void mudmux_deinit (void) {
         spdlog::set_default_logger(std::make_shared<spdlog::logger>("mudmux", std::move(sink)));
     }
     spdlog_initialized = false;
+    mudmux_reset_registered_hooks();
 }
 
 MUDMUX_EXPORT bool mudmux_register_event(async_event_t* event, mudmux_hook_func_t hook_func) {
