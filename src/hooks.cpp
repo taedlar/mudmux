@@ -27,22 +27,7 @@ mudmux_hook_func_t mudmux_get_registered_hook(enum mudmux_hook_type_t hook_type)
     return hook_type > 0 && hook_type < MAX_HOOK_TYPE ? all_hooks[hook_type] : nullptr;
 }
 
-int mudmux_invoke_registered_hook(enum mudmux_hook_type_t hook_type, void* ctx, int msg, void* data, size_t size,
-                                  bool flush_after, int current_slot_) {
-    if (hook_type <= 0 || hook_type >= MAX_HOOK_TYPE) {
-        SPDLOG_ERROR ("invalid hook type for registered-hook dispatch");
-        return -1;
-    }
-
-    mudmux_hook_func_t hook_func = all_hooks[hook_type];
-    if (!hook_func)
-        return 0;
-
-    comm_hook_type_scope_t hook_type_scope(hook_type);
-    return mudmux_invoke_hook_function(hook_func, ctx, msg, data, size, flush_after, current_slot_);
-}
-
-int mudmux_invoke_hook_function(mudmux_hook_func_t hook_func, void* ctx, int msg, void* data, size_t size,
+int mudmux_invoke_hook(mudmux_hook_func_t hook_func, void* ctx, int msg, void* data, size_t size,
                                 bool flush_after, int current_slot_) {
     int ret = 0;
     comm_current_slot_scope_t current_slot_scope(current_slot_);
@@ -57,6 +42,27 @@ int mudmux_invoke_hook_function(mudmux_hook_func_t hook_func, void* ctx, int msg
     if (flush_after)
         comm_flush_all(async_get_current_runtime());
     return ret;
+}
+
+int mudmux_invoke_registered_hook(enum mudmux_hook_type_t hook_type, void* ctx, int msg, void* data, size_t size,
+                                  bool flush_after, int current_slot_) {
+    if (hook_type <= 0 || hook_type >= MAX_HOOK_TYPE) {
+        SPDLOG_ERROR ("invalid hook type for registered-hook dispatch");
+        return -1;
+    }
+
+    mudmux_hook_func_t hook_func = all_hooks[hook_type];
+    if (!hook_func)
+        return 0;
+
+    comm_hook_type_scope_t hook_type_scope(hook_type);
+    return mudmux_invoke_hook(hook_func, ctx, msg, data, size, flush_after, current_slot_);
+}
+
+void mudmux_reset_registered_hooks() {
+    for (int i = 0; i < MAX_HOOK_TYPE; ++i) {
+        all_hooks[i] = nullptr;
+    }
 }
 
 MUDMUX_EXPORT bool mudmux_register_hook (enum mudmux_hook_type_t hook_type, mudmux_hook_func_t hook_func) {
