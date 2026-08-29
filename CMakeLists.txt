@@ -17,10 +17,6 @@ project(mudmux
     HOMEPAGE_URL "https://github.com/taedlar/mudmux"
     LANGUAGES CXX
 )
-set(MUDMUX_MAIN_PROJECT OFF)
-if(CMAKE_CURRENT_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
-  set(MUDMUX_MAIN_PROJECT ON)
-endif()
 
 include(CTest) # optionally enable testing with -DBUILD_TESTING=ON
 include(CMakeDependentOption)
@@ -31,10 +27,10 @@ include(utils)
 # options
 cmake_dependent_option(MUDMUX_BUILD_TESTS
   "Enable mudmux tests" ON
-  "BUILD_TESTING;MUDMUX_MAIN_PROJECT" OFF)
+  "BUILD_TESTING;mudmux_IS_TOP_LEVEL" OFF)
 cmake_dependent_option(MUDMUX_BUILD_EXAMPLES
   "Enable mudmux examples" ON
-  "MUDMUX_MAIN_PROJECT" OFF)
+  "mudmux_IS_TOP_LEVEL" OFF)
 
 # compiler settings
 if(MSVC)
