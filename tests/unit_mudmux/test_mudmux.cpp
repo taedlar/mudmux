@@ -250,6 +250,15 @@ TEST(MudmuxTest, InitializationWithThreadPoolSize) {
     EXPECT_EQ(mudmux_workers_pool_size(), 0);
 }
 
+TEST(MudmuxTest, PseudoHookTypesAreNotRegisterable) {
+    ASSERT_TRUE(mudmux_init(nullptr));
+    EXPECT_TRUE(mudmux_register_hook(HOOK_GARBAGE_COLLECTION, count_garbage_collection));
+    EXPECT_FALSE(mudmux_register_hook(MAX_PUBLIC_HOOKS, count_garbage_collection));
+    EXPECT_FALSE(mudmux_register_hook(HOOK_RESUME, count_garbage_collection));
+    EXPECT_FALSE(mudmux_register_hook(HOOK_COMPLETION, count_garbage_collection));
+    ASSERT_NO_FATAL_FAILURE(mudmux_deinit());
+}
+
 TEST(MudmuxTest, AsyncApiExposesQueueOperations) {
     ASSERT_TRUE(mudmux_init(nullptr));
     async_queue_t* queue = async_queue_create(2, 16, ASYNC_QUEUE_DROP_OLDEST);

@@ -120,7 +120,8 @@ intentionally stop and restart workers while mudmux remains initialized:
 - `mudmux_workers_pool_size()` reports the number of live workers; it is zero
   after stop.
 - `mudmux_workers_submit(work, completion)` runs detached application work on
-  a worker, then runs its completion in a serialized non-slot lane. mudmux
+  a worker, then runs its completion in a serialized non-slot lane with
+  `HOOK_COMPLETION` as the current execution context. mudmux
   takes ownership of both `async_closure_t` values only when submission
   succeeds; neither closure has slot-ordering guarantees. Exceptions from
   either closure or its destructor are logged and contained. Work receives
@@ -128,11 +129,53 @@ intentionally stop and restart workers while mudmux remains initialized:
   `ASYNC_CLOSURE_SCHEDULER_FAILED` when work or its cleanup fails.
 - `mudmux_workers_await(work, resume)` is a non-blocking, slot-held operation.
   It is valid only from the current `HOOK_TRANSPORT_READY`,
-  `HOOK_MESSAGE_INBOUND`, or `HOOK_TELNET_SUBNEG` callback. On success it records the request, lets that
+  `HOOK_MESSAGE_INBOUND`, `HOOK_TELNET_SUBNEG`, or `HOOK_RESUME` callback. On success it records the request, lets that
   callback return, then runs `work` on a worker. Same-slot inbound parsing
-  remains deferred until `resume` runs through the slot gate. A disconnected
-  slot cancels and destroys the resume closure; a reused slot is additionally
-  protected by generation validation.
+  remains deferred until `resume` runs through the slot gate with
+  `HOOK_RESUME` as the current execution context. A disconnected slot cancels
+  and destroys the resume closure; a reused slot is additionally protected by
+  generation validation.
+
+`HOOK_RESUME` and `HOOK_COMPLETION` are execution context markers for closures,
+not registerable application hook events.
+
+## Why this is not Python async/await
+
+`mudmux_workers_await()` is intentionally a C ABI continuation contract, not a
+language coroutine contract. This keeps the transport layer independent from
+any particular scripting runtime while still giving MUD servers the ordering
+behavior they usually need: one in-flight operation per player slot, deferred
+same-slot input, and automatic cancellation when the slot disconnects or is
+reused.
+
+Python `async`/`await` suspends a coroutine frame. Local variables, the program
+counter, exception state, and the logical call stack survive while the awaited
+operation is pending, and cancellation is delivered back into that coroutine at
+the `await` expression. That is a powerful application-language feature, but it
+requires cooperation from the Python runtime and from awaitable libraries such
+as async database drivers.
+
+mudmux cannot provide that language-level suspension through a plain C hook
+alone. Once a C hook returns, its stack frame is gone. Instead,
+`mudmux_workers_await()` lets the caller capture any interpreter state it owns
+inside `async_closure_t` contexts. A scripting binding can store a coroutine,
+fiber, VM continuation, explicit state-machine object, or pending command
+record in the resume closure and continue it when mudmux invokes that closure
+with `HOOK_RESUME` active.
+
+For example, if a command starts a database lookup and the same player sends
+more input before the lookup finishes, mudmux keeps later same-slot input in
+the transport buffers until the resume closure runs. If the player disconnects
+or the slot is reused first, mudmux destroys the resume closure instead of
+invoking it. The binding remains responsible for deciding how that maps into
+its scripting runtime: resume a coroutine, raise a cancellation error, mark a
+state machine canceled, or release a pending command object.
+
+`mudmux_workers_submit()` has a different purpose. It runs detached work and a
+serialized completion with `HOOK_COMPLETION` active, but it does not hold a
+slot, defer input, validate a slot generation, or imply any disconnect
+cancellation. Use it for background jobs whose completion is not part of a
+specific slot's inbound ordering contract.
 
 `<mudmux/execution.h>` exposes `mudmux_is_running()`. It reports whether a
 `mudmux_run()` call is active, not whether the worker pool exists. Use these

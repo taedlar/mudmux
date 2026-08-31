@@ -21,6 +21,12 @@ enum mudmux_hook_type_t {
     HOOK_TELNET_SUBNEG = 7,
     HOOK_TIMER = 8,
     HOOK_GARBAGE_COLLECTION = 9,
+    /** Boundary for hook types accepted by mudmux_register_hook(). */
+    MAX_PUBLIC_HOOKS,
+    /** Slot-scoped async_closure_t resume from mudmux_workers_await(). */
+    HOOK_RESUME = MAX_PUBLIC_HOOKS,
+    /** Detached async_closure_t completion from mudmux_workers_submit(). */
+    HOOK_COMPLETION,
     MAX_HOOK_TYPE
 };
 

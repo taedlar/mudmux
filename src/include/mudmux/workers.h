@@ -46,9 +46,9 @@ MUDMUX_EXPORT size_t mudmux_workers_pool_size(void);
  * serialized non-slot completion lane. Work receives
  * ASYNC_CLOSURE_SCHEDULER_OK. Completion receives that same value when work
  * and its cleanup complete normally, or ASYNC_CLOSURE_SCHEDULER_FAILED when
- * either throws. Neither closure is associated with a communication slot.
- * Both closure handles remain owned by the caller when this function returns
- * false.
+ * either throws. The completion closure runs with HOOK_COMPLETION as its
+ * execution context and is not associated with a communication slot. Both
+ * closure handles remain owned by the caller when this function returns false.
  */
 MUDMUX_EXPORT bool mudmux_workers_submit(async_closure_t* work, async_closure_t* completion);
 
@@ -60,7 +60,8 @@ MUDMUX_EXPORT bool mudmux_workers_submit(async_closure_t* work, async_closure_t*
  * HOOK_MESSAGE_INBOUND, or HOOK_TELNET_SUBNEG for the current slot. It records the await request but
  * does not submit work until the initiating hook returns. On success mudmux
  * takes ownership of both closures and clears the caller's handles. The resume
- * closure receives ASYNC_CLOSURE_SCHEDULER_OK or
+ * closure runs with HOOK_RESUME as its execution context and receives
+ * ASYNC_CLOSURE_SCHEDULER_OK or
  * ASYNC_CLOSURE_SCHEDULER_FAILED according to the work closure result. A
  * second await for the same slot is rejected while one is requested or
  * pending; rejected calls retain caller ownership of both closures.

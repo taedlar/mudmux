@@ -212,10 +212,17 @@ std::atomic<int> inbound_hook_call_count{0};
 std::promise<void>* await_work_started_ptr{nullptr};
 std::shared_future<void>* await_work_release_ptr{nullptr};
 std::promise<void>* await_resume_finished_ptr{nullptr};
+std::promise<void>* await_chained_resume_finished_ptr{nullptr};
 std::promise<void>* await_second_inbound_ptr{nullptr};
 std::atomic<int> await_inbound_call_count{0};
 std::atomic<int> await_work_message{ASYNC_CLOSURE_SCHEDULER_FAILED};
 std::atomic<int> await_resume_message{ASYNC_CLOSURE_SCHEDULER_FAILED};
+std::atomic<int> await_resume_hook_type{MAX_HOOK_TYPE};
+std::atomic<int> await_chained_work_calls{0};
+std::atomic<int> await_chained_resume_hook_type{MAX_HOOK_TYPE};
+std::atomic<int> await_chained_request_result{0};
+std::promise<void>* submit_completion_finished_ptr{nullptr};
+std::atomic<int> submit_completion_hook_type{MAX_HOOK_TYPE};
 
 void await_work(void*, int message) {
     await_work_message.store(message);
@@ -225,8 +232,33 @@ void await_work(void*, int message) {
         await_work_release_ptr->wait();
 }
 
+void await_chained_work(void*, int) {
+    ++await_chained_work_calls;
+}
+
+void await_chained_resume(void*, int) {
+    await_chained_resume_hook_type.store(comm_current_hook_type());
+    if (await_chained_resume_finished_ptr)
+        await_chained_resume_finished_ptr->set_value();
+}
+
+void submit_completion_noop_work(void*, int) {
+}
+
+void submit_completion_records_hook_type(void*, int) {
+    submit_completion_hook_type.store(comm_current_hook_type());
+    if (submit_completion_finished_ptr)
+        submit_completion_finished_ptr->set_value();
+}
+
 void await_resume(void*, int message) {
     await_resume_message.store(message);
+    await_resume_hook_type.store(comm_current_hook_type());
+    if (await_chained_resume_finished_ptr) {
+        async_closure_t work{await_chained_work, nullptr, nullptr};
+        async_closure_t resume{await_chained_resume, nullptr, nullptr};
+        await_chained_request_result.store(mudmux_workers_await(&work, &resume) ? 1 : -1);
+    }
     if (await_resume_finished_ptr)
         await_resume_finished_ptr->set_value();
 }
@@ -1435,16 +1467,23 @@ TEST_F(CommInboundTest, WorkersAwaitDefersInboundUntilResume) {
     std::shared_future<void> work_release_future = work_release_promise.get_future().share();
     std::promise<void> resume_finished_promise;
     std::future<void> resume_finished_future = resume_finished_promise.get_future();
+    std::promise<void> chained_resume_finished_promise;
+    std::future<void> chained_resume_finished_future = chained_resume_finished_promise.get_future();
     std::promise<void> second_inbound_promise;
     std::future<void> second_inbound_future = second_inbound_promise.get_future();
 
     await_work_started_ptr = &work_started_promise;
     await_work_release_ptr = &work_release_future;
     await_resume_finished_ptr = &resume_finished_promise;
+    await_chained_resume_finished_ptr = &chained_resume_finished_promise;
     await_second_inbound_ptr = &second_inbound_promise;
     await_inbound_call_count.store(0);
     await_work_message.store(ASYNC_CLOSURE_SCHEDULER_FAILED);
     await_resume_message.store(ASYNC_CLOSURE_SCHEDULER_FAILED);
+    await_resume_hook_type.store(MAX_HOOK_TYPE);
+    await_chained_work_calls.store(0);
+    await_chained_resume_hook_type.store(MAX_HOOK_TYPE);
+    await_chained_request_result.store(0);
     ASSERT_TRUE(mudmux_register_hook(HOOK_MESSAGE_INBOUND, awaiting_inbound_hook));
 
     async_runtime_t* runtime = async_runtime_init(this);
@@ -1470,6 +1509,11 @@ TEST_F(CommInboundTest, WorkersAwaitDefersInboundUntilResume) {
     work_release_promise.set_value();
     ASSERT_EQ(resume_finished_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
     EXPECT_EQ(await_resume_message.load(), ASYNC_CLOSURE_SCHEDULER_OK);
+    EXPECT_EQ(await_resume_hook_type.load(), HOOK_RESUME);
+    EXPECT_EQ(await_chained_request_result.load(), 1);
+    ASSERT_EQ(chained_resume_finished_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_EQ(await_chained_work_calls.load(), 1);
+    EXPECT_EQ(await_chained_resume_hook_type.load(), HOOK_RESUME);
 
     comm_resume_deferred_input(runtime);
     ASSERT_EQ(second_inbound_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
@@ -1480,8 +1524,28 @@ TEST_F(CommInboundTest, WorkersAwaitDefersInboundUntilResume) {
     await_work_started_ptr = nullptr;
     await_work_release_ptr = nullptr;
     await_resume_finished_ptr = nullptr;
+    await_chained_resume_finished_ptr = nullptr;
     await_second_inbound_ptr = nullptr;
     async_runtime_deinit(runtime);
+    mudmux_deinit();
+}
+
+TEST_F(CommInboundTest, WorkersSubmitCompletionHasCompletionHookContext) {
+    mudmux_deinit();
+    ASSERT_TRUE(mudmux_init("{\"transport\": {\"thread_pool\": {\"size\": 2}}}"));
+
+    std::promise<void> completion_finished_promise;
+    std::future<void> completion_finished_future = completion_finished_promise.get_future();
+    submit_completion_finished_ptr = &completion_finished_promise;
+    submit_completion_hook_type.store(MAX_HOOK_TYPE);
+
+    async_closure_t work{submit_completion_noop_work, nullptr, nullptr};
+    async_closure_t completion{submit_completion_records_hook_type, nullptr, nullptr};
+    ASSERT_TRUE(mudmux_workers_submit(&work, &completion));
+    ASSERT_EQ(completion_finished_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    EXPECT_EQ(submit_completion_hook_type.load(), HOOK_COMPLETION);
+
+    submit_completion_finished_ptr = nullptr;
     mudmux_deinit();
 }
 

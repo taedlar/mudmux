@@ -187,10 +187,13 @@ static void run_slot_await_resume(int slot, uint64_t generation, async_closure_t
     worker_thread_scope_t worker_scope;
     if (comm_abstract_generation(slot) == generation) {
         comm_current_slot_scope_t current_slot_scope(slot);
+        comm_hook_type_scope_t hook_type_scope(HOOK_RESUME);
         (void)invoke_closure_safely(&resume, message, "await resume");
     } else {
         destroy_closure_safely(&resume, "await resume destruction");
     }
+    if (mudmux_execution_finalize_await(slot))
+        return;
     finish_slot_task(slot);
 }
 
@@ -234,7 +237,10 @@ static void run_slot_await_work(int slot, uint64_t generation, async_closure_t w
 static void run_detached_completion(detached_completion_t completion) {
     worker_thread_scope_t worker_scope;
     for (;;) {
-        (void)invoke_closure_safely(&completion.closure, completion.message, "completion");
+        {
+            comm_hook_type_scope_t hook_type_scope(HOOK_COMPLETION);
+            (void)invoke_closure_safely(&completion.closure, completion.message, "completion");
+        }
 
         detached_completion_t next{};
         {
@@ -409,7 +415,8 @@ extern "C" MUDMUX_EXPORT bool mudmux_workers_await(async_closure_t* work, async_
     if (!async_closure_is_valid(work) || !async_closure_is_valid(resume) || !execution_state.running.load() ||
         slot < 0 || (hook_type != HOOK_TRANSPORT_READY &&
                      hook_type != HOOK_MESSAGE_INBOUND &&
-                     hook_type != HOOK_TELNET_SUBNEG)) {
+                     hook_type != HOOK_TELNET_SUBNEG &&
+                     hook_type != HOOK_RESUME)) {
         return false;
     }
 
