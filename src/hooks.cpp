@@ -24,7 +24,7 @@ bool spdlog_initialized{false};
 static mudmux_hook_func_t all_hooks[MAX_HOOK_TYPE] = {nullptr}; // array of hook functions
 
 mudmux_hook_func_t mudmux_get_registered_hook(enum mudmux_hook_type_t hook_type) {
-    return hook_type > 0 && hook_type < MAX_HOOK_TYPE ? all_hooks[hook_type] : nullptr;
+    return hook_type > 0 && hook_type < MAX_PUBLIC_HOOKS ? all_hooks[hook_type] : nullptr;
 }
 
 int mudmux_invoke_hook(mudmux_hook_func_t hook_func, void* ctx, int msg, void* data, size_t size,
@@ -46,7 +46,7 @@ int mudmux_invoke_hook(mudmux_hook_func_t hook_func, void* ctx, int msg, void* d
 
 int mudmux_invoke_registered_hook(enum mudmux_hook_type_t hook_type, void* ctx, int msg, void* data, size_t size,
                                   bool flush_after, int current_slot_) {
-    if (hook_type <= 0 || hook_type >= MAX_HOOK_TYPE) {
+    if (hook_type <= 0 || hook_type >= MAX_PUBLIC_HOOKS) {
         SPDLOG_ERROR ("invalid hook type for registered-hook dispatch");
         return -1;
     }
@@ -66,7 +66,7 @@ void mudmux_reset_registered_hooks() {
 }
 
 MUDMUX_EXPORT bool mudmux_register_hook (enum mudmux_hook_type_t hook_type, mudmux_hook_func_t hook_func) {
-    if (hook_type <= 0 || hook_type >= MAX_HOOK_TYPE || !hook_func) {
+    if (hook_type <= 0 || hook_type >= MAX_PUBLIC_HOOKS || !hook_func) {
         SPDLOG_ERROR ("mudmux_register_hook() called with invalid hook_type or null hook_func");
         return false;
     }
