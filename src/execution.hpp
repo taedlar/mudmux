@@ -12,8 +12,9 @@ enum mudmux_determinism_mode_t {
     MUDMUX_DETERMINISM_RELAXED = 1,
 };
 
-void mudmux_workers_configure(int thread_pool_size);
+void mudmux_workers_configure(int thread_pool_size, std::size_t backlog_capacity = 8);
 int mudmux_workers_configured_pool_size();
+std::size_t mudmux_workers_configured_backlog_capacity();
 bool mudmux_workers_is_worker_thread();
 
 /** Start a slot await after the hook that requested it has returned. */

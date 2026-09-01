@@ -269,16 +269,31 @@ MUDMUX_EXPORT bool mudmux_init (const char* config_yaml) {
                 accept_names.push_back(name.as<std::string>());
             }
         }
-        if (transport["thread_pool"].IsDefined() && transport["thread_pool"]["size"].IsDefined()) {
-            const int thread_pool_size = transport["thread_pool"]["size"].as<int>();
+        if (transport["thread_pool"].IsDefined()) {
+            const YAML::Node& thread_pool = transport["thread_pool"];
+            const int thread_pool_size = thread_pool["size"].IsDefined()
+                ? thread_pool["size"].as<int>()
+                : 1;
+            const int backlog_capacity = thread_pool["backlog_capacity"].IsDefined()
+                ? thread_pool["backlog_capacity"].as<int>()
+                : 8;
             if (thread_pool_size < 1) {
                 SPDLOG_ERROR ("transport.thread_pool.size must be at least 1");
                 init_success = false;
                 goto done;
             }
-            mudmux_workers_configure(thread_pool_size);
+            if (backlog_capacity < 1) {
+                SPDLOG_ERROR ("transport.thread_pool.backlog_capacity must be at least 1");
+                init_success = false;
+                goto done;
+            }
+            mudmux_workers_configure(thread_pool_size, static_cast<std::size_t>(backlog_capacity));
             if (thread_pool_size > 1) {
-                SPDLOG_INFO ("----- thread pool size set to {} (processing user requests concurrently)", thread_pool_size);
+                SPDLOG_INFO (
+                    "----- thread pool size set to {}; per-slot backlog capacity set to {} "
+                    "(processing user requests concurrently)",
+                    thread_pool_size,
+                    backlog_capacity);
             }
         }
         if (transport["keep_alive_interval"].IsDefined()) {
@@ -455,8 +470,9 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
     }
 
     SPDLOG_INFO (
-        "thread pool execution configured: size={} mode={}",
+        "thread pool execution configured: size={} backlog_capacity={} mode={}",
         mudmux_workers_pool_size(),
+        mudmux_workers_configured_backlog_capacity(),
         mudmux_execution_mode_name());
 
     // Timer lifecycle notifications are synchronous: logic sees the running
