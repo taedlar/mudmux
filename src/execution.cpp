@@ -63,8 +63,6 @@ struct detached_work_t {
     async_closure_t completion{};
 };
 
-constexpr std::size_t auxiliary_queue_capacity = 8;
-
 static slot_execution_state_t& ensure_slot_state_locked(std::deque<slot_execution_state_t>& states, int slot) {
     while (slot >= static_cast<int>(states.size()))
         states.emplace_back();
@@ -80,6 +78,7 @@ struct worker_thread_scope_t {
 
 struct execution_state_t {
     int thread_pool_size{1};
+    std::size_t backlog_capacity{8};
     mudmux_determinism_mode_t determinism_mode{MUDMUX_DETERMINISM_STRICT};
     async_thread_pool_t worker_pool;
     std::atomic<bool> running{false};
@@ -340,8 +339,9 @@ static void run_slot_task(int slot, in_flight_hook_t task) {
 
 } // namespace
 
-void mudmux_workers_configure(int thread_pool_size) {
+void mudmux_workers_configure(int thread_pool_size, std::size_t backlog_capacity) {
     execution_state.thread_pool_size = thread_pool_size;
+    execution_state.backlog_capacity = backlog_capacity;
     execution_state.determinism_mode = (thread_pool_size == 1)
         ? MUDMUX_DETERMINISM_STRICT
         : MUDMUX_DETERMINISM_RELAXED;
@@ -384,6 +384,8 @@ extern "C" MUDMUX_EXPORT void mudmux_workers_stop() {
 }
 
 int mudmux_workers_configured_pool_size() { return execution_state.thread_pool_size; }
+
+std::size_t mudmux_workers_configured_backlog_capacity() { return execution_state.backlog_capacity; }
 
 extern "C" MUDMUX_EXPORT size_t mudmux_workers_pool_size() {
     return execution_state.worker_pool.size();
@@ -593,7 +595,7 @@ mudmux_dispatch_result_t mudmux_execution_enqueue_hook(
         slot_execution_state_t& state = ensure_slot_state_locked(execution_state.slot_states, slot);
         std::lock_guard<std::mutex> slot_lock(state.mutex);
         if (state.active) {
-            if (!allow_pending || state.pending.size() >= auxiliary_queue_capacity)
+            if (!allow_pending || state.pending.size() >= execution_state.backlog_capacity)
                 return MUDMUX_DISPATCH_QUEUE_FULL;
             state.pending.push_back(std::move(task));
             return MUDMUX_DISPATCH_OK;

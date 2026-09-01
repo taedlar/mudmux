@@ -236,6 +236,17 @@ TEST(MudmuxTest, InitializationWithInvalidThreadPoolSize) {
     ASSERT_FALSE(mudmux_init(incorrect_config));
 }
 
+TEST(MudmuxTest, InitializationWithInvalidThreadPoolBacklogCapacity) {
+    const char* incorrect_config = R"({
+        "transport": {
+            "thread_pool": {
+                "backlog_capacity": 0
+            }
+        }
+    })";
+    ASSERT_FALSE(mudmux_init(incorrect_config));
+}
+
 TEST(MudmuxTest, InitializationWithThreadPoolSize) {
     const char* config = R"({
         "transport": {
@@ -248,6 +259,20 @@ TEST(MudmuxTest, InitializationWithThreadPoolSize) {
     EXPECT_EQ(mudmux_workers_pool_size(), 2);
     ASSERT_NO_FATAL_FAILURE(mudmux_deinit());
     EXPECT_EQ(mudmux_workers_pool_size(), 0);
+}
+
+TEST(MudmuxTest, InitializationWithThreadPoolBacklogCapacity) {
+    const char* config = R"({
+        "transport": {
+            "thread_pool": {
+                "size": 2,
+                "backlog_capacity": 3
+            }
+        }
+    })";
+    ASSERT_TRUE(mudmux_init(config));
+    EXPECT_EQ(mudmux_workers_pool_size(), 2u);
+    ASSERT_NO_FATAL_FAILURE(mudmux_deinit());
 }
 
 TEST(MudmuxTest, PseudoHookTypesAreNotRegisterable) {

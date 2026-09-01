@@ -1,15 +1,19 @@
-# Event hooks and the event loop
+# Registerable event hooks and the event loop
 
 mudmux integrates the hosted logic layer with its asynchronous I/O loop through
-hooks. A hook is a C callback with this common signature:
+registerable event hooks. An event hook is a C callback with this common
+signature:
 
 ```c
 int hook(void *context, int msg, void *data, size_t size);
 ```
 
 `context` is the pointer passed to `mudmux_run()`. The meanings of the other
-arguments depend on the hook type. Register one callback for a built-in hook
-with `mudmux_register_hook()` before starting the runtime.
+arguments depend on the event-hook type. The built-in event hooks are
+`HOOK_CONNECT` through `HOOK_GARBAGE_COLLECTION`; register one callback for
+each with `mudmux_register_hook()` before starting the runtime. In contrast,
+`HOOK_RESUME` and `HOOK_COMPLETION` are non-registerable continuation-hook
+contexts used internally when mudmux invokes closures; see [workers.md](workers.md).
 
 ```c
 #include <mudmux/mudmux.h>
@@ -23,11 +27,12 @@ static int on_input(void *context, int slot, void *data, size_t size) {
 mudmux_register_hook(HOOK_MESSAGE_INBOUND, on_input);
 ```
 
-The event loop does not use a hook return value to control I/O; callbacks
+The event loop does not use an event hook's return value to control I/O;
+callbacks
 should use the public comm API for actions such as writing output, changing
 input mode, or closing a slot.
 
-## Where hooks run in an iteration
+## Where event hooks run in an iteration
 
 Each iteration waits for async-runtime readiness, then processes work in this
 order:
@@ -39,45 +44,46 @@ wait for I/O, async events, or the GC keep-alive timeout
     +-- registered async events
     +-- listener, read, write, close, and error readiness for slots
     +-- resume deferred inbound parsing
-    +-- prompt hooks
-    +-- garbage-collection hook
+    +-- prompt event hooks
+    +-- garbage-collection event hook
     +-- advance buffered writes and transport state
 ```
 
 The transport processing path turns connection lifecycle and decoded input into
-slot hooks. For inbound data, the layers are:
+slot event hooks. For inbound data, the layers are:
 
 ```text
 transport read -> TLS decrypt -> WebSocket decode -> Telnet parse
     -> line/character parse -> HOOK_MESSAGE_INBOUND
 ```
 
-This means application hooks receive parsed application bytes, rather than raw
+This means application event hooks receive parsed application bytes, rather than raw
 socket, TLS, or WebSocket framing bytes. See [inbound.md](inbound.md) for the
 full parsing and ordering contract.
 
-## Built-in hook events
+## Built-in event hooks
 
-| Hook | Event-loop integration | `msg`, `data`, and `size` |
+| Event hook | Event-loop integration | `msg`, `data`, and `size` |
 | --- | --- | --- |
 | `HOOK_CONNECT` | A transport destination is added to a slot. | `msg` is the slot; `data` names the configured transport entry. |
 | `HOOK_DISCONNECT` | A slot is closed; dispatched once for its lifecycle. | `msg` is the slot; `data == NULL` and `size == 0`. |
 | `HOOK_MESSAGE_INBOUND` | A complete input unit has passed the enabled transport parsers. | `msg` is the source slot; `data` is the non-null-terminated payload. |
 | `HOOK_MESSAGE_OUTBOUND` | `comm_add_message()` sends an application message. | `msg` is the destination slot; `data` is an immutable message copy. |
 | `HOOK_TRANSPORT_READY` | The selected transport framing is ready for application input. It fires once before the first inbound application message. | `msg` is the slot; `data == NULL` and `size == 0`. |
-| `HOOK_PROMPT` | A prompt-enabled slot is idle: no inbound or outbound work is pending and no slot hook is in flight. It fires once until the next inbound message clears its prompt gate. | `msg` is the slot; `data == NULL` and `size == 0`. |
+| `HOOK_PROMPT` | A prompt-enabled slot is idle: no inbound or outbound work is pending and no slot event hook is in flight. It fires once until the next inbound message clears its prompt gate. | `msg` is the slot; `data == NULL` and `size == 0`. |
 | `HOOK_TELNET_SUBNEG` | A Telnet subnegotiation is parsed. | `msg` is the Telnet option; `data` and `size` are its payload. |
 | `HOOK_TIMER` | mudmux's internal timer event is signalled. | `msg` is supplied to `mudmux_trigger_timer()`; no payload. |
 | `HOOK_GARBAGE_COLLECTION` | End of every completed loop iteration. | `msg == -1`, `data == NULL`, and `size == 0`. |
 
-The hook-specific documents in [hooks/](hooks/) define the detailed argument
-and protocol contracts for the hooks that have one, including
+The event-hook-specific documents in [hooks/](hooks/) define the detailed
+argument and protocol contracts for the event hooks that have one, including
 [HOOK_PROMPT](hooks/HOOK_PROMPT.md).
 
-`HOOK_GARBAGE_COLLECTION` is special: it always executes inline on the event
-loop thread, before outbound flushes. Prompts are evaluated after flushes. When it is
-registered, an idle loop also wakes at `transport.keep_alive_interval` (20
-seconds by default). Keep this hook brief; it delays all I/O progress.
+`HOOK_GARBAGE_COLLECTION` is special: this event hook always executes inline
+on the event loop thread, before outbound flushes. Prompts are evaluated after
+flushes. When it is registered, an idle loop also wakes at
+`transport.keep_alive_interval` (20 seconds by default). Keep this event hook
+brief; it delays all I/O progress.
 
 ## Custom async events
 
@@ -85,11 +91,12 @@ Use `mudmux_register_event()` to make an `async_event_t` wake `mudmux_run()`.
 This is useful when another thread has completed work that must be handled by
 the logic layer. `async_queue_t` is the thread-safe message channel for this
 pattern: the event is a wake-up notification, while the queue carries the
-messages between an event hook, transport hooks, and external producers.
+messages between an async-event callback, transport event hooks, and external
+producers.
 
 1. Call `mudmux_init()` so the async API is available.
 2. Initialize an `async_event_t` with `async_event_init()`.
-3. Create an `async_queue_t` sized for the messages your hooks exchange.
+3. Create an `async_queue_t` sized for the messages your callbacks exchange.
 4. Register the event, before `mudmux_run()`, with a non-null callback.
 5. Enqueue a message, then signal the event with `async_event_set()`.
 6. Destroy the event and queue only after `mudmux_deinit()` returns.
@@ -103,7 +110,7 @@ static async_queue_t *work_queue;
 
 enum { WORK_QUEUE_CAPACITY = 64, WORK_MAX_MESSAGE = 1024 };
 
-/* The queue owns a copy of this fixed-size message, not data from a hook. */
+/* The queue owns a copy of this fixed-size message, not event-hook data. */
 struct work_message {
     int slot;
     size_t size;
@@ -175,11 +182,11 @@ manual-reset event when the signalled condition must also remain observable to
 other waiters until it is explicitly reset. Use an auto-reset event for a
 one-consumer wake-up; mudmux consumes one signal per callback dispatch.
 The queue stores copies of messages up to its configured maximum size; do not
-enqueue a pointer to an inbound-hook payload, because that payload is only
+enqueue a pointer to an inbound event-hook payload, because that payload is only
 valid for the duration of the callback.
 
 The example uses no queue flags, so a full queue fails immediately instead of
-blocking the event loop or a hook. Choose `ASYNC_QUEUE_DROP_OLDEST` only when
+blocking the event loop or an event hook. Choose `ASYNC_QUEUE_DROP_OLDEST` only when
 loss is acceptable. `ASYNC_QUEUE_BLOCK_WRITER` is generally inappropriate for
 an event-loop callback because it can stall I/O progress.
 
@@ -190,9 +197,9 @@ then.
 
 ## Timer event
 
-mudmux creates and registers one timer event during `mudmux_init()`. A timer
-hook also receives two synchronous lifecycle notifications on the thread that
-called `mudmux_run()`:
+mudmux creates and registers one timer event during `mudmux_init()`. Its
+`HOOK_TIMER` event hook also receives two synchronous lifecycle notifications
+on the thread that called `mudmux_run()`:
 
 - `msg == 0` once setup has succeeded, immediately before event-loop I/O
   dispatch begins.
@@ -227,15 +234,16 @@ application queue when every timer request must be retained. Values `0` and
 
 ## Threading and ordering
 
-With `transport.thread_pool.size: 1` (the default), hooks execute on the event
+With `transport.thread_pool.size: 1` (the default), event hooks execute on the event
 loop thread. mudmux holds its logic-layer comm mutex while invoking them, so
 comm API calls made by the callback are serialized with slot state.
 
-With a pool size greater than one, mudmux uses relaxed mode. Slot-bound hooks
-may run on worker threads and hooks for different slots may run concurrently.
-Only one hook is in flight for a slot; parser-originated inbound input remains
-in the transport buffers until that hook finishes. Do not rely on ordering
-between different slots, and synchronize logic-layer state shared by callbacks.
+With a pool size greater than one, mudmux uses relaxed mode. Slot-bound event
+hooks may run on worker threads and event hooks for different slots may run
+concurrently. Only one event hook is in flight for a slot; parser-originated
+inbound input remains in the transport buffers until that event hook finishes.
+Do not rely on ordering between different slots, and synchronize logic-layer
+state shared by callbacks.
 
 ### Current parser slot
 
@@ -244,16 +252,17 @@ between different slots, and synchronize logic-layer state shared by callbacks.
 is available for `HOOK_CONNECT`, `HOOK_MESSAGE_INBOUND`,
 `HOOK_MESSAGE_OUTBOUND`, `HOOK_PROMPT`, and `HOOK_TELNET_SUBNEG`, including
 when those callbacks run on relaxed-mode workers. It returns `-1` in every
-other hook and when called outside a hook. The value is thread-local and is
-restored when the callback returns; do not retain it as a substitute for the
-slot argument supplied to a hook.
+other event hook and when called outside an event hook. The value is
+thread-local and is restored when the callback returns; do not retain it as a
+substitute for the slot argument supplied to an event hook.
 
-Registered custom events and `HOOK_TIMER` are global rather than slot-bound.
-In relaxed mode their callbacks are dispatched through the execution pool but
-are serialized with one another. `HOOK_GARBAGE_COLLECTION` remains on the
+Registered custom async-event callbacks and the `HOOK_TIMER` event hook are
+global rather than slot-bound. In relaxed mode their callbacks are dispatched
+through the execution pool but are serialized with one another.
+`HOOK_GARBAGE_COLLECTION` remains on the
 event-loop thread in both modes and can overlap worker-thread callbacks in
 relaxed mode.
 
 Callbacks should complete promptly. Blocking a strict-mode callback blocks the
 event loop; blocking a relaxed-mode callback occupies an execution worker and
-can delay later work for its slot or global event hooks.
+can delay later work for its slot or global event callbacks.
