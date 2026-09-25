@@ -10,6 +10,7 @@
 #include <string.h>
 #include <condition_variable>
 #include <mutex>
+#include <new>
 #include "async_queue.h"
 
 /**
@@ -45,20 +46,20 @@ extern "C" async_queue_t* async_queue_create (size_t capacity, size_t max_msg_si
     if (capacity == 0 || max_msg_size == 0) {
         return NULL;
     }
-    
-    async_queue_t* queue = (async_queue_t*) calloc (1, sizeof(async_queue_t));
+
+    async_queue_t* queue = new (std::nothrow) async_queue_s{};
     if (!queue) {
         return NULL;
     }
-    
+
     /* Allocate circular buffer (each slot: size_t for length + message data) */
     queue->msg_slot_size = sizeof(size_t) + max_msg_size;
     queue->buffer = calloc(capacity, queue->msg_slot_size);
     if (!queue->buffer) {
-        free(queue);
+        delete queue;
         return NULL;
     }
-    
+
     queue->capacity = capacity;
     queue->max_msg_size = max_msg_size;
     queue->head = 0;
@@ -68,18 +69,18 @@ extern "C" async_queue_t* async_queue_create (size_t capacity, size_t max_msg_si
     queue->enqueue_count = 0;
     queue->dequeue_count = 0;
     queue->dropped_count = 0;
-    
+
     return queue;
 }
 
 extern "C" void async_queue_destroy(async_queue_t* queue) {
     if (!queue) return;
-    
+
     if (queue->buffer) {
         free(queue->buffer);
     }
-    
-    free(queue);
+
+    delete queue;
 }
 
 extern "C" bool async_queue_enqueue(async_queue_t* queue, const void* data, size_t size) {
