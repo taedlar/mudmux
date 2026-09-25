@@ -114,7 +114,8 @@ extern "C" void async_runtime_deinit(async_runtime_t* runtime) {
         close(runtime->epoll_fd);
     }
 
-    current_runtime.compare_exchange_strong(runtime, nullptr); // read-modify-write to clear current_runtime if it matches this runtime
+    async_runtime_t* expected = runtime;
+    current_runtime.compare_exchange_strong(expected, nullptr); // clear current_runtime only when it matches this runtime
     delete runtime;
 }
 
