@@ -20,6 +20,7 @@
 #include <errno.h>
 #include <unistd.h>
 #include <atomic>
+#include <new>
 #include <vector>
 
 #include "console_worker.h"
@@ -62,24 +63,24 @@ extern "C" async_runtime_t* async_get_current_runtime() {
 }
 
 extern "C" async_runtime_t* async_runtime_init(void* context) {
-    async_runtime_t* runtime = (async_runtime_t*) calloc (1, sizeof(async_runtime_t));
+    async_runtime_t* runtime = new (std::nothrow) async_runtime_s{};
     if (!runtime) return NULL;
-    
+
     runtime->context = context;
     runtime->epoll_fd = epoll_create1(0);
     if (runtime->epoll_fd < 0) {
-        free(runtime);
+        delete runtime;
         return NULL;
     }
-    
+
     /* Create eventfd for worker notifications */
     runtime->event_fd = eventfd(0, EFD_NONBLOCK);
     if (runtime->event_fd < 0) {
         close(runtime->epoll_fd);
-        free(runtime);
+        delete runtime;
         return NULL;
     }
-    
+
     /* Add eventfd to epoll */
     struct epoll_event ev;
     memset(&ev, 0, sizeof(ev));
@@ -88,7 +89,7 @@ extern "C" async_runtime_t* async_runtime_init(void* context) {
     if (epoll_ctl(runtime->epoll_fd, EPOLL_CTL_ADD, runtime->event_fd, &ev) < 0) {
         close(runtime->event_fd);
         close(runtime->epoll_fd);
-        free(runtime);
+        delete runtime;
         return NULL;
     }
 
@@ -104,17 +105,17 @@ extern "C" void* async_runtime_get_context(async_runtime_t* runtime) {
 
 extern "C" void async_runtime_deinit(async_runtime_t* runtime) {
     if (!runtime) return;
-    
+
     if (runtime->event_fd >= 0) {
         close(runtime->event_fd);
     }
-    
+
     if (runtime->epoll_fd >= 0) {
         close(runtime->epoll_fd);
     }
 
     current_runtime.compare_exchange_strong(runtime, nullptr); // read-modify-write to clear current_runtime if it matches this runtime
-    free (runtime);
+    delete runtime;
 }
 
 extern "C" int async_runtime_add(async_runtime_t* runtime, socket_fd_t fd, uint32_t events, void* context) {
