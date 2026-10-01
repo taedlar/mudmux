@@ -44,14 +44,18 @@ MUDMUX_EXPORT void mudmux_enable_console (bool enable);
  */
 MUDMUX_EXPORT bool mudmux_init (const char* config_yaml);
 
-/** Return mudmux's initialized timer event; setting it invokes HOOK_TIMER. */
+/** Return mudmux's initialized timer event. Use mudmux_trigger_timer() to publish flags. */
 MUDMUX_EXPORT async_event_t* mudmux_get_timer_event(void);
 
 /**
- * Signal mudmux's timer event, causing HOOK_TIMER to be dispatched with msg.
- * Values 0 and -1 are reserved for mudmux_run() lifecycle notifications.
+ * Accumulate flags and signal mudmux's timer event. HOOK_TIMER receives the
+ * bitwise OR of pending flags as its positive int msg. Repeated bits coalesce;
+ * triggers during a callback accumulate for a subsequent invocation.
+ * Zero and flags containing the highest unsigned int bit are rejected, keeping
+ * msg 0 and -1 reserved for mudmux_run() startup and shutdown notifications.
+ * Returns false for invalid flags or when the timer event is unavailable.
  */
-MUDMUX_EXPORT bool mudmux_trigger_timer(int msg);
+MUDMUX_EXPORT bool mudmux_trigger_timer(unsigned int flags);
 
 /**
  * @brief Deinitialize the mudmux server library.

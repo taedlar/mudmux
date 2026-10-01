@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <future>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -631,7 +632,7 @@ void verify_relaxed_event_coalescing(coalescing_event_mode_t mode) {
     int item = 0;
     EXPECT_TRUE(async_queue_enqueue(state.queue, &item, sizeof(item)));
     if (timer)
-        EXPECT_TRUE(mudmux_trigger_timer(11));
+        EXPECT_TRUE(mudmux_trigger_timer(1u));
     else
         async_event_set(&event);
     {
@@ -642,7 +643,7 @@ void verify_relaxed_event_coalescing(coalescing_event_mode_t mode) {
     for (int index = 0; index < 20; ++index) {
         EXPECT_TRUE(async_queue_enqueue(state.queue, &index, sizeof(index)));
         if (timer)
-            EXPECT_TRUE(mudmux_trigger_timer(90 + index));
+            EXPECT_TRUE(mudmux_trigger_timer(1u << (1 + index % 5)));
         else
             async_event_set(&event);
     }
@@ -671,8 +672,8 @@ void verify_relaxed_event_coalescing(coalescing_event_mode_t mode) {
     EXPECT_EQ(state.calls, 2);
     EXPECT_EQ(state.drained, 21);
     ASSERT_EQ(state.messages.size(), 2u);
-    EXPECT_EQ(state.messages[0], timer ? 11 : -1);
-    EXPECT_EQ(state.messages[1], timer ? 109 : -1);
+    EXPECT_EQ(state.messages[0], timer ? 1 : -1);
+    EXPECT_EQ(state.messages[1], timer ? 62 : -1);
 }
 
 } // namespace
@@ -685,7 +686,53 @@ TEST(MudmuxTest, RelaxedAutoResetEventCoalescesSignalsDuringHook) {
     verify_relaxed_event_coalescing(coalescing_event_mode_t::Auto);
 }
 
-TEST(MudmuxTest, RelaxedTimerRetainsLatestMessageDuringHook) {
+TEST(MudmuxTest, TimerAccumulatesFlagsAndRejectsReservedValues) {
+    ASSERT_TRUE(mudmux_init(nullptr));
+    std::vector<int> messages;
+    ASSERT_TRUE(mudmux_register_hook(HOOK_TIMER, [](void* ctx, int msg, void*, size_t) {
+        static_cast<std::vector<int>*>(ctx)->push_back(msg);
+        if (msg > 0)
+            mudmux_shutdown();
+        return 0;
+    }));
+    const unsigned int reserved = 1u << (std::numeric_limits<unsigned int>::digits - 1);
+    const unsigned int highest_allowed = reserved >> 1;
+    EXPECT_FALSE(mudmux_trigger_timer(0u));
+    EXPECT_FALSE(mudmux_trigger_timer(reserved));
+    EXPECT_FALSE(mudmux_trigger_timer(reserved | 1u));
+    EXPECT_FALSE(mudmux_trigger_timer(std::numeric_limits<unsigned int>::max()));
+    EXPECT_TRUE(mudmux_trigger_timer(1u));
+    EXPECT_TRUE(mudmux_trigger_timer(2u));
+    EXPECT_TRUE(mudmux_trigger_timer(highest_allowed));
+    // GC provides an exit path if flags were unexpectedly lost.
+    ASSERT_TRUE(mudmux_register_hook(HOOK_GARBAGE_COLLECTION, [](void*, int, void*, size_t) {
+        mudmux_shutdown();
+        return 0;
+    }));
+    EXPECT_EQ(mudmux_run(&messages), EXIT_SUCCESS);
+    EXPECT_EQ(messages, (std::vector<int>{0, static_cast<int>(highest_allowed | 3u), -1}));
+    mudmux_deinit();
+}
+
+TEST(MudmuxTest, TimerIgnoresReadinessWithoutPendingFlags) {
+    ASSERT_TRUE(mudmux_init(nullptr));
+    std::vector<int> messages;
+    ASSERT_TRUE(mudmux_register_hook(HOOK_TIMER, [](void* ctx, int msg, void*, size_t) {
+        static_cast<std::vector<int>*>(ctx)->push_back(msg);
+        return 0;
+    }));
+    ASSERT_TRUE(mudmux_register_hook(HOOK_GARBAGE_COLLECTION, [](void*, int, void*, size_t) {
+        mudmux_shutdown();
+        return 0;
+    }));
+    ASSERT_NE(mudmux_get_timer_event(), nullptr);
+    async_event_set(mudmux_get_timer_event());
+    EXPECT_EQ(mudmux_run(&messages), EXIT_SUCCESS);
+    EXPECT_EQ(messages, (std::vector<int>{0, -1}));
+    mudmux_deinit();
+}
+
+TEST(MudmuxTest, RelaxedTimerAccumulatesFlagsDuringHook) {
     verify_relaxed_event_coalescing(coalescing_event_mode_t::Timer);
 }
 

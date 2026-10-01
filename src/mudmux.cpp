@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <cstdint>
 #include <filesystem>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -70,7 +71,7 @@ static std::vector<std::unique_ptr<event_registration_t>> event_registrations;
 static async_event_t timer_event;
 static bool timer_event_initialized{false};
 static bool timer_event_registered{false};
-static std::atomic<int> timer_event_msg{-1};
+static std::atomic<unsigned int> timer_pending_flags{0};
 static int keep_alive_interval_seconds{20};
 
 static bool comm_api_thread_guard(const char* api_name) {
@@ -242,7 +243,7 @@ MUDMUX_EXPORT bool mudmux_init (const char* config_yaml) {
 #endif
     mudmux_workers_configure(1);
     keep_alive_interval_seconds = 20;
-    timer_event_msg.store(-1, std::memory_order_relaxed);
+    timer_pending_flags.store(0, std::memory_order_relaxed);
     init_async_api();
     init_comm_api();
     init_execution_api();
@@ -390,14 +391,14 @@ MUDMUX_EXPORT async_event_t* mudmux_get_timer_event(void) {
     return timer_event_initialized ? &timer_event : nullptr;
 }
 
-MUDMUX_EXPORT bool mudmux_trigger_timer(int msg) {
+MUDMUX_EXPORT bool mudmux_trigger_timer(unsigned int flags) {
     if (!timer_event_initialized)
         return false;
-    if (msg == 0 || msg == -1) {
-        SPDLOG_ERROR("mudmux_trigger_timer() message {} is reserved for timer lifecycle notifications", msg);
+    if (flags == 0 || flags > static_cast<unsigned int>(std::numeric_limits<int>::max())) {
+        SPDLOG_ERROR("mudmux_trigger_timer() flags {} must be nonzero and exclude the reserved highest bit", flags);
         return false;
     }
-    timer_event_msg.store(msg, std::memory_order_release);
+    timer_pending_flags.fetch_or(flags, std::memory_order_release);
     async_event_set(&timer_event);
     return true;
 }
@@ -424,18 +425,22 @@ static void dispatch_registered_event(async_runtime_t* runtime, event_registrati
     // Merge any still-signalled native event into the retained notification.
     // Signals after this acknowledgement remain available for the next pass.
     async_event_reset(registration.event);
-    // Leave the latest timer reason intact until the registration can run.
+    // The mask is authoritative; native readiness is only a wakeup hint.
+    // Reset before consuming so a racing producer either joins this batch or
+    // leaves flags and a signal for the next one. Ignore redundant readiness.
     const bool timer = registration.event == &timer_event;
-    const int msg = timer ? timer_event_msg.exchange(-1, std::memory_order_acq_rel) : -1;
+    const unsigned int flags = timer ? timer_pending_flags.exchange(0, std::memory_order_acq_rel) : 0;
+    if (timer && flags == 0)
+        return;
+    const int msg = timer ? static_cast<int>(flags) : -1;
     mudmux_execution execution(hook_func, async_runtime_get_context(runtime), msg);
     execution.set_event_registration(&registration);
     const auto result = mudmux_execution_dispatch(std::move(execution), MUDMUX_EXECUTION_TIMELY_EVENT);
     if (result == MUDMUX_DISPATCH_QUEUE_FULL) {
         registration.pending = true;
         if (timer) {
-            // Do not overwrite a newer reason supplied by a concurrent producer.
-            int empty = -1;
-            timer_event_msg.compare_exchange_strong(empty, msg, std::memory_order_acq_rel);
+            // Merge the rejected batch with any concurrently published flags.
+            timer_pending_flags.fetch_or(flags, std::memory_order_release);
         }
     }
 }
