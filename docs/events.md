@@ -176,6 +176,9 @@ that delivery. In both cases, a signal that arrives while the callback runs
 remains pending for a later loop iteration. Signals are notifications, not a
 counted work queue: repeated sets can coalesce, so callbacks should drain an
 application-owned queue rather than expect one callback per produced item.
+In relaxed mode, mudmux retains one coalesced notification while the registration
+has an execution in flight, then retries after its completion. Timer notifications
+retain the most recently supplied message until that retry can be dispatched.
 
 For this single-consumer callback model, either reset mode is suitable. Use a
 manual-reset event when the signalled condition must also remain observable to
@@ -258,7 +261,12 @@ substitute for the slot argument supplied to an event hook.
 
 Registered custom async-event callbacks and the `HOOK_TIMER` event hook are
 global rather than slot-bound. In relaxed mode their callbacks are dispatched
-through the execution pool but are serialized with one another.
+through the execution pool and serialized per registration, including completion.
+Different registrations can overlap, even if they share the same callback.
+This gives each registered queue-draining callback one consumer while allowing
+independent queues to progress. A thread-safe queue protects its stored messages;
+shared application state and ordering across registrations still require explicit
+synchronization. Use one registration to drain work that must execute in order.
 `HOOK_GARBAGE_COLLECTION` remains on the
 event-loop thread in both modes and can overlap worker-thread callbacks in
 relaxed mode.

@@ -50,8 +50,13 @@ thread. In relaxed mode, these event hooks are eligible for worker execution:
 - `HOOK_PROMPT`
 - `HOOK_TELNET_SUBNEG`
 
-`HOOK_TIMER` and registered non-slot async events use a separate serialized
-event lane. They do not consume a communication slot's execution state.
+`HOOK_TIMER` signals and registered non-slot async events are scheduled per
+event registration. In relaxed mode, different registrations may run
+concurrently, even when they share a callback. Repeat signals for a registration
+already scheduled or executing coalesce into one notification, which is retried
+after completion. The registration remains busy through completion; there is no
+queue of event execution objects. These events do not consume
+a communication slot's execution state.
 `HOOK_GARBAGE_COLLECTION` always remains inline on the event-loop thread.
 
 ## Player logic ordering

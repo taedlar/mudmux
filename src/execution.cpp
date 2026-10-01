@@ -7,13 +7,13 @@
 #include "mudmux/mudmux.h"
 
 #include <atomic>
-#include <cstring>
 #include <deque>
 #include <exception>
 #include <limits>
 #include <mutex>
+#include <optional>
+#include <unordered_map>
 #include <utility>
-#include <vector>
 
 #include "async/async_runtime.h"
 #include "async/thread_pool.hpp"
@@ -29,15 +29,9 @@ namespace {
 
 // Relaxed mode deliberately has no per-slot task queue.  Transport parsing
 // leaves the next unit in its input buffer until this single task completes.
-struct in_flight_hook_t {
-    enum mudmux_hook_type_t hook_type{MAX_HOOK_TYPE};
-    void* ctx{nullptr};
-    int msg{-1};
-    int current_slot{-1};
-    uint64_t generation{0};
-    std::vector<char> payload;
-    mudmux_hook_completion_t completion{nullptr};
-    void* completion_context{nullptr};
+struct slot_execution_t {
+    mudmux_execution execution;
+    uint64_t generation;
 };
 
 struct slot_execution_state_t {
@@ -45,7 +39,7 @@ struct slot_execution_state_t {
     bool active{false};
     // Only explicit non-inbound/API dispatches use this queue.  Transport
     // parsers never place decoded input here.
-    std::deque<in_flight_hook_t> pending;
+    std::deque<slot_execution_t> pending;
     bool await_requested{false};
     bool await_pending{false};
     uint64_t await_generation{0};
@@ -85,13 +79,9 @@ struct execution_state_t {
     std::mutex slot_states_mutex;
     std::deque<slot_execution_state_t> slot_states;
     std::mutex event_mutex;
-    struct event_task_t {
-        mudmux_hook_func_t hook_func;
-        void* ctx;
-        int msg;
-    };
-    std::deque<event_task_t> pending_events;
+    std::deque<mudmux_execution> pending_events;
     bool event_active{false};
+    std::unordered_map<const void*, std::size_t> event_in_flight;
     std::mutex detached_completion_mutex;
     std::deque<detached_completion_t> pending_detached_completions;
     bool detached_completion_active{false};
@@ -99,8 +89,39 @@ struct execution_state_t {
 
 execution_state_t execution_state;
 
-static void run_slot_task(int slot, in_flight_hook_t task);
-static void finish_slot_task(int slot);
+static void release_event_registration_locked(const void* registration) {
+    const auto found = execution_state.event_in_flight.find(registration);
+    if (found != execution_state.event_in_flight.end() && --found->second == 0)
+        execution_state.event_in_flight.erase(found);
+}
+
+static void discard_pending_events_locked() {
+    for (const auto& execution : execution_state.pending_events)
+        release_event_registration_locked(execution.event_registration());
+    execution_state.pending_events.clear();
+}
+
+struct event_registration_scope_t {
+    const void* registration{nullptr};
+    event_registration_scope_t() = default;
+    explicit event_registration_scope_t(const void* identity) : registration(identity) {}
+    event_registration_scope_t(const event_registration_scope_t&) = delete;
+    event_registration_scope_t& operator=(const event_registration_scope_t&) = delete;
+    ~event_registration_scope_t() {
+        if (registration) {
+            {
+                std::lock_guard<std::mutex> lock(execution_state.event_mutex);
+                release_event_registration_locked(registration);
+            }
+            // The loop may retain one coalesced notification for this identity.
+            if (async_runtime_t* runtime = async_get_current_runtime())
+                async_runtime_wakeup(runtime);
+        }
+    }
+};
+
+static void run_slot_execution(int slot, slot_execution_t task);
+static void finish_slot_execution(int slot);
 static void run_slot_await_work(int slot, uint64_t generation, async_closure_t work);
 static void run_slot_await_resume(int slot, uint64_t generation, async_closure_t resume, int message);
 
@@ -178,7 +199,7 @@ static void discard_slot_await(int slot, uint64_t generation) {
     if (discarded) {
         destroy_closure_safely(&work, "await work destruction");
         destroy_closure_safely(&resume, "await resume destruction");
-        finish_slot_task(slot);
+        finish_slot_execution(slot);
     }
 }
 
@@ -193,7 +214,7 @@ static void run_slot_await_resume(int slot, uint64_t generation, async_closure_t
     }
     if (mudmux_execution_finalize_await(slot))
         return;
-    finish_slot_task(slot);
+    finish_slot_execution(slot);
 }
 
 static void run_slot_await_work(int slot, uint64_t generation, async_closure_t work) {
@@ -288,25 +309,23 @@ static void run_detached_work(detached_work_t task) {
     schedule_detached_completion(task.completion, completion_message);
 }
 
-static void finish_slot_task(int slot) {
-    in_flight_hook_t next_task;
-    bool run_next = false;
+static void finish_slot_execution(int slot) {
+    std::optional<slot_execution_t> next_task;
     {
         std::lock_guard<std::mutex> states_lock(execution_state.slot_states_mutex);
         if (slot >= 0 && slot < static_cast<int>(execution_state.slot_states.size())) {
             slot_execution_state_t& state = execution_state.slot_states[static_cast<std::size_t>(slot)];
             std::lock_guard<std::mutex> slot_lock(state.mutex);
             if (!state.pending.empty()) {
-                next_task = std::move(state.pending.front());
+                next_task.emplace(std::move(state.pending.front()));
                 state.pending.pop_front();
-                run_next = true;
             } else {
                 state.active = false;
             }
         }
     }
-    if (run_next && !execution_state.worker_pool.submit([slot, task = std::move(next_task)]() mutable {
-            run_slot_task(slot, std::move(task));
+    if (next_task && !execution_state.worker_pool.submit([slot, task = std::move(*next_task)]() mutable {
+            run_slot_execution(slot, std::move(task));
         })) {
         std::lock_guard<std::mutex> states_lock(execution_state.slot_states_mutex);
         if (slot >= 0 && slot < static_cast<int>(execution_state.slot_states.size())) {
@@ -320,21 +339,19 @@ static void finish_slot_task(int slot) {
         async_runtime_wakeup(runtime);
 }
 
-static void run_slot_task(int slot, in_flight_hook_t task) {
+static void run_slot_execution(int slot, slot_execution_t task) {
     worker_thread_scope_t worker_scope;
 
     // A slot may have been removed and reused after this task was accepted.
     // Do not invoke a hook or completion against that new connection.
     if (comm_abstract_generation(slot) == task.generation) {
-        void* data = task.payload.empty() ? nullptr : task.payload.data();
-        (void)mudmux_invoke_registered_hook(
-            task.hook_type, task.ctx, task.msg, data, task.payload.size(), false, task.current_slot);
-        if (comm_abstract_generation(slot) == task.generation && task.completion)
-            task.completion(task.completion_context, task.msg);
+        (void)task.execution.invoke(false);
+        if (comm_abstract_generation(slot) == task.generation)
+            task.execution.complete();
     }
     if (mudmux_execution_finalize_await(slot))
         return;
-    finish_slot_task(slot);
+    finish_slot_execution(slot);
 }
 
 } // namespace
@@ -366,7 +383,7 @@ extern "C" MUDMUX_EXPORT void mudmux_workers_stop() {
     }
     {
         std::lock_guard<std::mutex> event_lock(execution_state.event_mutex);
-        execution_state.pending_events.clear();
+        discard_pending_events_locked();
         execution_state.event_active = false;
     }
 
@@ -507,56 +524,145 @@ void mudmux_execution_cancel_await(int slot) {
     destroy_closure_safely(&work, "await work destruction");
     destroy_closure_safely(&resume, "await resume destruction");
     if (finish_pending_slot)
-        finish_slot_task(slot);
+        finish_slot_execution(slot);
 }
 
 mudmux_determinism_mode_t mudmux_execution_mode() { return execution_state.determinism_mode; }
 const char* mudmux_execution_mode_name() { return execution_state.determinism_mode == MUDMUX_DETERMINISM_STRICT ? "strict" : "relaxed"; }
 bool mudmux_workers_is_worker_thread() { return is_execution_worker_thread; }
 
-static void run_event_task(execution_state_t::event_task_t task) {
-    worker_thread_scope_t worker_scope;
-    (void)mudmux_invoke_hook(task.hook_func, task.ctx, task.msg, nullptr, 0, true);
+static void run_event_execution(mudmux_execution task, bool timely = false);
 
-    execution_state_t::event_task_t next{};
-    bool run_next = false;
+static void finish_event_execution() {
+    std::optional<mudmux_execution> next;
     {
         std::lock_guard<std::mutex> lock(execution_state.event_mutex);
         if (!execution_state.pending_events.empty()) {
-            next = execution_state.pending_events.front();
+            next.emplace(std::move(execution_state.pending_events.front()));
             execution_state.pending_events.pop_front();
-            run_next = true;
         } else {
             execution_state.event_active = false;
         }
     }
-    if (run_next && !execution_state.worker_pool.submit([next] { run_event_task(next); })) {
+    const void* next_registration = next ? next->event_registration() : nullptr;
+    if (next && !execution_state.worker_pool.submit([task = std::move(*next)]() mutable {
+            run_event_execution(std::move(task));
+        })) {
         std::lock_guard<std::mutex> lock(execution_state.event_mutex);
-        execution_state.pending_events.clear();
+        release_event_registration_locked(next_registration);
+        discard_pending_events_locked();
         execution_state.event_active = false;
     }
 }
 
-bool mudmux_execution_dispatch_event(mudmux_hook_func_t hook_func, void* ctx, int msg) {
-    if (!hook_func || !execution_state.running.load())
-        return false;
-    if (execution_state.determinism_mode == MUDMUX_DETERMINISM_STRICT) {
-        (void)mudmux_invoke_hook(hook_func, ctx, msg, nullptr, 0, true);
-        return true;
+static void run_event_execution(mudmux_execution task, bool timely) {
+    worker_thread_scope_t worker_scope;
+    try {
+        event_registration_scope_t registration_scope{task.event_registration()};
+        (void)task.invoke(true);
+        task.complete();
+    }
+    catch (...) {
+        if (!timely)
+            finish_event_execution();
+        throw;
+    }
+    if (!timely)
+        finish_event_execution();
+}
+
+static mudmux_dispatch_result_t enqueue_event_execution(mudmux_execution execution, bool timely) {
+    if (!execution_state.running.load())
+        return MUDMUX_DISPATCH_ERROR;
+    if (timely) {
+        if (execution_state.worker_pool.submit([task = std::move(execution)]() mutable {
+                run_event_execution(std::move(task), true);
+            }))
+            return MUDMUX_DISPATCH_QUEUED;
+        return MUDMUX_DISPATCH_ERROR;
     }
     {
         std::lock_guard<std::mutex> lock(execution_state.event_mutex);
         if (execution_state.event_active) {
-            execution_state.pending_events.push_back({hook_func, ctx, msg});
-            return true;
+            execution_state.pending_events.push_back(std::move(execution));
+            return MUDMUX_DISPATCH_QUEUED;
         }
         execution_state.event_active = true;
     }
-    if (execution_state.worker_pool.submit([hook_func, ctx, msg] { run_event_task({hook_func, ctx, msg}); }))
-        return true;
+    if (execution_state.worker_pool.submit([task = std::move(execution)]() mutable {
+            run_event_execution(std::move(task));
+        }))
+        return MUDMUX_DISPATCH_QUEUED;
     std::lock_guard<std::mutex> lock(execution_state.event_mutex);
+    discard_pending_events_locked();
     execution_state.event_active = false;
-    return false;
+    return MUDMUX_DISPATCH_ERROR;
+}
+
+mudmux_dispatch_result_t mudmux_execution_dispatch(
+    mudmux_execution execution, unsigned int flags) {
+    if (flags & ~MUDMUX_EXECUTION_TIMELY_EVENT)
+        return MUDMUX_DISPATCH_ERROR;
+    const bool timely = (flags & MUDMUX_EXECUTION_TIMELY_EVENT) != 0;
+    const bool registered = execution.is_registered_hook();
+    if (timely && (registered || !execution_state.running.load()))
+        return MUDMUX_DISPATCH_ERROR;
+
+    event_registration_scope_t registration_scope;
+    if (!registered) {
+        const void* registration = execution.event_registration();
+        if (timely && !registration)
+            return MUDMUX_DISPATCH_ERROR;
+        std::lock_guard<std::mutex> lock(execution_state.event_mutex);
+        if (timely && !execution_state.running.load())
+            return MUDMUX_DISPATCH_ERROR;
+        if (timely && execution_state.event_in_flight.count(registration))
+            return MUDMUX_DISPATCH_QUEUE_FULL;
+        if (registration) {
+            ++execution_state.event_in_flight[registration];
+            registration_scope.registration = registration;
+        }
+    }
+
+    const mudmux_hook_type_t hook_type = execution.hook_type();
+    const int requested_current_slot = execution.current_slot();
+    if (registered && hook_type == HOOK_MESSAGE_OUTBOUND && requested_current_slot < 0)
+        execution.set_current_slot(execution.message());
+
+    const bool invoke_inline = execution_state.determinism_mode == MUDMUX_DETERMINISM_STRICT ||
+        (registered && !mudmux_execution_should_dispatch_async(hook_type));
+    if (invoke_inline) {
+        const mudmux_dispatch_result_t result = execution.invoke(true) < 0
+            ? MUDMUX_DISPATCH_ERROR
+            : MUDMUX_DISPATCH_OK;
+        execution.complete();
+        if (registered)
+            (void)mudmux_execution_finalize_await(requested_current_slot);
+        return result;
+    }
+
+    if (!registered) {
+        const auto result = enqueue_event_execution(std::move(execution), timely);
+        if (result == MUDMUX_DISPATCH_QUEUED)
+            registration_scope.registration = nullptr; // worker owns admission
+        return result;
+    }
+
+    // Telnet subnegotiation uses current_slot because its message is an option.
+    const bool allow_pending = hook_type != HOOK_MESSAGE_INBOUND && hook_type != HOOK_TELNET_SUBNEG;
+    const int queue_slot = hook_type == HOOK_TELNET_SUBNEG
+        ? execution.current_slot()
+        : execution.message();
+    if (queue_slot < 0)
+        return MUDMUX_DISPATCH_ERROR;
+    return mudmux_execution_enqueue(std::move(execution), allow_pending, queue_slot);
+}
+
+bool mudmux_execution_event_busy(const void* registration) {
+    if (!registration)
+        return false;
+    std::lock_guard<std::mutex> lock(execution_state.event_mutex);
+    return execution_state.event_in_flight.count(registration) != 0;
 }
 
 bool mudmux_execution_slot_busy(int slot) {
@@ -570,25 +676,16 @@ bool mudmux_execution_slot_busy(int slot) {
     return state.active || state.await_requested || state.await_pending;
 }
 
-mudmux_dispatch_result_t mudmux_execution_enqueue_hook(
-    enum mudmux_hook_type_t hook_type, void* ctx, int msg, const void* data, size_t size,
-    mudmux_hook_completion_t completion, void* completion_context, bool allow_pending, int queue_slot, int current_slot_) {
-    const int slot = queue_slot >= 0 ? queue_slot : msg;
-    if (!execution_state.running.load() || slot < 0)
+mudmux_dispatch_result_t mudmux_execution_enqueue(
+    mudmux_execution execution, bool allow_pending, int queue_slot) {
+    const int slot = queue_slot >= 0 ? queue_slot : execution.message();
+    if (!execution_state.running.load() || slot < 0 || !execution.is_registered_hook())
         return MUDMUX_DISPATCH_ERROR;
 
-    in_flight_hook_t task;
-    task.hook_type = hook_type;
-    task.ctx = ctx;
-    task.msg = msg;
-    task.current_slot = current_slot_;
-    task.generation = comm_abstract_generation(slot);
-    task.completion = completion;
-    task.completion_context = completion_context;
-    if (data && size > 0) {
-        task.payload.resize(size);
-        memcpy(task.payload.data(), data, size);
-    }
+    // Parser-originated inbound data must never enter the continuation queue.
+    if (execution.hook_type() == HOOK_MESSAGE_INBOUND || execution.hook_type() == HOOK_TELNET_SUBNEG)
+        allow_pending = false;
+    slot_execution_t task{std::move(execution), comm_abstract_generation(slot)};
 
     {
         std::lock_guard<std::mutex> states_lock(execution_state.slot_states_mutex);
@@ -598,49 +695,15 @@ mudmux_dispatch_result_t mudmux_execution_enqueue_hook(
             if (!allow_pending || state.pending.size() >= execution_state.backlog_capacity)
                 return MUDMUX_DISPATCH_QUEUE_FULL;
             state.pending.push_back(std::move(task));
-            return MUDMUX_DISPATCH_OK;
+            return MUDMUX_DISPATCH_QUEUED;
         }
         state.active = true;
     }
 
-    if (execution_state.worker_pool.submit([slot, task = std::move(task)]() mutable { run_slot_task(slot, std::move(task)); }))
-        return MUDMUX_DISPATCH_OK;
+    if (execution_state.worker_pool.submit([slot, task = std::move(task)]() mutable { run_slot_execution(slot, std::move(task)); }))
+        return MUDMUX_DISPATCH_QUEUED;
 
-    finish_slot_task(slot);
-    return MUDMUX_DISPATCH_ERROR;
-}
-
-mudmux_dispatch_result_t mudmux_execution_enqueue_telnet_subneg(void* ctx, int slot, int option, const void* data, size_t size) {
-    // Telnet subnegotiation uses the same single in-flight guard.  Its hook
-    // message is the Telnet option rather than the communication slot.
-    if (!execution_state.running.load() || slot < 0)
-        return MUDMUX_DISPATCH_ERROR;
-    if (mudmux_execution_slot_busy(slot))
-        return MUDMUX_DISPATCH_QUEUE_FULL;
-
-    // The generic dispatcher uses slot as msg, so keep the special Telnet
-    // entry point until its hook signature is unified.
-    in_flight_hook_t task;
-    task.hook_type = HOOK_TELNET_SUBNEG;
-    task.ctx = ctx;
-    task.msg = option;
-    task.current_slot = slot;
-    task.generation = comm_abstract_generation(slot);
-    if (data && size) {
-        task.payload.resize(size);
-        memcpy(task.payload.data(), data, size);
-    }
-    {
-        std::lock_guard<std::mutex> states_lock(execution_state.slot_states_mutex);
-        slot_execution_state_t& state = ensure_slot_state_locked(execution_state.slot_states, slot);
-        std::lock_guard<std::mutex> slot_lock(state.mutex);
-        if (state.active)
-            return MUDMUX_DISPATCH_QUEUE_FULL;
-        state.active = true;
-    }
-    if (execution_state.worker_pool.submit([slot, task = std::move(task)]() mutable { run_slot_task(slot, std::move(task)); }))
-        return MUDMUX_DISPATCH_OK;
-    finish_slot_task(slot);
+    finish_slot_execution(slot);
     return MUDMUX_DISPATCH_ERROR;
 }
 

@@ -32,8 +32,11 @@ enum mudmux_hook_type_t {
 
 enum mudmux_dispatch_result_t {
 	MUDMUX_DISPATCH_ERROR = -1,
+	/** The hook was invoked inline and returned a nonnegative result. */
 	MUDMUX_DISPATCH_OK = 0,
 	MUDMUX_DISPATCH_QUEUE_FULL = 1,
+	/** Accepted for worker execution; no hook result is available yet. */
+	MUDMUX_DISPATCH_QUEUED = 2,
 };
 
 typedef int (*mudmux_hook_func_t)(void* ctx, int msg, void* data, size_t size);
