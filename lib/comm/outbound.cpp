@@ -309,15 +309,10 @@ void comm_add_message (int to_slot, const void *buf, size_t len) {
         return;
     }
 
-    // The hook receives an isolated payload. This keeps the caller's input
-    // immutable even when the generic hook signature exposes a void pointer.
-    std::vector<char> message(static_cast<const char*>(buf), static_cast<const char*>(buf) + len);
+    // The execution context owns an isolated copy of the caller's payload.
     async_runtime_t* runtime = async_get_current_runtime();
-    (void)mudmux_dispatch_hook_after(HOOK_MESSAGE_OUTBOUND,
-        runtime ? async_runtime_get_context(runtime) : nullptr,
-        to_slot,
-        message.data(),
-        len);
+    (void)mudmux_execution_dispatch(mudmux_execution(HOOK_MESSAGE_OUTBOUND,
+        runtime ? async_runtime_get_context(runtime) : nullptr, to_slot, len, buf));
 }
 
 void comm_add_vformatted_message (int to_slot, const char *fmt, va_list args) {
@@ -567,15 +562,10 @@ static bool comm_close_impl(async_runtime_t* runtime, int slot, bool signal_cons
         comm->flags &= ~C_DISCONNECT_PENDING;
         mudmux_execution_cancel_await(slot);
         comm->flags |= C_AWAITING_HOOK;
-        const mudmux_dispatch_result_t dispatch_result = mudmux_dispatch_hook_after(
-            HOOK_DISCONNECT,
-            async_runtime_get_context(runtime),
-            slot,
-            nullptr,
-            0,
-            _disconnect_hook_complete,
-            nullptr);
-        if (dispatch_result == MUDMUX_DISPATCH_QUEUE_FULL) {
+        mudmux_execution execution(HOOK_DISCONNECT, async_runtime_get_context(runtime), slot);
+        execution.set_completion(_disconnect_hook_complete);
+        auto result = mudmux_execution_dispatch(std::move(execution));
+        if (result == MUDMUX_DISPATCH_QUEUE_FULL) {
             // A hook for this slot is still running.  Preserve only this
             // terminal lifecycle transition; no application payload is kept.
             // Its completion wakes the event loop, which retries comm_close().
@@ -583,14 +573,13 @@ static bool comm_close_impl(async_runtime_t* runtime, int slot, bool signal_cons
             comm->flags &= ~C_AWAITING_HOOK;
             return false;
         }
-        if (dispatch_result != MUDMUX_DISPATCH_OK) {
+        if (!mudmux_dispatch_accepted(result)) {
             comm->flags &= ~C_AWAITING_HOOK;
         }
 
         comm->flags &= ~C_ENABLE_PROMPT; // disable prompt to avoid corrupted L7 shutdown sequence
 
-        if (dispatch_result == MUDMUX_DISPATCH_OK &&
-            mudmux_execution_should_dispatch_async(HOOK_DISCONNECT)) {
+        if (result == MUDMUX_DISPATCH_QUEUED) {
             // Do not remove/reuse the slot while the disconnect callback is
             // executing on a worker.  Its completion wakes the event loop.
             return false;
@@ -683,10 +672,5 @@ bool comm_close_after_console_eof(async_runtime_t* runtime, int slot) {
 }
 
 int comm_invoke_disconnect (async_runtime_t* runtime, int slot) {
-    return mudmux_dispatch_hook_after (HOOK_DISCONNECT,
-        async_runtime_get_context(runtime),
-        slot,
-        nullptr,
-        0
-    );
+    return mudmux_execution_dispatch(mudmux_execution(HOOK_DISCONNECT, async_runtime_get_context(runtime), slot));
 }

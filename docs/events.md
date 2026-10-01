@@ -72,7 +72,7 @@ full parsing and ordering contract.
 | `HOOK_TRANSPORT_READY` | The selected transport framing is ready for application input. It fires once before the first inbound application message. | `msg` is the slot; `data == NULL` and `size == 0`. |
 | `HOOK_PROMPT` | A prompt-enabled slot is idle: no inbound or outbound work is pending and no slot event hook is in flight. It fires once until the next inbound message clears its prompt gate. | `msg` is the slot; `data == NULL` and `size == 0`. |
 | `HOOK_TELNET_SUBNEG` | A Telnet subnegotiation is parsed. | `msg` is the Telnet option; `data` and `size` are its payload. |
-| `HOOK_TIMER` | mudmux's internal timer event is signalled. | `msg` is supplied to `mudmux_trigger_timer()`; no payload. |
+| `HOOK_TIMER` | mudmux's internal timer event has pending flags. | Positive `msg` is the bitwise OR of pending `mudmux_trigger_timer()` flags; no payload. |
 | `HOOK_GARBAGE_COLLECTION` | End of every completed loop iteration. | `msg == -1`, `data == NULL`, and `size == 0`. |
 
 The event-hook-specific documents in [hooks/](hooks/) define the detailed
@@ -176,6 +176,9 @@ that delivery. In both cases, a signal that arrives while the callback runs
 remains pending for a later loop iteration. Signals are notifications, not a
 counted work queue: repeated sets can coalesce, so callbacks should drain an
 application-owned queue rather than expect one callback per produced item.
+In relaxed mode, mudmux retains one coalesced notification while the registration
+has an execution in flight, then retries after its completion. Timer notifications
+accumulate the bitwise OR of supplied flags until that retry can be dispatched.
 
 For this single-consumer callback model, either reset mode is suitable. Use a
 manual-reset event when the signalled condition must also remain observable to
@@ -210,27 +213,39 @@ Both lifecycle callbacks have `data == NULL` and `size == 0`. They run inline
 even in relaxed mode, so the start notification completes before I/O dispatch
 and the stop notification is guaranteed before the call returns.
 
-For application timer work, call `mudmux_trigger_timer(msg)` to wake the loop
-and deliver that message:
+For application timer work, call `mudmux_trigger_timer(flags)` with nonzero
+`unsigned int` flags to wake the loop and deliver their accumulated bit mask:
 
 ```c
 static int on_timer(void *context, int msg, void *data, size_t size) {
     (void)context;
     (void)data;
     (void)size;
-    /* Handle timer reason msg. */
+    if (msg == 0) { /* Startup. */ }
+    else if (msg == -1) { /* Shutdown. */ }
+    else {
+        if (msg & 1u) { /* Handle timer condition A. */ }
+        if (msg & 2u) { /* Handle timer condition B. */ }
+    }
     return 0;
 }
 
 mudmux_register_hook(HOOK_TIMER, on_timer);
-mudmux_trigger_timer(42); /* Application messages must not use 0 or -1. */
+mudmux_trigger_timer(1u | 2u);
 ```
 
-Timer signals also coalesce. If several calls happen before the event-loop
-dispatch, the callback observes the most recently stored `msg`; use an
-application queue when every timer request must be retained. Values `0` and
-`-1` are reserved for the start and stop notifications, respectively;
-`mudmux_trigger_timer()` rejects them.
+Timer triggers form an accumulated pending mask. Dispatch atomically takes and
+clears the bitwise OR of pending flags. Repeated occurrences of a bit coalesce;
+triggers after consumption, including during an in-flight callback, accumulate
+for a subsequent invocation. Use an application queue when occurrence counts
+or ordering must be retained.
+
+`mudmux_trigger_timer()` rejects zero and any flags containing the highest
+`unsigned int` bit, so application masks remain positive `int` values. Hook
+messages `0` and `-1` remain reserved for startup and shutdown. The native event
+is only a wakeup hint: signaling `mudmux_get_timer_event()` without publishing
+flags does not invoke the timer hook. Redundant readiness never produces a
+lifecycle notification.
 
 ## Threading and ordering
 
@@ -258,7 +273,12 @@ substitute for the slot argument supplied to an event hook.
 
 Registered custom async-event callbacks and the `HOOK_TIMER` event hook are
 global rather than slot-bound. In relaxed mode their callbacks are dispatched
-through the execution pool but are serialized with one another.
+through the execution pool and serialized per registration, including completion.
+Different registrations can overlap, even if they share the same callback.
+This gives each registered queue-draining callback one consumer while allowing
+independent queues to progress. A thread-safe queue protects its stored messages;
+shared application state and ordering across registrations still require explicit
+synchronization. Use one registration to drain work that must execute in order.
 `HOOK_GARBAGE_COLLECTION` remains on the
 event-loop thread in both modes and can overlap worker-thread callbacks in
 relaxed mode.

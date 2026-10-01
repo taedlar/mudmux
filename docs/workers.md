@@ -50,8 +50,13 @@ thread. In relaxed mode, these event hooks are eligible for worker execution:
 - `HOOK_PROMPT`
 - `HOOK_TELNET_SUBNEG`
 
-`HOOK_TIMER` and registered non-slot async events use a separate serialized
-event lane. They do not consume a communication slot's execution state.
+`HOOK_TIMER` signals and registered non-slot async events are scheduled per
+event registration. In relaxed mode, different registrations may run
+concurrently, even when they share a callback. Repeat signals for a registration
+already scheduled or executing coalesce into one notification, which is retried
+after completion. The registration remains busy through completion; there is no
+queue of event execution objects. These events do not consume
+a communication slot's execution state.
 `HOOK_GARBAGE_COLLECTION` always remains inline on the event-loop thread.
 
 ## Player logic ordering
@@ -188,6 +193,13 @@ specific slot's inbound ordering contract.
 runtime-bound APIs after `mudmux_init()` and before `mudmux_deinit()`.
 
 ## Failure behavior and verification
+
+`mudmux_shutdown()` requests shutdown and returns immediately. Before
+`mudmux_run()` destroys its async runtime or returns, it stops worker admission
+and joins worker executions, including event hooks, detached work, and their
+completions. Runtime setup failures also join workers before teardown. The
+runtime and callback context remain available during this join. A later
+`mudmux_run()` restarts the configured pool before transport setup if needed.
 
 Workers catch standard and non-standard C++ exceptions from submitted tasks,
 log them, and continue processing later tasks. This prevents an uncaught

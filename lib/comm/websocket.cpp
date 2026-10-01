@@ -573,7 +573,7 @@ static mudmux_dispatch_result_t _decode_websocket_telnet_payload(
             comm_process_telnet_options(comm, &telnet_neg);
         if (telnet_neg.sb_len > 0) {
             const mudmux_dispatch_result_t result = comm_dispatch_telnet_subnegotiation(runtime, comm, telnet_neg);
-            if (result != MUDMUX_DISPATCH_OK)
+            if (!mudmux_dispatch_accepted(result))
                 return result;
         }
         application_data.append(decoded.data(), copied);
@@ -635,7 +635,7 @@ comm_process_result_t comm_process_websocket_input(async_runtime_t* runtime, com
             const mudmux_dispatch_result_t result = (comm->flags & C_ENABLE_TELNET)
                 ? _decode_websocket_telnet_payload(runtime, comm, message, websocket.decoded_input)
                 : MUDMUX_DISPATCH_OK;
-            if (result != MUDMUX_DISPATCH_OK) {
+            if (!mudmux_dispatch_accepted(result)) {
                 if (result == MUDMUX_DISPATCH_QUEUE_FULL) {
                     comm->flags |= C_DEFERRED_INBOUND;
                     has_deferred_input.store(true, std::memory_order_release);

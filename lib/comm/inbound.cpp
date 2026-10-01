@@ -132,17 +132,10 @@ void comm_invoke_prompt (async_runtime_t* runtime) {
             mudmux_execution_slot_busy(slot))
             continue;
 
-        const mudmux_dispatch_result_t dispatch_result = mudmux_dispatch_hook_after(
-            HOOK_PROMPT,
-            async_runtime_get_context(runtime),
-            slot,
-            nullptr,
-            0,
-            nullptr,
-            nullptr,
-            slot
-        );
-        if (dispatch_result == MUDMUX_DISPATCH_OK)
+        mudmux_execution execution(HOOK_PROMPT, async_runtime_get_context(runtime), slot);
+        execution.set_current_slot(slot);
+        auto result = mudmux_execution_dispatch(std::move(execution));
+        if (mudmux_dispatch_accepted(result))
             comm->flags |= C_INVOKED_PROMPT;
     }
 }
@@ -277,16 +270,11 @@ void comm_invoke_transport_ready(async_runtime_t* runtime, int slot) {
     if (await_ready_hook)
         comm->flags |= C_AWAITING_HOOK;
 
-    const mudmux_dispatch_result_t result = mudmux_dispatch_hook_after(
-        HOOK_TRANSPORT_READY,
-        async_runtime_get_context(runtime),
-        slot,
-        nullptr,
-        0,
-        await_ready_hook ? _resume_input_after_transport_ready_hook : nullptr,
-        nullptr,
-        slot);
-    if (result != MUDMUX_DISPATCH_OK) {
+    mudmux_execution execution(HOOK_TRANSPORT_READY, async_runtime_get_context(runtime), slot);
+    execution.set_completion(await_ready_hook ? _resume_input_after_transport_ready_hook : nullptr);
+    execution.set_current_slot(slot);
+    auto result = mudmux_execution_dispatch(std::move(execution));
+    if (!mudmux_dispatch_accepted(result)) {
         comm->flags &= ~(C_TRANSPORT_READY | C_AWAITING_HOOK);
     }
 }
@@ -353,16 +341,12 @@ int comm_invoke_connect (async_runtime_t* runtime, int slot, int entry_slot) {
             comm->flags |= C_AWAITING_HOOK;
     }
 
-    const mudmux_dispatch_result_t result = mudmux_dispatch_hook_after(
-        HOOK_CONNECT,
-        async_runtime_get_context(runtime),
-        slot,
-        entry_name.data(),
-        entry_name.size(),
-        await_connect_hook ? _resume_input_after_connect_hook : nullptr,
-        await_connect_hook ? runtime : nullptr,
-        slot);
-    if (await_connect_hook && result != MUDMUX_DISPATCH_OK) {
+    mudmux_execution execution(HOOK_CONNECT, async_runtime_get_context(runtime), slot, entry_name);
+    execution.set_completion(await_connect_hook ? _resume_input_after_connect_hook : nullptr,
+                             await_connect_hook ? runtime : nullptr);
+    execution.set_current_slot(slot);
+    auto result = mudmux_execution_dispatch(std::move(execution));
+    if (await_connect_hook && !mudmux_dispatch_accepted(result)) {
         comm_abstract_ptr comm(slot, comm_slots_mtx);
         if (comm)
             comm->flags &= ~C_AWAITING_HOOK;
@@ -396,15 +380,10 @@ int comm_invoke_inbound_message (async_runtime_t* runtime, comm_abstract_ptr& co
         has_deferred_input.store(true, std::memory_order_release);
     }
 
-    const mudmux_dispatch_result_t result = mudmux_dispatch_hook_after(
-        HOOK_MESSAGE_INBOUND,
-        async_runtime_get_context(runtime),
-        comm.slot(),
-        data,
-        size,
-        await_inbound_hook ? _resume_input_after_inbound_hook : nullptr,
-        nullptr,
-        comm.slot());
+    mudmux_execution execution(HOOK_MESSAGE_INBOUND, async_runtime_get_context(runtime), comm.slot(), size, data);
+    execution.set_completion(await_inbound_hook ? _resume_input_after_inbound_hook : nullptr);
+    execution.set_current_slot(comm.slot());
+    auto result = mudmux_execution_dispatch(std::move(execution));
     return static_cast<int>(result);
 }
 

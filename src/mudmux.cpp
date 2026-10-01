@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <cstdint>
 #include <filesystem>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -61,6 +62,8 @@ static std::filesystem::path server_private_key_path; // path to server private 
 struct event_registration_t {
     async_event_t* event;
     mudmux_hook_func_t hook_func;
+    // Owned by the event-loop thread; signals coalesce while work is in flight.
+    bool pending{false};
 };
 
 static std::mutex event_registrations_mutex;
@@ -68,7 +71,7 @@ static std::vector<std::unique_ptr<event_registration_t>> event_registrations;
 static async_event_t timer_event;
 static bool timer_event_initialized{false};
 static bool timer_event_registered{false};
-static std::atomic<int> timer_event_msg{-1};
+static std::atomic<unsigned int> timer_pending_flags{0};
 static int keep_alive_interval_seconds{20};
 
 static bool comm_api_thread_guard(const char* api_name) {
@@ -240,7 +243,7 @@ MUDMUX_EXPORT bool mudmux_init (const char* config_yaml) {
 #endif
     mudmux_workers_configure(1);
     keep_alive_interval_seconds = 20;
-    timer_event_msg.store(-1, std::memory_order_relaxed);
+    timer_pending_flags.store(0, std::memory_order_relaxed);
     init_async_api();
     init_comm_api();
     init_execution_api();
@@ -388,14 +391,14 @@ MUDMUX_EXPORT async_event_t* mudmux_get_timer_event(void) {
     return timer_event_initialized ? &timer_event : nullptr;
 }
 
-MUDMUX_EXPORT bool mudmux_trigger_timer(int msg) {
+MUDMUX_EXPORT bool mudmux_trigger_timer(unsigned int flags) {
     if (!timer_event_initialized)
         return false;
-    if (msg == 0 || msg == -1) {
-        SPDLOG_ERROR("mudmux_trigger_timer() message {} is reserved for timer lifecycle notifications", msg);
+    if (flags == 0 || flags > static_cast<unsigned int>(std::numeric_limits<int>::max())) {
+        SPDLOG_ERROR("mudmux_trigger_timer() flags {} must be nonzero and exclude the reserved highest bit", flags);
         return false;
     }
-    timer_event_msg.store(msg, std::memory_order_release);
+    timer_pending_flags.fetch_or(flags, std::memory_order_release);
     async_event_set(&timer_event);
     return true;
 }
@@ -407,6 +410,39 @@ static event_registration_t* find_event_registration(void* context) {
             return registration.get();
     }
     return nullptr;
+}
+
+static void dispatch_registered_event(async_runtime_t* runtime, event_registration_t& registration) {
+    if (!registration.pending || mudmux_execution_event_busy(&registration))
+        return;
+    mudmux_hook_func_t hook_func = registration.hook_func
+        ? registration.hook_func
+        : mudmux_get_registered_hook(HOOK_TIMER);
+    registration.pending = false;
+    if (!hook_func)
+        return;
+
+    // Merge any still-signalled native event into the retained notification.
+    // Signals after this acknowledgement remain available for the next pass.
+    async_event_reset(registration.event);
+    // The mask is authoritative; native readiness is only a wakeup hint.
+    // Reset before consuming so a racing producer either joins this batch or
+    // leaves flags and a signal for the next one. Ignore redundant readiness.
+    const bool timer = registration.event == &timer_event;
+    const unsigned int flags = timer ? timer_pending_flags.exchange(0, std::memory_order_acq_rel) : 0;
+    if (timer && flags == 0)
+        return;
+    const int msg = timer ? static_cast<int>(flags) : -1;
+    mudmux_execution execution(hook_func, async_runtime_get_context(runtime), msg);
+    execution.set_event_registration(&registration);
+    const auto result = mudmux_execution_dispatch(std::move(execution), MUDMUX_EXECUTION_TIMELY_EVENT);
+    if (result == MUDMUX_DISPATCH_QUEUE_FULL) {
+        registration.pending = true;
+        if (timer) {
+            // Merge the rejected batch with any concurrently published flags.
+            timer_pending_flags.fetch_or(flags, std::memory_order_release);
+        }
+    }
 }
 
 static bool register_runtime_events(async_runtime_t* runtime) {
@@ -433,6 +469,11 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
 
     if (success)
         success = register_runtime_events(runtime);
+
+    // A previous run joins workers before destroying its runtime. Restore the
+    // configured pool before any transport setup can dispatch connect hooks.
+    if (success && mudmux_workers_pool_size() == 0)
+        success = mudmux_workers_start();
 
     if (success) {
         if (enable_console || enable_standard_input) { // console input is enabled, initialize console worker
@@ -462,10 +503,12 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
 
     if (!success) {
         SPDLOG_ERROR ("failed to initialize");
+        mudmux_workers_stop();
         comm_shutdown_async_file_input();
         comm_shutdown_console(runtime);
         async_runtime_deinit(runtime);
         is_running.store(false);
+        mud_logic_thread_id = std::thread::id();
         return EXIT_FAILURE;
     }
 
@@ -514,18 +557,12 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
             auto& event = events[i];
 
             if (event_registration_t* registration = find_event_registration(event.context)) {
-                // Manual-reset events are acknowledged before dispatch so a
-                // signal delivered while the hook runs remains pending.
+                // Auto-reset signals have already been consumed by the backend.
+                // Retain readiness before attempting admission for either mode.
                 if (async_event_is_manual_reset(registration->event))
                     async_event_reset(registration->event);
-                mudmux_hook_func_t hook_func = registration->hook_func
-                    ? registration->hook_func
-                    : mudmux_get_registered_hook(HOOK_TIMER);
-                const int msg = registration->event == &timer_event
-                    ? timer_event_msg.exchange(-1, std::memory_order_acq_rel)
-                    : -1;
-                if (hook_func && !mudmux_execution_dispatch_event(hook_func, async_runtime_get_context(runtime), msg))
-                    SPDLOG_WARN("failed to dispatch async event hook");
+                registration->pending = true;
+                dispatch_registered_event(runtime, *registration);
                 continue;
             }
 
@@ -610,6 +647,11 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
                 }
             }
         }
+        // Registrations are immutable during mudmux_run(). A worker finishing
+        // an event wakes the runtime, so retained readiness can be retried even
+        // when there are no new native event signals.
+        for (const auto& registration : event_registrations)
+            dispatch_registered_event(runtime, *registration);
         if (comm_has_deferred_input())
             comm_resume_deferred_input(runtime);
 
@@ -668,13 +710,14 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
                 break;
             }
         }
-
-        // A disconnect hook may queue a final message.  The event loop is no
-        // longer running, but the transports are still valid here, so make a
-        // best-effort attempt to send that output before teardown removes
-        // their slots.
-        comm_flush_all(runtime);
     }
+
+    // Slot shutdown alone does not cover non-slot event hooks, detached work,
+    // or their completions. Reject new worker work and join accepted tasks
+    // while the runtime, context, registrations, and communications remain valid.
+    mudmux_workers_stop();
+    // A final hook or completion may have buffered output while we joined.
+    comm_flush_all(runtime);
 
     // cleanup communications and teardown subsystems
     comm_shutdown_async_file_input();

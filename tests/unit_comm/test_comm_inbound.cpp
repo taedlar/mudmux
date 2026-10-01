@@ -375,6 +375,315 @@ int blocking_inbound_hook(void*, int, void*, size_t) {
 
 } // namespace
 
+TEST_F(CommInboundTest, ExecutionEventOwnsPayloadAndRunsCompletionInBothModes) {
+    struct context_t {
+        std::string payload;
+        int message{-1};
+        int current_slot{-1};
+        bool worker_thread{false};
+        std::promise<int> completed;
+    };
+
+    for (int pool_size : {1, 2}) {
+        mudmux_workers_stop();
+        mudmux_workers_configure(pool_size);
+        ASSERT_TRUE(mudmux_workers_start());
+
+        context_t context;
+        auto completed = context.completed.get_future();
+        const mudmux_hook_func_t hook = [](void* ctx, int msg, void* data, size_t size) {
+            auto& state = *static_cast<context_t*>(ctx);
+            state.payload.assign(static_cast<char*>(data), size);
+            state.message = msg;
+            state.current_slot = comm_current_slot();
+            state.worker_thread = mudmux_workers_is_worker_thread();
+            static_cast<char*>(data)[0] = 'x';
+            return 0;
+        };
+        std::string source("a\0b", 3);
+        mudmux_execution execution(hook, &context, 42, source);
+        execution.set_current_slot(7);
+        execution.set_event_registration(&context);
+        execution.set_completion([](void* ctx, int msg) {
+            static_cast<context_t*>(ctx)->completed.set_value(msg);
+        }, &context);
+        source = "changed";
+
+        EXPECT_EQ(mudmux_execution_dispatch(std::move(execution), MUDMUX_EXECUTION_TIMELY_EVENT),
+                  pool_size == 1 ? MUDMUX_DISPATCH_OK : MUDMUX_DISPATCH_QUEUED);
+        const auto status = completed.wait_for(std::chrono::seconds(2));
+        mudmux_workers_stop();
+        ASSERT_EQ(status, std::future_status::ready);
+        EXPECT_EQ(completed.get(), 42);
+        EXPECT_EQ(context.message, 42);
+        EXPECT_EQ(context.current_slot, 7);
+        EXPECT_EQ(context.worker_thread, pool_size > 1);
+        EXPECT_EQ(context.payload, std::string("a\0b", 3));
+        EXPECT_EQ(source, "changed");
+    }
+}
+
+TEST_F(CommInboundTest, ExecutionDispatchDefaultsToStoppedInline) {
+    mudmux_workers_stop();
+    mudmux_workers_configure(1);
+    struct context_t {
+        int invocations{0};
+        int completions{0};
+    } context;
+    const mudmux_hook_func_t hook = [](void* ctx, int, void*, size_t) {
+        ++static_cast<context_t*>(ctx)->invocations;
+        return 0;
+    };
+    ASSERT_TRUE(mudmux_register_hook(HOOK_MESSAGE_INBOUND, hook));
+    ASSERT_TRUE(mudmux_register_hook(HOOK_GARBAGE_COLLECTION, hook));
+
+    for (bool registered : {false, true}) {
+        mudmux_execution execution = registered
+            ? mudmux_execution(HOOK_MESSAGE_INBOUND, &context, 0)
+            : mudmux_execution(hook, &context);
+        execution.set_completion([](void* ctx, int) {
+            ++static_cast<context_t*>(ctx)->completions;
+        }, &context);
+        EXPECT_EQ(mudmux_execution_dispatch(execution), MUDMUX_DISPATCH_OK);
+    }
+    EXPECT_EQ(context.invocations, 2);
+    EXPECT_EQ(context.completions, 2);
+
+    mudmux_execution event(hook, &context);
+    event.set_event_registration(&context);
+    event.set_completion([](void* ctx, int) {
+        ++static_cast<context_t*>(ctx)->completions;
+    }, &context);
+    EXPECT_EQ(mudmux_execution_dispatch(event, MUDMUX_EXECUTION_TIMELY_EVENT),
+              MUDMUX_DISPATCH_ERROR);
+    EXPECT_EQ(context.invocations, 2);
+    EXPECT_EQ(context.completions, 2);
+
+    // Default flags permit stopped inline work without changing relaxed routing.
+    mudmux_workers_configure(2);
+    EXPECT_EQ(mudmux_execution_dispatch(event), MUDMUX_DISPATCH_ERROR);
+    EXPECT_EQ(mudmux_execution_dispatch(mudmux_execution(HOOK_MESSAGE_INBOUND, &context, 0)),
+              MUDMUX_DISPATCH_ERROR);
+    EXPECT_EQ(mudmux_execution_dispatch(event, MUDMUX_EXECUTION_TIMELY_EVENT),
+              MUDMUX_DISPATCH_ERROR);
+    EXPECT_EQ(context.invocations, 2);
+    EXPECT_EQ(context.completions, 2);
+    EXPECT_EQ(mudmux_execution_dispatch(mudmux_execution(HOOK_GARBAGE_COLLECTION, &context)),
+              MUDMUX_DISPATCH_OK);
+    EXPECT_EQ(context.invocations, 3);
+}
+
+TEST_F(CommInboundTest, TimelyEventsScheduleIndependentlyAndDropOnlyDuplicateRegistrations) {
+    mudmux_workers_stop();
+    mudmux_workers_configure(2);
+    ASSERT_TRUE(mudmux_workers_start());
+    struct context_t {
+        std::promise<void> first_completion_entered;
+        std::shared_future<void> release;
+        std::promise<void> second_completed;
+        std::atomic<int> first_invocations{0};
+        std::atomic<int> second_invocations{0};
+        std::atomic<int> dropped_completions{0};
+    } context;
+    int first_registration = 0;
+    int second_registration = 0;
+    std::promise<void> release;
+    context.release = release.get_future().share();
+    auto entered = context.first_completion_entered.get_future();
+    auto second_done = context.second_completed.get_future();
+
+    // Both registrations deliberately share their callback and context.
+    const mudmux_hook_func_t hook = [](void* ctx, int msg, void*, size_t) {
+        auto& state = *static_cast<context_t*>(ctx);
+        if (msg == 1)
+            state.first_invocations.fetch_add(1);
+        else
+            state.second_invocations.fetch_add(1);
+        return 0;
+    };
+    mudmux_execution first(hook, &context, 1);
+    first.set_event_registration(&first_registration);
+    first.set_completion([](void* ctx, int) {
+        auto& state = *static_cast<context_t*>(ctx);
+        state.first_completion_entered.set_value();
+        state.release.wait();
+    }, &context);
+    EXPECT_EQ(mudmux_execution_dispatch(std::move(first), MUDMUX_EXECUTION_TIMELY_EVENT),
+              MUDMUX_DISPATCH_QUEUED);
+    const auto status = entered.wait_for(std::chrono::seconds(2));
+    if (status != std::future_status::ready) {
+        release.set_value();
+        mudmux_workers_stop();
+        FAIL() << "first event completion did not start";
+    }
+
+    // The registration remains busy through completion, not just the hook.
+    mudmux_execution duplicate(hook, &context, 1);
+    duplicate.set_event_registration(&first_registration);
+    duplicate.set_completion([](void* ctx, int) {
+        static_cast<context_t*>(ctx)->dropped_completions.fetch_add(1);
+    }, &context);
+    EXPECT_EQ(mudmux_execution_dispatch(std::move(duplicate), MUDMUX_EXECUTION_TIMELY_EVENT),
+              MUDMUX_DISPATCH_QUEUE_FULL);
+
+    mudmux_execution second(hook, &context, 2);
+    second.set_event_registration(&second_registration);
+    second.set_completion([](void* ctx, int) {
+        static_cast<context_t*>(ctx)->second_completed.set_value();
+    }, &context);
+    EXPECT_EQ(mudmux_execution_dispatch(std::move(second), MUDMUX_EXECUTION_TIMELY_EVENT),
+              MUDMUX_DISPATCH_QUEUED);
+    const auto second_status = second_done.wait_for(std::chrono::seconds(2));
+    // Release and join before assertions, even if independent scheduling failed.
+    release.set_value();
+    mudmux_workers_stop();
+    EXPECT_EQ(second_status, std::future_status::ready);
+    EXPECT_EQ(context.first_invocations.load(), 1);
+    EXPECT_EQ(context.second_invocations.load(), 1);
+    EXPECT_EQ(context.dropped_completions.load(), 0);
+
+    // The first registration is available again once its completion has ended.
+    ASSERT_TRUE(mudmux_workers_start());
+    mudmux_execution next(hook, &context, 1);
+    next.set_event_registration(&first_registration);
+    EXPECT_EQ(mudmux_execution_dispatch(std::move(next), MUDMUX_EXECUTION_TIMELY_EVENT),
+              MUDMUX_DISPATCH_QUEUED);
+    mudmux_workers_stop();
+    EXPECT_EQ(context.first_invocations.load(), 2);
+}
+
+TEST_F(CommInboundTest, TimelyEventRegistrationIsReservedWhileWaitingForAWorker) {
+    mudmux_workers_stop();
+    mudmux_workers_configure(2);
+    ASSERT_TRUE(mudmux_workers_start());
+    struct context_t {
+        std::promise<void> workers_entered;
+        std::shared_future<void> release;
+        std::atomic<int> blockers{0};
+        std::atomic<int> queued_invocations{0};
+    } context;
+    std::promise<void> release;
+    context.release = release.get_future().share();
+    auto entered = context.workers_entered.get_future();
+    std::array<int, 3> registrations{};
+    const mudmux_hook_func_t hook = [](void* ctx, int msg, void*, size_t) {
+        auto& state = *static_cast<context_t*>(ctx);
+        if (msg < 2) {
+            if (state.blockers.fetch_add(1) + 1 == 2)
+                state.workers_entered.set_value();
+            state.release.wait();
+        } else {
+            state.queued_invocations.fetch_add(1);
+        }
+        return 0;
+    };
+    for (int index = 0; index < 2; ++index) {
+        mudmux_execution execution(hook, &context, index);
+        execution.set_event_registration(&registrations[index]);
+        EXPECT_EQ(mudmux_execution_dispatch(std::move(execution), MUDMUX_EXECUTION_TIMELY_EVENT),
+                  MUDMUX_DISPATCH_QUEUED);
+    }
+    const auto status = entered.wait_for(std::chrono::seconds(2));
+    if (status != std::future_status::ready) {
+        release.set_value();
+        mudmux_workers_stop();
+        FAIL() << "worker hooks did not start";
+    }
+    mudmux_execution queued(hook, &context, 2);
+    queued.set_event_registration(&registrations[2]);
+    EXPECT_EQ(mudmux_execution_dispatch(queued, MUDMUX_EXECUTION_TIMELY_EVENT), MUDMUX_DISPATCH_QUEUED);
+    EXPECT_EQ(mudmux_execution_dispatch(queued, MUDMUX_EXECUTION_TIMELY_EVENT), MUDMUX_DISPATCH_QUEUE_FULL);
+    EXPECT_EQ(context.queued_invocations.load(), 0);
+    release.set_value();
+    mudmux_workers_stop();
+    EXPECT_EQ(context.queued_invocations.load(), 1);
+}
+
+TEST_F(CommInboundTest, TimelyInlineEventRejectsReentryAndReleasesAdmissionAfterFailure) {
+    struct context_t {
+        mudmux_dispatch_result_t nested_result{MUDMUX_DISPATCH_OK};
+        int invocations{0};
+    } context;
+    const mudmux_hook_func_t hook = [](void* ctx, int, void*, size_t) {
+        auto& state = *static_cast<context_t*>(ctx);
+        ++state.invocations;
+        const mudmux_hook_func_t nested = [](void* nested_ctx, int, void*, size_t) {
+            ++static_cast<context_t*>(nested_ctx)->invocations;
+            return 0;
+        };
+        mudmux_execution execution(nested, ctx);
+        execution.set_event_registration(ctx);
+        state.nested_result = mudmux_execution_dispatch(std::move(execution),
+                                                       MUDMUX_EXECUTION_TIMELY_EVENT);
+        return -1;
+    };
+    int attempts = 0;
+    for (unsigned int flags : {0u, MUDMUX_EXECUTION_TIMELY_EVENT}) {
+        mudmux_execution execution(hook, &context);
+        execution.set_event_registration(&context);
+        EXPECT_EQ(mudmux_execution_dispatch(std::move(execution), flags),
+                  MUDMUX_DISPATCH_ERROR);
+        EXPECT_EQ(context.nested_result, MUDMUX_DISPATCH_QUEUE_FULL);
+        EXPECT_EQ(context.invocations, ++attempts);
+    }
+}
+
+TEST_F(CommInboundTest, ExecutionDispatchReportsInlineFailureForBothTargetKinds) {
+    struct context_t {
+        int invocations{0};
+        int completion_message{-1};
+    } context;
+    const mudmux_hook_func_t hook = [](void* ctx, int, void*, size_t) {
+        ++static_cast<context_t*>(ctx)->invocations;
+        return -1;
+    };
+    ASSERT_TRUE(mudmux_register_hook(HOOK_MESSAGE_INBOUND, hook));
+    for (bool registered : {false, true}) {
+        mudmux_execution execution = registered
+            ? mudmux_execution(HOOK_MESSAGE_INBOUND, &context, 42)
+            : mudmux_execution(hook, &context, 42);
+        execution.set_completion([](void* ctx, int msg) {
+            static_cast<context_t*>(ctx)->completion_message = msg;
+        }, &context);
+        context.completion_message = -1;
+        EXPECT_EQ(mudmux_execution_dispatch(std::move(execution)),
+                  MUDMUX_DISPATCH_ERROR);
+        EXPECT_EQ(context.completion_message, 42);
+    }
+    EXPECT_EQ(context.invocations, 2);
+}
+
+TEST_F(CommInboundTest, ExecutionSkipsCompletionWhenHookRemovesItsSlot) {
+    mudmux_workers_stop();
+    mudmux_workers_configure(2);
+    ASSERT_TRUE(mudmux_workers_start());
+    const int slot = add_memory_comm(0);
+    ASSERT_GE(slot, 0);
+
+    struct context_t {
+        std::promise<void> invoked;
+        std::atomic<int> completions{0};
+    } context;
+    auto invoked = context.invoked.get_future();
+    ASSERT_TRUE(mudmux_register_hook(HOOK_MESSAGE_INBOUND,
+        [](void* ctx, int msg, void*, size_t) {
+            comm_abstract_remove(msg);
+            static_cast<context_t*>(ctx)->invoked.set_value();
+            return 0;
+        }));
+    mudmux_execution execution(HOOK_MESSAGE_INBOUND, &context, slot, std::string("close"));
+    execution.set_current_slot(slot);
+    execution.set_completion([](void* ctx, int) {
+        static_cast<context_t*>(ctx)->completions.fetch_add(1);
+    }, &context);
+
+    EXPECT_EQ(mudmux_execution_dispatch(std::move(execution)), MUDMUX_DISPATCH_QUEUED);
+    const auto status = invoked.wait_for(std::chrono::seconds(2));
+    mudmux_workers_stop();
+    ASSERT_EQ(status, std::future_status::ready);
+    EXPECT_EQ(context.completions.load(), 0);
+}
+
 TEST_F(CommInboundTest, WriteMessageBuffersDirectlyOrRoutesThroughOutboundHook) {
     async_runtime_t* runtime = async_runtime_init(this);
     ASSERT_NE(runtime, nullptr);
@@ -645,8 +954,8 @@ TEST_F(CommInboundTest, PromptWaitsForAnInFlightSlotHook) {
     comm_enable_prompt(slot, true);
 
     const char input[] = "busy";
-    ASSERT_EQ(mudmux_execution_enqueue_hook(HOOK_MESSAGE_INBOUND, this, slot, input, sizeof(input) - 1),
-              MUDMUX_DISPATCH_OK);
+    ASSERT_EQ(mudmux_execution_enqueue(mudmux_execution(HOOK_MESSAGE_INBOUND, this, slot, sizeof(input) - 1, input)),
+              MUDMUX_DISPATCH_QUEUED);
     ASSERT_EQ(inbound_entered_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
 
     comm_invoke_prompt(runtime);
@@ -1437,15 +1746,15 @@ TEST_F(CommInboundTest, ThreadPoolKeepsPerSlotOrderWhileOtherSlotsAdvance) {
 
     const char slot0_first[] = "slot0-first";
     const char slot0_second[] = "slot0-second";
-    ASSERT_EQ(mudmux_execution_enqueue_hook(HOOK_MESSAGE_INBOUND, this, 0, slot0_first, strlen(slot0_first)), MUDMUX_DISPATCH_OK);
+    ASSERT_EQ(mudmux_execution_enqueue(mudmux_execution(HOOK_MESSAGE_INBOUND, this, 0, strlen(slot0_first), slot0_first)), MUDMUX_DISPATCH_QUEUED);
     ASSERT_EQ(first_slot_entered_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
-    EXPECT_EQ(mudmux_execution_enqueue_hook(HOOK_MESSAGE_INBOUND, this, 0, slot0_second, strlen(slot0_second)), MUDMUX_DISPATCH_QUEUE_FULL);
-    EXPECT_EQ(mudmux_dispatch_hook_after(HOOK_PROMPT, this, 0, nullptr, 0), MUDMUX_DISPATCH_OK);
-    EXPECT_EQ(mudmux_dispatch_hook_after(HOOK_PROMPT, this, 0, nullptr, 0), MUDMUX_DISPATCH_QUEUE_FULL);
+    EXPECT_EQ(mudmux_execution_enqueue(mudmux_execution(HOOK_MESSAGE_INBOUND, this, 0, strlen(slot0_second), slot0_second)), MUDMUX_DISPATCH_QUEUE_FULL);
+    EXPECT_EQ(mudmux_execution_dispatch(mudmux_execution(HOOK_PROMPT, this, 0)), MUDMUX_DISPATCH_QUEUED);
+    EXPECT_EQ(mudmux_execution_dispatch(mudmux_execution(HOOK_PROMPT, this, 0)), MUDMUX_DISPATCH_QUEUE_FULL);
 
     for (int slot = 1; slot <= 5; ++slot) {
         const std::string payload = "slot" + std::to_string(slot);
-        ASSERT_EQ(mudmux_execution_enqueue_hook(HOOK_MESSAGE_INBOUND, this, slot, payload.data(), payload.size()), MUDMUX_DISPATCH_OK);
+        ASSERT_EQ(mudmux_execution_enqueue(mudmux_execution(HOOK_MESSAGE_INBOUND, this, slot, payload)), MUDMUX_DISPATCH_QUEUED);
     }
 
     ASSERT_EQ(other_slots_done_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
@@ -1632,11 +1941,11 @@ TEST_F(CommInboundTest, RelaxedModeCommApiCallsFromConcurrentHooksDoNotDeadlock)
     ASSERT_TRUE(mudmux_register_hook(HOOK_MESSAGE_INBOUND, concurrent_comm_api_hook));
 
     const char payload[] = "phase6";
-    ASSERT_EQ(mudmux_execution_enqueue_hook(HOOK_MESSAGE_INBOUND, this, comm_api_blocked_slot, payload, strlen(payload)), MUDMUX_DISPATCH_OK);
+    ASSERT_EQ(mudmux_execution_enqueue(mudmux_execution(HOOK_MESSAGE_INBOUND, this, comm_api_blocked_slot, strlen(payload), payload)), MUDMUX_DISPATCH_QUEUED);
     ASSERT_EQ(blocked_slot_entered_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
 
     for (std::size_t index = 1; index < slots.size(); ++index) {
-        ASSERT_EQ(mudmux_execution_enqueue_hook(HOOK_MESSAGE_INBOUND, this, slots[index], payload, strlen(payload)), MUDMUX_DISPATCH_OK);
+        ASSERT_EQ(mudmux_execution_enqueue(mudmux_execution(HOOK_MESSAGE_INBOUND, this, slots[index], strlen(payload), payload)), MUDMUX_DISPATCH_QUEUED);
     }
 
     ASSERT_EQ(other_slots_done_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
@@ -1684,7 +1993,7 @@ TEST_F(CommInboundTest, RelaxedModeQueuePressureOnOneSlotDoesNotBlockOtherSlots)
     ASSERT_TRUE(mudmux_register_hook(HOOK_MESSAGE_INBOUND, queue_pressure_hook));
 
     const char payload[] = "phase6-queue-pressure";
-    ASSERT_EQ(mudmux_execution_enqueue_hook(HOOK_MESSAGE_INBOUND, this, queue_pressure_hot_slot, payload, strlen(payload)), MUDMUX_DISPATCH_OK);
+    ASSERT_EQ(mudmux_execution_enqueue(mudmux_execution(HOOK_MESSAGE_INBOUND, this, queue_pressure_hot_slot, strlen(payload), payload)), MUDMUX_DISPATCH_QUEUED);
     ASSERT_EQ(hot_slot_entered_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
 
     std::atomic<int> queue_full_count{0};
@@ -1695,18 +2004,17 @@ TEST_F(CommInboundTest, RelaxedModeQueuePressureOnOneSlotDoesNotBlockOtherSlots)
         producers.emplace_back([&, producer]() {
             for (int index = 0; index < 32; ++index) {
                 const std::string msg = "hot-" + std::to_string(producer) + "-" + std::to_string(index);
-                const mudmux_dispatch_result_t rc = mudmux_execution_enqueue_hook(
-                    HOOK_MESSAGE_INBOUND, this, queue_pressure_hot_slot, msg.data(), msg.size());
+                const mudmux_dispatch_result_t rc = mudmux_execution_enqueue(mudmux_execution(HOOK_MESSAGE_INBOUND, this, queue_pressure_hot_slot, msg));
                 if (rc == MUDMUX_DISPATCH_QUEUE_FULL)
                     queue_full_count.fetch_add(1);
-                else if (rc != MUDMUX_DISPATCH_OK)
+                else if (rc != MUDMUX_DISPATCH_QUEUED)
                     enqueue_error_count.fetch_add(1);
             }
         });
     }
 
     for (std::size_t index = 1; index < slots.size(); ++index) {
-        ASSERT_EQ(mudmux_execution_enqueue_hook(HOOK_MESSAGE_INBOUND, this, slots[index], payload, strlen(payload)), MUDMUX_DISPATCH_OK);
+        ASSERT_EQ(mudmux_execution_enqueue(mudmux_execution(HOOK_MESSAGE_INBOUND, this, slots[index], strlen(payload), payload)), MUDMUX_DISPATCH_QUEUED);
     }
 
     ASSERT_EQ(other_slots_done_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
@@ -1756,9 +2064,8 @@ TEST_F(CommInboundTest, RelaxedModeConcurrentEnqueueAndCommApiMutationsRemainSta
                 const std::string msg = "race-" + std::to_string(producer) + "-" + std::to_string(index);
                 bool submitted = false;
                 for (int retry = 0; retry < 5000; ++retry) {
-                    const mudmux_dispatch_result_t rc = mudmux_execution_enqueue_hook(
-                        HOOK_MESSAGE_INBOUND, this, slot, msg.data(), msg.size());
-                    if (rc == MUDMUX_DISPATCH_OK) {
+                    const mudmux_dispatch_result_t rc = mudmux_execution_enqueue(mudmux_execution(HOOK_MESSAGE_INBOUND, this, slot, msg));
+                    if (rc == MUDMUX_DISPATCH_QUEUED) {
                         accepted_tasks.fetch_add(1);
                         submitted = true;
                         break;

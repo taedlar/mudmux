@@ -260,27 +260,13 @@ mudmux_dispatch_result_t comm_dispatch_telnet_subnegotiation(async_runtime_t* ru
     const char* payload = telnet_neg.sb_len > 1 ? telnet_neg.subopt_buf + 1 : nullptr;
     const size_t payload_len = telnet_neg.sb_len > 1 ? telnet_neg.sb_len - 1 : 0;
 
-    if (mudmux_execution_mode() == MUDMUX_DETERMINISM_RELAXED) {
-        const mudmux_dispatch_result_t dispatch_result = mudmux_execution_enqueue_telnet_subneg(
-            async_runtime_get_context(runtime),
-            comm.slot(),
-            option,
-            payload,
-            payload_len);
-        if (dispatch_result == MUDMUX_DISPATCH_QUEUE_FULL) {
-            comm->flags |= C_DEFERRED_INBOUND;
-            has_deferred_input.store(true, std::memory_order_release);
-        }
-        return dispatch_result;
+    mudmux_execution execution(HOOK_TELNET_SUBNEG, async_runtime_get_context(runtime),
+                               option, payload_len, payload);
+    execution.set_current_slot(comm.slot());
+    auto result = mudmux_execution_dispatch(std::move(execution));
+    if (result == MUDMUX_DISPATCH_QUEUE_FULL) {
+        comm->flags |= C_DEFERRED_INBOUND;
+        has_deferred_input.store(true, std::memory_order_release);
     }
-
-    return mudmux_dispatch_hook_after(
-        HOOK_TELNET_SUBNEG,
-        async_runtime_get_context(runtime),
-        option,
-        payload,
-        payload_len,
-        nullptr,
-        nullptr,
-        comm.slot());
+    return result;
 }
