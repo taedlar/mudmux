@@ -14,8 +14,10 @@ extern "C" {
 /**
  * @brief Start the configured worker thread pool.
  *
- * mudmux_init() starts the pool automatically. This function is provided for
- * applications that explicitly stop and later restart workers before
+ * mudmux_init() starts the pool automatically. mudmux_run() restarts a stopped
+ * pool before transport setup and joins it before destroying its runtime.
+ * This function is provided for applications that explicitly stop and later
+ * restart workers before
  * mudmux_deinit().
  *
  * @return true when the pool was started, false when it is already running or
@@ -26,8 +28,9 @@ MUDMUX_EXPORT bool mudmux_workers_start(void);
 /**
  * @brief Stop all worker threads after their queued work completes.
  *
- * mudmux_deinit() always stops workers before tearing down the library. Do
- * not call this function from a worker callback.
+ * mudmux_run() stops workers before destroying its async runtime, including
+ * when runtime setup fails. mudmux_deinit() also stops workers before tearing
+ * down the library. Do not call this function from a worker callback.
  */
 MUDMUX_EXPORT void mudmux_workers_stop(void);
 

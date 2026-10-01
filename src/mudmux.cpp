@@ -465,6 +465,11 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
     if (success)
         success = register_runtime_events(runtime);
 
+    // A previous run joins workers before destroying its runtime. Restore the
+    // configured pool before any transport setup can dispatch connect hooks.
+    if (success && mudmux_workers_pool_size() == 0)
+        success = mudmux_workers_start();
+
     if (success) {
         if (enable_console || enable_standard_input) { // console input is enabled, initialize console worker
             success = comm_init_console (runtime);
@@ -493,10 +498,12 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
 
     if (!success) {
         SPDLOG_ERROR ("failed to initialize");
+        mudmux_workers_stop();
         comm_shutdown_async_file_input();
         comm_shutdown_console(runtime);
         async_runtime_deinit(runtime);
         is_running.store(false);
+        mud_logic_thread_id = std::thread::id();
         return EXIT_FAILURE;
     }
 
@@ -698,13 +705,14 @@ MUDMUX_EXPORT int mudmux_run (void* context) {
                 break;
             }
         }
-
-        // A disconnect hook may queue a final message.  The event loop is no
-        // longer running, but the transports are still valid here, so make a
-        // best-effort attempt to send that output before teardown removes
-        // their slots.
-        comm_flush_all(runtime);
     }
+
+    // Slot shutdown alone does not cover non-slot event hooks, detached work,
+    // or their completions. Reject new worker work and join accepted tasks
+    // while the runtime, context, registrations, and communications remain valid.
+    mudmux_workers_stop();
+    // A final hook or completion may have buffered output while we joined.
+    comm_flush_all(runtime);
 
     // cleanup communications and teardown subsystems
     comm_shutdown_async_file_input();

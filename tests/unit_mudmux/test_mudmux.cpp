@@ -689,6 +689,133 @@ TEST(MudmuxTest, RelaxedTimerRetainsLatestMessageDuringHook) {
     verify_relaxed_event_coalescing(coalescing_event_mode_t::Timer);
 }
 
+TEST(MudmuxTest, ShutdownJoinsCustomEventBeforeRunReturns) {
+    ASSERT_TRUE(mudmux_init("transport: {thread_pool: {size: 2}}"));
+    struct context_t {
+        std::promise<void> started;
+        std::promise<void> entered;
+        std::shared_future<void> release;
+        std::atomic<bool> runtime_running{false};
+    } context;
+    std::promise<void> release;
+    context.release = release.get_future().share();
+    auto started = context.started.get_future();
+    auto entered = context.entered.get_future();
+    ASSERT_TRUE(mudmux_register_hook(HOOK_TIMER, [](void* ctx, int msg, void*, size_t) {
+        if (msg == 0)
+            static_cast<context_t*>(ctx)->started.set_value();
+        return 0;
+    }));
+    async_event_t event{};
+    ASSERT_TRUE(async_event_init(&event, true, false));
+    ASSERT_TRUE(mudmux_register_event(&event, [](void* ctx, int, void*, size_t) {
+        auto& state = *static_cast<context_t*>(ctx);
+        mudmux_shutdown();
+        state.entered.set_value();
+        state.release.wait();
+        state.runtime_running.store(mudmux_is_running());
+        mudmux_shutdown(); // The runtime must still support wakeups here.
+        return 0;
+    }));
+    std::promise<int> result;
+    auto done = result.get_future();
+    std::thread server([&] { result.set_value(mudmux_run(&context)); });
+    EXPECT_EQ(started.wait_for(std::chrono::seconds(3)), std::future_status::ready);
+    async_event_set(&event);
+    EXPECT_EQ(entered.wait_for(std::chrono::seconds(3)), std::future_status::ready);
+    EXPECT_EQ(done.wait_for(std::chrono::milliseconds(100)), std::future_status::timeout);
+    release.set_value();
+    mudmux_shutdown(); // Also cleans up if event dispatch failed to start.
+    EXPECT_EQ(done.wait_for(std::chrono::seconds(3)), std::future_status::ready);
+    server.join();
+    EXPECT_EQ(done.get(), EXIT_SUCCESS);
+    EXPECT_TRUE(context.runtime_running.load());
+    EXPECT_EQ(mudmux_workers_pool_size(), 0u);
+    const auto destroy_event = mudmux_async_api_v1->event_destroy;
+    mudmux_deinit();
+    destroy_event(&event);
+}
+
+namespace {
+
+void verify_run_joins_detached_execution(bool initialization_failure) {
+    ASSERT_TRUE(mudmux_init(initialization_failure
+        ? "transport: {thread_pool: {size: 2}, accept: ['udp://127.0.0.1:0']}"
+        : "transport: {thread_pool: {size: 2}}"));
+    struct context_t {
+        std::promise<void> started;
+        std::promise<void> work_entered;
+        std::promise<void> completion_entered;
+        std::shared_future<void> release_work;
+        std::shared_future<void> release_completion;
+        std::atomic<bool> work_saw_running{false};
+        std::atomic<bool> completion_saw_running{false};
+        std::atomic<int> destroyed_while_running{0};
+    } context;
+    std::promise<void> release_work;
+    std::promise<void> release_completion;
+    context.release_work = release_work.get_future().share();
+    context.release_completion = release_completion.get_future().share();
+    auto started = context.started.get_future();
+    auto work_entered = context.work_entered.get_future();
+    auto completion_entered = context.completion_entered.get_future();
+    ASSERT_TRUE(mudmux_register_hook(HOOK_TIMER, [](void* ctx, int msg, void*, size_t) {
+        if (msg == 0)
+            static_cast<context_t*>(ctx)->started.set_value();
+        return 0;
+    }));
+    const async_closure_destroy_t destroy = [](void* ctx) {
+        if (mudmux_is_running())
+            static_cast<context_t*>(ctx)->destroyed_while_running.fetch_add(1);
+    };
+    async_closure_t work{[](void* ctx, int) {
+        auto& state = *static_cast<context_t*>(ctx);
+        state.work_entered.set_value();
+        state.release_work.wait();
+        state.work_saw_running.store(mudmux_is_running());
+    }, destroy, &context};
+    async_closure_t completion{[](void* ctx, int) {
+        auto& state = *static_cast<context_t*>(ctx);
+        state.completion_entered.set_value();
+        state.release_completion.wait();
+        state.completion_saw_running.store(mudmux_is_running());
+        mudmux_shutdown();
+    }, destroy, &context};
+    ASSERT_TRUE(mudmux_workers_submit(&work, &completion));
+    EXPECT_EQ(work_entered.wait_for(std::chrono::seconds(3)), std::future_status::ready);
+    std::promise<int> result;
+    auto done = result.get_future();
+    std::thread server([&] { result.set_value(mudmux_run(&context)); });
+    if (!initialization_failure) {
+        EXPECT_EQ(started.wait_for(std::chrono::seconds(3)), std::future_status::ready);
+        mudmux_shutdown();
+    }
+    EXPECT_EQ(done.wait_for(std::chrono::milliseconds(100)), std::future_status::timeout);
+    release_work.set_value();
+    EXPECT_EQ(completion_entered.wait_for(std::chrono::seconds(3)), std::future_status::ready);
+    EXPECT_EQ(done.wait_for(std::chrono::milliseconds(100)), std::future_status::timeout);
+    release_completion.set_value();
+    mudmux_shutdown();
+    EXPECT_EQ(done.wait_for(std::chrono::seconds(3)), std::future_status::ready);
+    server.join();
+    EXPECT_EQ(done.get(), initialization_failure ? EXIT_FAILURE : EXIT_SUCCESS);
+    EXPECT_TRUE(context.work_saw_running.load());
+    EXPECT_TRUE(context.completion_saw_running.load());
+    EXPECT_EQ(context.destroyed_while_running.load(), 2);
+    EXPECT_EQ(mudmux_workers_pool_size(), 0u);
+    mudmux_deinit();
+}
+
+} // namespace
+
+TEST(MudmuxTest, ShutdownJoinsDetachedWorkAndCompletionBeforeRunReturns) {
+    verify_run_joins_detached_execution(false);
+}
+
+TEST(MudmuxTest, RuntimeInitializationFailureJoinsDetachedWorkAndCompletion) {
+    verify_run_joins_detached_execution(true);
+}
+
 TEST(MudmuxTest, EventLoopRunWithConsoleEnabled) {
     mudmux_set_log_level(0);
     SPDLOG_INFO ("CTEST_FULL_OUTPUT");

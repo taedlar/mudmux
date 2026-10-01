@@ -66,7 +66,11 @@ MUDMUX_EXPORT void mudmux_deinit (void);
 MUDMUX_EXPORT int mudmux_run (void* context);
 
 /**
- * @brief Shutdown the mudmux server.
+ * @brief Request shutdown of the mudmux server.
+ *
+ * Returns immediately, including when called from a worker hook. mudmux_run()
+ * joins worker executions and their completions before destroying the async
+ * runtime and returning.
  */
 MUDMUX_EXPORT void mudmux_shutdown (void);
 

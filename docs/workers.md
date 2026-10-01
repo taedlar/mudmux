@@ -194,6 +194,13 @@ runtime-bound APIs after `mudmux_init()` and before `mudmux_deinit()`.
 
 ## Failure behavior and verification
 
+`mudmux_shutdown()` requests shutdown and returns immediately. Before
+`mudmux_run()` destroys its async runtime or returns, it stops worker admission
+and joins worker executions, including event hooks, detached work, and their
+completions. Runtime setup failures also join workers before teardown. The
+runtime and callback context remain available during this join. A later
+`mudmux_run()` restarts the configured pool before transport setup if needed.
+
 Workers catch standard and non-standard C++ exceptions from submitted tasks,
 log them, and continue processing later tasks. This prevents an uncaught
 event-hook exception from terminating its worker, but it cannot recover from a process
